@@ -59,9 +59,10 @@ impl SecurityControl {
 ///
 /// See Section 4.5.1.1.1.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub enum SecurityLevel {
+    #[default]
     None = 0b000,
     Mic32 = 0b001,
     Mic64 = 0b010,

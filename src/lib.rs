@@ -44,7 +44,8 @@
     clippy::missing_const_for_fn,
     clippy::future_not_send,
     clippy::ignored_unit_patterns,
-    clippy::trivially_copy_pass_by_ref
+    clippy::trivially_copy_pass_by_ref,
+    clippy::struct_excessive_bools
 )]
 
 pub mod zdp;
