@@ -23,6 +23,7 @@
 //#![deny(clippy::unwrap_used)]
 #![deny(clippy::panic, unused_must_use)]
 #![warn(
+    clippy::missing_safety_doc,
     missing_docs,
     unreachable_pub,
     clippy::pedantic,
@@ -42,12 +43,12 @@
     clippy::blocks_in_conditions,
     clippy::missing_const_for_fn,
     clippy::future_not_send,
-    clippy::ignored_unit_patterns
+    clippy::ignored_unit_patterns,
+    clippy::trivially_copy_pass_by_ref
 )]
 
 pub mod zdp;
 pub(crate) mod common;
-pub use common::types;
 
 /// The `application support sub-layer` provides an interface between the
 /// `Network layer` and the `Application layer`.
