@@ -27,38 +27,34 @@ impl NodeDescriptor {
         maximum_outgoing_transfer_size: u16,
         descriptor_capabilities: DescriptorCapabilities,
     ) -> Self {
-        let mut byte_0: u8 = 0;
-        byte_0 |= (logical_type as u8) << 5;
-        byte_0 |= (complex_descriptor_available as u8) << 4;
-        byte_0 |= (user_descriptor_available as u8) << 3;
+        let mut value: Vec<u8, NODE_DESCRIPTOR_SIZE> = Vec::new();
+        value.resize(NODE_DESCRIPTOR_SIZE, 0).unwrap();
 
-        let byte_1: u8 = frequency_bands.0;
+        value[0] |= (logical_type as u8) << 5;
+        value[0] |= (complex_descriptor_available as u8) << 4;
+        value[0] |= (user_descriptor_available as u8) << 3;
 
-        let byte_2: u8 = mac_capabilities.0;
+        value[1] = frequency_bands.0;
 
-        let byte_3: u8 = (manufacturer_code >> 8) as u8;
-        let byte_4: u8 = manufacturer_code as u8;
+        value[2] = mac_capabilities.0;
 
-        let byte_5: u8 = maximum_buffer_size;
+        value[3] = (manufacturer_code >> 8) as u8;
+        value[4] = manufacturer_code as u8;
 
-        let byte_6: u8 = (maximum_incoming_transfer_size >> 8) as u8;
-        let byte_7: u8 = maximum_incoming_transfer_size as u8;
+        value[5] = maximum_buffer_size;
 
-        let byte_8: u8 = (server_mask.0 >> 8) as u8;
-        let byte_9: u8 = server_mask.0 as u8;
+        value[6] = (maximum_incoming_transfer_size >> 8) as u8;
+        value[7] = maximum_incoming_transfer_size as u8;
 
-        let byte_10: u8 = (maximum_outgoing_transfer_size >> 8) as u8;
-        let byte_11: u8 = maximum_outgoing_transfer_size as u8;
+        value[8] = (server_mask.0 >> 8) as u8;
+        value[9] = server_mask.0 as u8;
 
-        let byte_12: u8 = descriptor_capabilities.0;
+        value[10] = (maximum_outgoing_transfer_size >> 8) as u8;
+        value[11] = maximum_outgoing_transfer_size as u8;
 
-        NodeDescriptor(
-            Vec::from_slice(&[
-                byte_0, byte_1, byte_2, byte_3, byte_4, byte_5, byte_6, byte_7, byte_8, byte_9,
-                byte_10, byte_11, byte_12,
-            ])
-            .unwrap(),
-        )
+        value[12] = descriptor_capabilities.0;
+
+        NodeDescriptor(value)
     }
 
     pub fn logical_type(&self) -> LogicalType {
