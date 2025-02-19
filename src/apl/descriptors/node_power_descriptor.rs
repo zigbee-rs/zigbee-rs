@@ -35,15 +35,16 @@ impl NodePowerDescriptor {
             return Err(Error::CurrentPowerSourceNotAvailable);
         }
 
-        let mut byte_1: u8 = 0;
-        byte_1 |= (current_power_mode as u8) << 4;
-        byte_1 |= available_power_sources.0 as u8;
+        let mut value: Vec<u8, NODE_POWER_DESCRIPTOR_SIZE> = Vec::new();
+        value.resize(NODE_POWER_DESCRIPTOR_SIZE, 0).unwrap();
 
-        let mut byte_2: u8 = 0;
-        byte_2 |= (current_power_source as u8) << 4;
-        byte_2 |= current_power_source_level as u8;
+        value[0] |= (current_power_mode as u8) << 4;
+        value[0] |= available_power_sources.0 as u8;
 
-        Ok(Self(Vec::from_slice(&[byte_1, byte_2]).unwrap()))
+        value[1] |= (current_power_source as u8) << 4;
+        value[1] |= current_power_source_level as u8;
+
+        Ok(NodePowerDescriptor(value))
     }
 
     fn current_power_mode(&self) -> CurrentPowerMode {
