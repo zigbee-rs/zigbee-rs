@@ -2,13 +2,13 @@ use core::iter::FromIterator;
 
 use heapless::Vec;
 
-pub trait PackBytes
+pub(crate) trait PackBytes
 where
     Self: Sized,
 {
     fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self>;
     fn unpack_from_slice(src: &[u8]) -> Option<Self> {
-        Self::unpack_from_iter(src.iter().cloned())
+        Self::unpack_from_iter(src.iter().copied())
     }
 }
 
@@ -20,7 +20,7 @@ impl PackBytes for u8 {
 
 impl PackBytes for i8 {
     fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self> {
-        src.into_iter().next().map(|b| b as i8)
+        src.into_iter().next().map(|b| b as Self)
     }
 }
 
@@ -48,6 +48,7 @@ impl<const N: usize> PackBytes for Vec<u8, N> {
     }
 }
 
+/// Implement `PackBytes` for a struct.
 #[macro_export]
 macro_rules! impl_pack_bytes {
     (
@@ -68,8 +69,9 @@ macro_rules! impl_pack_bytes {
         $v:vis struct $name:ident {
             $(
                 $(#[doc = $doc:literal])*
-                $(#[transparent($tp_ty:ty)])?
-                $(#[collect($cl_ty:ty)])?
+                $(#[pack = $pack:literal])?
+                $(#[pack_if = $pack_if:expr])?
+                $(#[control_header = $ctl_hdr:ty])?
                 $vf:vis $field_name:ident: $field_ty:ty
             ),+
             $(,)?
@@ -83,19 +85,36 @@ macro_rules! impl_pack_bytes {
             ),+
         }
 
+        #[allow(unused_doc_comments)]
         impl $crate::common::parse::PackBytes for $name {
             fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self> {
-                use core::iter::FromIterator;
+                use $crate::common::parse::PackBytes;
                 let mut src = src.into_iter();
+                $(
+                    $(
+                        let _ctl_hdr = <$ctl_hdr>::unpack_from_iter(&mut src)?;
+                    )?
+                )+
                 Some(Self {
                     $(
                         $(
-                            $field_name: <$tp_ty>::unpack_from_iter(&mut src)?
+                            $field_name: {
+                                let _ = $pack;
+                                PackBytes::unpack_from_iter(&mut src)?
+                            },
                         )?
                         $(
-                            $field_name: <$cl_ty>::from_iter(src)
+                            $field_name: $pack_if(&_ctl_hdr)
+                                .then(|| PackBytes::unpack_from_iter(&mut src))
+                                .flatten(),
                         )?
-                    ),+
+                        $(
+                            $field_name: {
+                                let _ = ::core::marker::PhantomData::<$ctl_hdr>{};
+                                _ctl_hdr
+                            },
+                        )?
+                    )+
                 })
             }
         }
