@@ -2,11 +2,12 @@ pub type NwkAddress = u16;
 
 use core::fmt;
 
+use crate::impl_byte;
 use crate::impl_pack_bytes;
 
-impl_pack_bytes! {
+impl_byte! {
     /// 16-bit network address
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub struct ShortAddress(pub u16);
 }
 
@@ -22,7 +23,7 @@ impl Default for ShortAddress {
     }
 }
 
-impl_pack_bytes! {
+impl_byte! {
     /// 64-bit network address
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct IeeeAddress(pub u64);

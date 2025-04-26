@@ -120,3 +120,21 @@ macro_rules! impl_pack_bytes {
         }
     }
 }
+
+#[macro_export]
+macro_rules! impl_byte {
+    (
+        $(#[$m:meta])*
+        $v:vis struct $name:ident($vt:vis $ty:ty);
+    ) => {
+        $(#[$m])*
+        $v struct $name($vt $ty);
+
+        impl ::byte::TryRead<'_, ::byte::ctx::Endian> for $name {
+            fn try_read(bytes: &'_ [u8], ctx: ::byte::ctx::Endian) -> byte::Result<(Self, usize)> {
+                let (v, sz) = <$ty>::try_read(bytes, ctx)?;
+                Ok((Self(v), sz))
+            }
+        }
+    };
+}
