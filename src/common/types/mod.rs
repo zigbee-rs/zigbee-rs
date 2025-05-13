@@ -2,11 +2,13 @@ pub type NwkAddress = u16;
 
 use core::fmt;
 
-use crate::impl_pack_bytes;
+use heapless::FnvIndexSet;
 
-impl_pack_bytes! {
+use crate::impl_byte;
+
+impl_byte! {
     /// 16-bit network address
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, Eq, Hash, PartialEq)]
     pub struct ShortAddress(pub u16);
 }
 
@@ -22,21 +24,15 @@ impl Default for ShortAddress {
     }
 }
 
-impl_pack_bytes! {
+impl_byte! {
     /// 64-bit network address
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Default, Copy, PartialEq, Eq)]
     pub struct IeeeAddress(pub u64);
 }
 
 impl fmt::Debug for IeeeAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "IeeeAddress(0x{:016x})", self.0)
-    }
-}
-
-impl Default for IeeeAddress {
-    fn default() -> Self {
-        Self(Default::default())
     }
 }
 
