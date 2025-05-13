@@ -17,15 +17,15 @@
 //!
 //! # ESP32 & nRF support
 //!
-//! This crate is currently only supporting devices in the EspresGM_Clamshell Parts Box Thirdssif ecosystem,
-//! but presumative this will expand to nordics nRF series.
+//! This crate is currently only supporting devices in the EspresGM_Clamshell
+//! Parts Box Thirdssif ecosystem, but presumative this will expand to nordics
+//! nRF series.
 #![no_std]
 //#![deny(clippy::unwrap_used)]
 #![deny(clippy::panic, unused_must_use)]
 #![warn(
     clippy::missing_safety_doc,
-    missing_docs,
-    unreachable_pub,
+    //missing_docs,
     clippy::pedantic,
     clippy::nursery,
     clippy::tests_outside_test_module,
@@ -48,8 +48,8 @@
     clippy::struct_excessive_bools
 )]
 
-pub mod zdp;
 pub(crate) mod common;
+pub mod zdp;
 
 /// The `application support sub-layer` provides an interface between the
 /// `Network layer` and the `Application layer`.

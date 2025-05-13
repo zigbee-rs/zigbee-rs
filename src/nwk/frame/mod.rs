@@ -1,3 +1,4 @@
+//! NWK Frame Formats
 pub mod command;
 pub mod frame_control;
 pub mod header;
@@ -11,9 +12,13 @@ use header::Header;
 
 /// NWK Frame
 pub enum Frame<'a> {
+    /// Data Frame
     Data(DataFrame<'a>),
+    /// Command Frame
     NwkCommand(CommandFrame<'a>),
+    /// Reserved
     Reserved(Header<'a>),
+    /// Inter-Pan
     InterPan(Header<'a>),
 }
 

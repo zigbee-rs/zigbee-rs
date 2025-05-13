@@ -1,3 +1,4 @@
+//! NWK Frame Header Control
 use core::mem;
 
 use crate::impl_byte;
@@ -18,6 +19,7 @@ impl FrameControl {
     }
 
     /// Sets the frame type
+    #[must_use]
     pub fn set_frame_type(mut self, value: FrameType) -> Self {
         self.0 |= (value as u16) << offset::FRAME_TYPE;
         self
@@ -29,8 +31,9 @@ impl FrameControl {
     }
 
     /// Sets the protocol version
+    #[must_use]
     pub fn set_protocol_version(mut self, value: u8) -> Self {
-        self.0 |= (value as u16) << offset::PROTOCOL;
+        self.0 |= u16::from(value) << offset::PROTOCOL;
         self
     }
 
@@ -40,6 +43,7 @@ impl FrameControl {
     }
 
     /// Sets the Discover Route flag
+    #[must_use]
     pub fn set_discover_route(mut self, value: DiscoverRoute) -> Self {
         self.0 |= (value as u16) << offset::DISCOVER_ROUTE;
         self
@@ -51,8 +55,9 @@ impl FrameControl {
     }
 
     /// Sets the Multicast Flag
+    #[must_use]
     pub fn set_multicast_flag(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::MULTICAST_FLAG;
+        self.0 |= u16::from(value) << offset::MULTICAST_FLAG;
         self
     }
 
@@ -67,8 +72,9 @@ impl FrameControl {
     }
 
     /// Sets the Security flag
+    #[must_use]
     pub fn set_security_flag(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::SECURITY;
+        self.0 |= u16::from(value) << offset::SECURITY;
         self
     }
 
@@ -83,8 +89,9 @@ impl FrameControl {
     }
 
     /// Sets the Source Route flag
+    #[must_use]
     pub fn set_source_flag(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::SOURCE_ROUTE;
+        self.0 |= u16::from(value) << offset::SOURCE_ROUTE;
         self
     }
 
@@ -98,8 +105,9 @@ impl FrameControl {
     }
 
     /// Sets the Destination IEEE Address flag
+    #[must_use]
     pub fn set_destination_ieee_flag(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::DEST_IEEE_ADDR;
+        self.0 |= u16::from(value) << offset::DEST_IEEE_ADDR;
         self
     }
 
@@ -113,8 +121,9 @@ impl FrameControl {
     }
 
     /// Sets the Source IEEE Address flag
+    #[must_use]
     pub fn set_source_ieee_flag(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::SRC_IEEE_ADDR;
+        self.0 |= u16::from(value) << offset::SRC_IEEE_ADDR;
         self
     }
 
@@ -124,8 +133,9 @@ impl FrameControl {
     }
 
     /// Sets the End Device Iterator flag
+    #[must_use]
     pub fn set_end_device_initiator(mut self, value: bool) -> Self {
-        self.0 |= (value as u16) << offset::END_DEV_ITER;
+        self.0 |= u16::from(value) << offset::END_DEV_ITER;
         self
     }
 
@@ -210,4 +220,28 @@ mod mask {
     pub const DEST_IEEE_ADDR: u16 = 0x800;
     pub const SRC_IEEE_ADDR: u16 = 0x1000;
     pub const END_DEV_ITER: u16 = 0x2000;
+}
+
+#[cfg(test)]
+mod tests {
+    use byte::TryRead;
+
+    use super::*;
+
+    #[test]
+    fn parse_frame_control() {
+        let raw = [0b0111_1100_u8, 0b0010_1010_u8];
+
+        let (frame_control, len) = FrameControl::try_read(&raw, ()).unwrap();
+        assert_eq!(len, 2);
+        assert_eq!(frame_control.frame_type(), FrameType::Data);
+        assert_eq!(frame_control.protocol_version(), 0b1111u8);
+        assert_eq!(frame_control.discover_route(), DiscoverRoute::Enable);
+        assert!(!frame_control.multicast_flag());
+        assert!(frame_control.security_flag());
+        assert!(!frame_control.source_flag());
+        assert!(frame_control.destination_ieee_flag());
+        assert!(!frame_control.source_ieee_flag());
+        assert!(frame_control.end_device_initiator());
+    }
 }

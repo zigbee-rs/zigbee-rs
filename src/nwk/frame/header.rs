@@ -1,3 +1,4 @@
+//! NWK Frame Header
 use super::frame_control::FrameControl;
 use crate::common::types::IeeeAddress;
 use crate::common::types::ShortAddress;
@@ -63,5 +64,29 @@ impl_byte! {
         /// See Section 3.3.1.9.2.
         #[ctx = byte::ctx::Bytes::Len(relay_count as usize)]
         pub relay_list: &'a [u8],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use byte::TryRead;
+
+    use super::*;
+
+    #[test]
+    fn parse_nwk_header() {
+        let raw = [
+            0x09, 0x12, 0xfc, 0xff, 0x00, 0x00, 0x08, 0xbf, 0x66, 0x71, 0x9a, 0x2a, 0x00, 0x4b,
+            0x12, 0x00,
+        ];
+
+        let (header, _) = Header::try_read(&raw, ()).unwrap();
+
+        assert!(header.frame_control.security_flag());
+        assert!(header.frame_control.source_ieee_flag());
+        assert_eq!(header.destination, ShortAddress(0xfffc));
+        assert_eq!(header.source_ieee, Some(IeeeAddress(0x0012_4b00_2a9a_7166)));
+        assert_eq!(header.radius, 8);
+        assert_eq!(header.sequence_number, 191);
     }
 }

@@ -2,29 +2,27 @@
 use core::mem;
 
 use crate::common::types::IeeeAddress;
-use crate::impl_pack_bytes;
+use crate::impl_byte;
 
-impl_pack_bytes! {
+impl_byte! {
     /// Auxiliary Frame Header Format
     ///
     /// See Section 4.5.1.
     pub struct AuxFrameHeader {
         /// Security control
-        #[control_header = SecurityControl]
         pub security_control: SecurityControl,
         /// Frame counter
-        #[pack = true]
         pub frame_counter: u32,
         /// Set only if [`SecurityControl::extended_nonce`] is `true`.
-        #[pack_if = SecurityControl::extended_nonce]
+        #[parse_if = security_control.extended_nonce()]
         pub source_address: Option<IeeeAddress>,
         /// Set only if [`SecurityControl::key_identifier`] is `1`.
-        #[pack_if = SecurityControl::is_network_key]
+        #[parse_if = security_control.is_network_key()]
         pub key_sequence_numner: Option<u8>,
     }
 }
 
-impl_pack_bytes! {
+impl_byte! {
     /// Security Control
     ///
     /// See Section 4.5.1.1.
