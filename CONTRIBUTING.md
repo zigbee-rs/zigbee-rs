@@ -46,5 +46,42 @@ Atomic commits will make it easier to track down regressions. Also, it enables t
 
 ## 💾 Technology
 
-The project is written in [Rust](https://rust-lang.org/) and using `no_std`
+The project is written in [Rust](https://rust-lang.org/) and using `no_std` which is a bare metal approach.
+
+Using `no_std` doesn't use the Rust **standard library** but instead uses a subset, the `core` library.
+
+**The embedded Rust book** has a great [section](https://docs.rust-embedded.org/book/intro/no-std.html) on this.
+
+### 🐛 Debugging
+
+For debugging the communication using this zigbee library, Nordic Semiconductor provides a great tooling for that.
+
+1. [nRF Sniffer](https://www.nordicsemi.com/Products/Development-tools/nRF-Sniffer-for-802154) is able to capture Thread and Zigbee packets with Wireshark
+2. [nRF Zigbee Shell](https://docs.nordicsemi.com/bundle/addon-zigbee-r23-latest/page/samples/shell/README.html) is able to mimic a Zigbee router or coordinator.
+
+#### nRF Sniffer
+
+Follow [this guide](https://docs.nordicsemi.com/bundle/ug_sniffer_802154/page/UG/sniffer_802154/installing_sniffer_802154.html) for installing the nRF Sniffer firmware on a development kit or dongle.
+
+Next add the [nRF Sniffer capture plugin](https://docs.nordicsemi.com/bundle/ug_sniffer_802154/page/UG/sniffer_802154/installing_sniffer_802154_plugin.html#installing_sniffer_802154_pluginb) to Wireshark read the captured frames.
+
+
+#### nRF Zigbee Shell
+
+First build and flash [the Zigbee Shell firmware](https://docs.nordicsemi.com/bundle/addon-zigbee-r23-latest/page/samples/shell/README.html) to a Development Kit.
+
+Next install the [nRF Connect for Desktop](https://www.nordicsemi.com/Products/Development-tools/nrf-connect-for-desktop) followed by install and start of the **Serial Terminal**
+
+After selecting the Development Kit in this terminal, run the following commands to use it as **Zigbee Coordinator**
+
+```shell
+nvram disable
+bdb nwkkey abcdef01234567890000000000000000
+bdb channel 16
+nvram enable
+bdb role zc
+bdb start
+```
+
+🎉🎉🎉 Now it should be possible to form a network and add new devices by joining. 🎉🎉🎉
 
