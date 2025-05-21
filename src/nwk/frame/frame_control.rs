@@ -7,8 +7,24 @@ impl_byte! {
     /// Frame Control field
     ///
     /// See Section 3.3.1.1.
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct FrameControl(pub u16);
+}
+
+impl core::fmt::Debug for FrameControl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FrameControl")
+            .field("frame_type", &self.frame_type())
+            .field("protocol_version", &self.protocol_version())
+            .field("discover_route", &self.discover_route())
+            .field("multicast_flag", &self.multicast_flag())
+            .field("security_flag", &self.security_flag())
+            .field("source_flag", &self.source_flag())
+            .field("destination_ieee_flag", &self.destination_ieee_flag())
+            .field("source_ieee_flag", &self.source_ieee_flag())
+            .field("end_device_initiator", &self.end_device_initiator())
+            .finish()
+    }
 }
 
 impl FrameControl {

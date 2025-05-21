@@ -2,24 +2,24 @@
 name = "esp-simple-sniffer"
 version = "0.1.0"
 authors = ["Patrick Willner <50421879+heat1q@users.noreply.github.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 byte = "0.2.7"
-esp-backtrace = { version = "0.14.0", features = [
+esp-backtrace = { version = "0.15.0", features = [
     "esp32c6",
     "exception-handler",
     "panic-handler",
     "println",
 ] }
-esp-hal = { version = "0.22.0", features = [ "esp32c6" ] }
-esp-ieee802154 = { version = "0.4.0", features = ["esp32c6"] }
-esp-println = { version = "0.12.0", features = ["esp32c6", "log"] }
+esp-hal = { version = "0.23.0", features = [ "esp32c6" ] }
+esp-ieee802154 = { version = "0.5.0", features = ["esp32c6"] }
+esp-println = { version = "0.13.0", features = ["esp32c6", "log"] }
 esp-wifi-sys = { version = "0.7.0", features = ["esp32c6"] }
 hex = { version = "0.4.3", default-features = false }
 ieee802154 = "0.6.1"
 log = { version = "0.4.21" }
-zigbee-rs = { path = "../.."}
+zigbee = { path = "../.."}
 
 [profile.dev]
 opt-level = "s"
