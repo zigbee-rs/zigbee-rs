@@ -65,6 +65,8 @@ Follow [this guide](https://docs.nordicsemi.com/bundle/ug_sniffer_802154/page/UG
 
 Next add the [nRF Sniffer capture plugin](https://docs.nordicsemi.com/bundle/ug_sniffer_802154/page/UG/sniffer_802154/installing_sniffer_802154_plugin.html#installing_sniffer_802154_pluginb) to Wireshark read the captured frames.
 
+💡 When selecting the `nRF Sniffer for 802.15.4` device in wireshark, use Nordics default **Channel 16** for capturing if not configured otherwise.
+
 
 #### nRF Zigbee Shell
 
