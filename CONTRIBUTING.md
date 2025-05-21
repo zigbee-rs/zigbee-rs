@@ -80,10 +80,13 @@ After selecting the Development Kit in this terminal, run the following commands
 nvram disable
 bdb nwkkey abcdef01234567890000000000000000
 bdb channel 16
-nvram enable
 bdb role zc
+nvram enable
 bdb start
+bdb ic add 83FED3407A939723A5C639B26916D505C3B5 0B010E2F79E9DBFA
 ```
+
+See [Zigbee shell command list](https://docs.nordicsemi.com/bundle/addon-zigbee-r23-latest/page/lib/shell.html#zigbee_shell_command_list) for more.
 
 🎉🎉🎉 Now it should be possible to form a network and add new devices by joining. 🎉🎉🎉
 
