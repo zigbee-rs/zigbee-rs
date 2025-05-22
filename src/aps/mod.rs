@@ -6,6 +6,7 @@ pub(crate) mod types;
 pub mod apsde;
 
 mod aib;
+pub mod apdu;
 /// The APS management entity provides a variety of services to application
 /// objects including security services and binding of devices.
 /// It also maintains a database of managed objects, known as the APS
