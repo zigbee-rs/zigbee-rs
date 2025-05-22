@@ -16,14 +16,30 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [dependencies]
-esp-hal = { version = "0.22.0", default-features = false, features = ["esp32c6"] }
-esp-backtrace = { version = "0.14.0", features = [
-    "esp32c6",
+esp-hal = { version = "0.23.1", default-features = false, features = ["log"] }
+esp-backtrace = { version = "0.15.1", features = [
     "exception-handler",
     "panic-handler",
     "println",
 ] }
-esp-println = { version = "0.12.0", features = ["esp32c6", "log"] }
-log = { version = "0.4.21" }
+esp-storage = { version = "0.5.0", optional = true }
+esp-println = { version = "0.13.1", features = ["log"] }
+log = "0.4.21"
+
 zigbee = { path = "../../" }
+
+# zigbee-cluster-library = { path = "../../../zigbee-cluster-library" }
+# zigbee-cluster-library = { version = "0.1.0-alpha.1" }
+
+
+
+[features]
+default = ["esp32c6"]
+esp32   = ["esp-hal/unstable", "esp-hal/esp32",   "esp-backtrace/esp32",   "esp-println/esp32",   "esp-storage?/esp32"]
+esp32c2 = ["esp-hal/unstable", "esp-hal/esp32c2", "esp-backtrace/esp32c2", "esp-println/esp32c2", "esp-storage?/esp32c2"]
+esp32c3 = ["esp-hal/unstable", "esp-hal/esp32c3", "esp-backtrace/esp32c3", "esp-println/esp32c3", "esp-storage?/esp32c3"]
+esp32c6 = ["esp-hal/unstable", "esp-hal/esp32c6", "esp-backtrace/esp32c6", "esp-println/esp32c6", "esp-storage?/esp32c6"]
+esp32h2 = ["esp-hal/unstable", "esp-hal/esp32h2", "esp-backtrace/esp32h2", "esp-println/esp32h2", "esp-storage?/esp32h2"]
+esp32s2 = ["esp-hal/unstable", "esp-hal/esp32s2", "esp-backtrace/esp32s2", "esp-println/esp32s2", "esp-storage?/esp32s2"]
+esp32s3 = ["esp-hal/unstable", "esp-hal/esp32s3", "esp-backtrace/esp32s3", "esp-println/esp32s3", "esp-storage?/esp32s3"]
 
