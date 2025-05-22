@@ -8,7 +8,7 @@ impl_byte! {
     /// Auxiliary Frame Header Format
     ///
     /// See Section 4.5.1.
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Copy)]
     pub struct AuxFrameHeader {
         /// Security control
         pub security_control: SecurityControl,
@@ -19,7 +19,7 @@ impl_byte! {
         pub source_address: Option<IeeeAddress>,
         /// Set only if [`SecurityControl::key_identifier`] is `1`.
         #[parse_if = security_control.is_network_key()]
-        pub key_sequence_numner: Option<u8>,
+        pub key_sequence_number: Option<u8>,
     }
 }
 
@@ -45,7 +45,11 @@ impl SecurityControl {
     /// Indicates how a frame is secured.
     pub fn security_level(&self) -> SecurityLevel {
         // SAFETY: any 3 bit permutation is a valid SecurityLevel
-        unsafe { mem::transmute(self.0 & 0b111) }
+        unsafe { mem::transmute(self.0 & mask::SECURITY_LEVEL) }
+    }
+
+    pub fn set_security_level(&mut self, level: SecurityLevel) {
+        self.0 = (self.0 & !mask::SECURITY_LEVEL) | ((level as u8) << offset::SECURITY_LEVEL);
     }
 
     /// Identifies the key in use.
@@ -62,6 +66,18 @@ impl SecurityControl {
     pub fn extended_nonce(&self) -> bool {
         self.0 >> 5 != 0
     }
+}
+
+mod mask {
+    pub const SECURITY_LEVEL: u8 = 0b0000_0111;
+    pub const KEY_IDENTIFIER: u8 = 0b0001_1000;
+    pub const EXTENDED_NONCE: u8 = 0b0010_0000;
+}
+
+mod offset {
+    pub const SECURITY_LEVEL: u8 = 0;
+    pub const KEY_IDENTIFIER: u8 = 3;
+    pub const EXTENDED_NONCE: u8 = 5;
 }
 
 /// Security Level

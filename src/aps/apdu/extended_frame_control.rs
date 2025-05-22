@@ -16,7 +16,7 @@ impl_byte! {
 
 impl_byte! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct ExtendedFrameControl {
+    pub struct ExtendedFrameControl {
         fragmentation: Fragmentation
     }
 }
