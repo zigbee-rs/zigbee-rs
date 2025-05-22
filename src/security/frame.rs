@@ -8,6 +8,7 @@ impl_byte! {
     /// Auxiliary Frame Header Format
     ///
     /// See Section 4.5.1.
+    #[derive(Debug)]
     pub struct AuxFrameHeader {
         /// Security control
         pub security_control: SecurityControl,
@@ -28,6 +29,16 @@ impl_byte! {
     /// See Section 4.5.1.1.
     #[derive(Clone, Copy)]
     pub struct SecurityControl(pub u8);
+}
+
+impl core::fmt::Debug for SecurityControl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SecurityControl")
+            .field("security_level", &self.security_level())
+            .field("key_identifier", &self.key_identifier())
+            .field("extended_nonce", &self.extended_nonce())
+            .finish()
+    }
 }
 
 impl SecurityControl {
@@ -69,6 +80,17 @@ pub enum SecurityLevel {
     EncMic32 = 0b101,
     EncMic64 = 0b110,
     EncMic128 = 0b111,
+}
+
+impl SecurityLevel {
+    pub fn mic_length(&self) -> usize {
+        match self {
+            Self::EncMic32 | Self::Mic32 => 4,
+            Self::EncMic64 | Self::Mic64 => 8,
+            Self::EncMic128 | Self::Mic128 => 16,
+            Self::None | Self::Enc => 0,
+        }
+    }
 }
 
 /// Key Identifier
