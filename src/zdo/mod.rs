@@ -2,11 +2,14 @@ use config::Config;
 
 pub mod config;
 use crate::aps::apsme::Apsme;
+use crate::aps::apsde::{Apsde, ApsdeSap, ApsdeSapRequest};
+use crate::common::parse::PackBytes;
 
 /// provides an interface between the appication object, the device profile and the APS
 pub struct ZigbeeDevice {
     config: Config,
     apsme: Apsme,
+    apsde: Apsde,
 }
 
 /// zigbee network
@@ -18,6 +21,7 @@ impl ZigbeeDevice {
         Self {
             config: Config::default(),
             apsme: Apsme::new(),
+            apsde: Apsde::new(),
         }
     }
 
@@ -51,7 +55,27 @@ impl ZigbeeDevice {
 
     pub fn send_keep_alive(&self) {}
 
-    pub fn send_data(&self, _input: &[u8]) {}
+    // pub fn send_data(&self, data: &[u8]) {}
+    pub fn send_data(&self, _data: impl PackBytes) {
+        self.apsde.data_request(
+            ApsdeSapRequest {
+                dst_addr_mode: todo!(),
+                dst_address: todo!(),
+                dst_endpoint: todo!(),
+                profile_id: todo!(),
+                cluster_id: todo!(),
+                src_endpoint: todo!(),
+                asdulength: todo!(),
+                asdu: todo!(),
+                tx_options: todo!(),
+                use_alias: todo!(),
+                alias_src_addr: todo!(),
+                alias_seq_number: todo!(),
+                radius_counter: todo!(),
+            }
+        );
+    }
+    
 
     /// 2.1.3.1 - Device Discovery
     /// is the process whereby a ZigBee device can discover other ZigBee

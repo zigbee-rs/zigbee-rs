@@ -1,10 +1,14 @@
 use heapless::LinearMap;
 use heapless::Vec;
 
-/// 2.2.7.2 - AIB (APS Information Base Attributes)
-#[derive(Default)]
-pub struct ApsInformationBase {
-    attributes: LinearMap<u8, AIBAttribute, 265>,
+use crate::impl_byte;
+
+impl_byte! {
+    /// 2.2.7.2 - AIB (APS Information Base Attributes)
+    #[derive(Default)]
+    pub struct ApsInformationBase {
+        attributes: LinearMap<u8, AIBAttribute, 265>,
+    }
 }
 
 impl ApsInformationBase {

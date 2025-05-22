@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use crate::impl_byte;
+
 use super::error::ApsError;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -38,9 +40,11 @@ pub enum TxOptions {
     IncludeExtendedNonce = 0x10,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct SrcEndpoint {
-    pub(crate) value: u8,
+impl_byte! {
+    #[derive(Debug, Clone, Default, PartialEq)]
+    pub struct SrcEndpoint {
+        pub(crate) value: u8,
+    }
 }
 
 impl SrcEndpoint {
