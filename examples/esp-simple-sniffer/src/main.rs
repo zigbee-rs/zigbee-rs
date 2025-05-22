@@ -4,13 +4,14 @@
 use core::fmt::Display;
 use core::str;
 
+use byte::TryRead;
 use esp_backtrace as _;
-use esp_hal::prelude::*;
+use esp_hal::esp_riscv_rt::entry;
 use esp_ieee802154::*;
 use esp_println::println;
 use ieee802154::mac::Address;
-use zigbee_rs::nwk::frame::NwkFrame;
-use zigbee_rs::PackBytes;
+use zigbee::nwk::frame::Frame as NwkFrame;
+use zigbee::security::SecurityContext;
 
 #[entry]
 fn main() -> ! {
@@ -40,13 +41,13 @@ fn print_ieee802154_mac_frame(frame: &ReceivedFrame) -> Option<&[u8]> {
     let frame = &frame.frame;
     let header = frame.header;
 
-    println!(
-        "[IEEE 802.15.4] [{frame_type:?}] [Dest: {}] [Src: {}] [Payload size: {size}B]",
-        PrintableAddress(header.destination),
-        PrintableAddress(header.source),
-        frame_type = frame.content,
-        size = frame.payload.len(),
-    );
+    //println!(
+    //    "[IEEE 802.15.4] [{frame_type:?}] [Dest: {}] [Src: {}] [Payload size:
+    // {size}B]",    PrintableAddress(header.destination),
+    //    PrintableAddress(header.source),
+    //    frame_type = frame.content,
+    //    size = frame.payload.len(),
+    //);
 
     match frame.content {
         ieee802154::mac::FrameContent::Data => Some(&frame.payload),
@@ -58,31 +59,44 @@ fn print_zigbee_nwk_frame(payload: &[u8]) -> Option<&[u8]> {
     let mut buf = [0u8; 256];
     hex::encode_to_slice(payload, &mut buf[0..(payload.len() * 2)]).unwrap();
     let s = unsafe { str::from_utf8_unchecked(&buf) };
-    println!("  [ZIGBEE] payload: {s}");
 
-    let nwk_frame = NwkFrame::unpack_from_slice(payload)?;
-    let frame_type = nwk_frame.frame_type_identifier();
+    let (nwk_frame, _) = NwkFrame::try_read(payload, SecurityContext::no_security()).unwrap();
     match nwk_frame {
         NwkFrame::Data(nwk_data_frame) => {
-            println!(
-                "  [ZIGBEE] [NWK] [{frame_type:?}] [Payload size: {size}B]",
-                size = nwk_data_frame.payload.len(),
-            );
+            //println!(
+            //    "  [ZIGBEE] [NWK] [Security Header: {:?}]",
+            //    nwk_data_frame.aux_header
+            //);
+            //println!(
+            //    "  [ZIGBEE] [NWK] [Data] [Security: {security}] [Payload size: {size}B]",
+            //    security = nwk_data_frame.header.frame_control.security_flag(),
+            //    size = nwk_data_frame.payload.len(),
+            //);
 
             None
         }
         NwkFrame::NwkCommand(nwk_command_frame) => {
             let method = nwk_command_frame.header.frame_control.transmission_method();
+            //println!(
+            //    "  [ZIGBEE] [NWK] [Security Header: {:?}]",
+            //    nwk_command_frame.aux_header
+            //);
+            println!("  [ZIGBEE] payload: {s}");
+            println!("  [ZIGBEE] header: {:?}", nwk_command_frame.header);
             println!(
-                "  [ZIGBEE] [NWK] [{frame_type:?}] [{cmd_type:?}] [{method:?}] [Payload size: {size}B]",
-                cmd_type = nwk_command_frame.command_identifier,
-                size = nwk_command_frame.payload.len(),
+                "  [ZIGBEE] [NWK] [Command] [Security: {security}] [{cmd_type:?}] [{method:?}]",
+                security = nwk_command_frame.header.frame_control.security_flag(),
+                cmd_type = nwk_command_frame.command,
             );
 
             None
         }
-        NwkFrame::Reserved(_) | NwkFrame::InterPan(_) => {
-            println!("  [ZIGBEE] [NWK] [{frame_type:?}]");
+        NwkFrame::Reserved(_) => {
+            println!("  [ZIGBEE] [NWK] [Reserved]");
+            None
+        }
+        NwkFrame::InterPan(_) => {
+            println!("  [ZIGBEE] [NWK] [InterPan]");
             None
         }
     }

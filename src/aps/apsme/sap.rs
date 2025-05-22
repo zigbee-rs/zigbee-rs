@@ -1,5 +1,6 @@
 use core::ops::Not;
 
+use super::basemgt;
 use super::basemgt::ApsmeAddGroupConfirm;
 use super::basemgt::ApsmeAddGroupRequest;
 use super::basemgt::ApsmeBindConfirm;
@@ -15,13 +16,9 @@ use super::basemgt::ApsmeSetConfirm;
 use super::basemgt::ApsmeUnbindConfirm;
 use super::basemgt::ApsmeUnbindRequest;
 use super::basemgt::ApsmeUnbindRequestStatus;
+use super::Apsme;
 
 use crate::aps::aib::AIBAttribute;
-use crate::nwk::nlme::management::NlmeJoinRequest;
-use crate::nwk::nlme::management::NlmeJoinStatus;
-use crate::nwk::nlme::management::NlmeNetworkDiscoveryRequest;
-use crate::nwk::nlme::Nlme;
-use crate::nwk::nlme::NlmeSap;
 
 
 /// Application support sub-layer management service - service access point

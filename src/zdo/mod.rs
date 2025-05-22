@@ -1,9 +1,10 @@
 use config::Config;
 
 pub mod config;
+use crate::aps::apsde::request::ApsdeSapRequest;
+use crate::aps::apsde::sap::ApsdeSap;
 use crate::aps::apsme::Apsme;
-use crate::aps::apsde::{Apsde, ApsdeSap, ApsdeSapRequest};
-use crate::common::parse::PackBytes;
+use crate::aps::apsde::Apsde;
 
 /// provides an interface between the appication object, the device profile and the APS
 pub struct ZigbeeDevice {
@@ -55,8 +56,7 @@ impl ZigbeeDevice {
 
     pub fn send_keep_alive(&self) {}
 
-    // pub fn send_data(&self, data: &[u8]) {}
-    pub fn send_data(&self, _data: impl PackBytes) {
+    pub fn send_data(&self, _data: &[u8]) {
         self.apsde.data_request(
             ApsdeSapRequest {
                 dst_addr_mode: todo!(),

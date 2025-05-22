@@ -75,13 +75,14 @@ impl Apsme {
     }
 
     // 2.2.8.2.2 Binding
-    fn add_binding(&mut self, address: Address) -> Result<(), &'static str> {
-        self.binding_table.create_binding_link(address);
+    fn add_binding(&self, _address: Address) -> Result<(), &'static str> {
+        // TODO: fix binding
+        // self.binding_table.create_binding_link(address);
 
         Ok(())
     }
 
-    fn remove_binding(&mut self, address: Address) -> Result<(), &'static str> {
+    fn remove_binding(&self, _address: Address) -> Result<(), &'static str> {
         // TODO: update binding table
         // self.binding_table.retain(|addr| addr != &address);
 

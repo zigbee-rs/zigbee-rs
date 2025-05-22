@@ -25,5 +25,5 @@ esp-backtrace = { version = "0.14.0", features = [
 ] }
 esp-println = { version = "0.12.0", features = ["esp32c6", "log"] }
 log = { version = "0.4.21" }
-# zigbee = { path = "../../" }
+zigbee = { path = "../../" }
 

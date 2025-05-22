@@ -2,8 +2,6 @@
 use heapless::Vec;
 use thiserror::Error;
 
-use crate::impl_byte;
-
 use super::apsme::basemgt::ApsmeBindRequest;
 use super::apsme::basemgt::ApsmeUnbindRequest;
 use super::types::Address;
@@ -14,21 +12,17 @@ pub enum DesignatedDestination {
     GroupAddress(u16),
 }
 
-impl_byte! {
-    #[derive(Clone, Eq, PartialEq)]
-    pub(crate) struct Binding {
-        source: Address,
-        endpoint: u8,
-        cluster_id: u16,
-    }
+#[derive(Clone, PartialEq)]
+pub(crate) struct Binding {
+    source: Address,
+    endpoint: u8,
+    cluster_id: u16,
 }
 
-impl_byte! {
-    /// 2.2.8.2
-    pub(crate) struct ApsBindingTable {
-        // TODO: limit the size
-        entries: Vec<Binding, 265>,
-    }
+/// 2.2.8.2
+pub(crate) struct ApsBindingTable {
+    // TODO: limit the size
+    entries: Vec<Binding, 265>,
 }
 
 pub(crate) struct ApsGroupTable {}
