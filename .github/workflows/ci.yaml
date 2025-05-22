@@ -52,7 +52,7 @@ jobs:
         uses: hrishikesh-kadam/setup-lcov@v1
 
       - name: Cache dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         env:
           cache-name: cache-dependencies
         with:
@@ -76,7 +76,7 @@ jobs:
         run: grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing -o ./target/debug/coverage
 
       - name: Report code coverage
-        uses: zgosalvez/github-actions-report-lcov@v3
+        uses: zgosalvez/github-actions-report-lcov@v4
         with:
           coverage-files: ./target/debug/coverage
           minimum-coverage: 14
