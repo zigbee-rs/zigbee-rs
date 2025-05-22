@@ -20,7 +20,7 @@ impl FrameControl {
     /// Sets the frame type
     #[must_use]
     pub fn set_frame_type(mut self, value: FrameType) -> Self {
-        self.0 |= (value as u8) << offset::FRAME_TYPE;
+        self.0 = (self.0 & !mask::FRAME_TYPE) | (value as u8) << offset::FRAME_TYPE;
         self
     }
 

@@ -10,13 +10,13 @@ use crate::{common::types::ShortAddress, impl_byte};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Header {
     pub frame_control: FrameControl,
-    pub destination: ShortAddress,
-    pub group_address: ShortAddress,
-    pub cluster_id: u8,
-    pub profile_id: u8,
-    pub source_endpoint: ShortAddress,
+    pub destination: Option<ShortAddress>,
+    pub group_address: Option<ShortAddress>,
+    pub cluster_id: Option<u8>,
+    pub profile_id: Option<u8>,
+    pub source_endpoint: Option<ShortAddress>,
     pub counter: u8,
-    pub extended_header: bool,
+    pub extended_header: Option<bool>,
 }
 
 impl<'a> TryRead<'a> for Header {
@@ -25,14 +25,14 @@ impl<'a> TryRead<'a> for Header {
 
         let frame_control: FrameControl<'a> = bytes.read_with(offset, ())?;
 
-        let destination: Option<u8> = if frame_control.delivery_mode() == DeliveryMode::Unicast {
-            Some(bytes.read_with(offset, ())?) 
+        let destination: Option<ShortAddress> = if frame_control.delivery_mode() == DeliveryMode::Unicast {
+            Some(ShortAddress(bytes.read_with(offset, ())?)) 
         } else {
             None
         };
 
-        let group_address: Option<u8> = if frame_control.delivery_mode() == DeliveryMode::GroubAddressing {
-            Some(bytes.read_with(offset, ())?)
+        let group_address: Option<ShortAddress> = if frame_control.delivery_mode() == DeliveryMode::GroubAddressing {
+            Some(ShortAddress(bytes.read_with(offset, ())?))
         } else {
             None
         };
@@ -44,6 +44,20 @@ impl<'a> TryRead<'a> for Header {
             },
             _ => None
         };
+
+        let profile_id: Option<u8> = match frame_control.frame_type() {
+            super::frame::FrameType::Data |
+            super::frame::FrameType::Acknowledtement => {
+                Some(bytes.read_with(offset, ())?)
+            },
+            _ => None
+        };
+
+        let source_endpoint = Some(bytes.read_with(offset, ())?);
+
+        let counter: u8 = bytes.read_with(offset, ())?;
+
+        let extended_header: ExtendedFrameControlField<'a> = bytes.read_with(offset, ())?;
 
         let header = Self {
             frame_control,
