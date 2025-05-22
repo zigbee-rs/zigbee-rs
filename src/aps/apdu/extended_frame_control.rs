@@ -1,4 +1,7 @@
-use byte::{BytesExt, TryRead, TryWrite, LE};
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
+use byte::LE;
 
 use crate::impl_byte;
 
@@ -13,7 +16,7 @@ impl_byte! {
 
 impl_byte! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    struct ExtendedFrameControl {
+    pub struct ExtendedFrameControl {
         fragmentation: Fragmentation
     }
 }
@@ -52,4 +55,3 @@ impl TryWrite<byte::ctx::Endian> for Fragmentation {
         Ok(*offset)
     }
 }
-

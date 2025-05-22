@@ -36,42 +36,10 @@ impl<'a> TryRead<'a, SecurityContext> for Frame<'a> {
 
         let frame = match header.frame_control.frame_type() {
             FrameType::Data => {
-                let (aux_header, payload) = if has_security {
-                    let aux_header: AuxFrameHeader = bytes.read_with(offset, ())?;
-                    let payload = cx.unsecure_frame(&aux_header, bytes, offset)?;
-                    (Some(aux_header), payload)
-                } else {
-                    (
-                        None,
-                        bytes.read_with(offset, ctx::Bytes::Len(bytes.len() - *offset))?,
-                    )
-                };
-
-                let data_frame = DataFrame {
-                    header,
-                    aux_header,
-                    payload,
-                };
-                Self::Data(data_frame)
+                unimplemented!()
             }
             FrameType::NwkCommand => {
-                let (aux_header, bytes): (_, &[u8]) = if has_security {
-                    let aux_header: AuxFrameHeader = bytes.read_with(offset, ())?;
-                    let payload = cx.unsecure_frame(&aux_header, bytes, offset)?;
-                    (Some(aux_header), payload)
-                } else {
-                    (
-                        None,
-                        bytes.read_with(offset, ctx::Bytes::Len(bytes.len() - *offset))?,
-                    )
-                };
-
-                let cmd_frame = CommandFrame {
-                    header,
-                    aux_header,
-                    command: bytes.read_with(&mut 0, ())?,
-                };
-                Self::NwkCommand(cmd_frame)
+                unimplemented!()
             }
             FrameType::Reserved => Self::Reserved(header),
             FrameType::InterPan => Self::InterPan(header),
