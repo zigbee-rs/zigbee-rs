@@ -70,9 +70,9 @@ impl_pack_bytes! {
     #[derive(Debug)]
     #[allow(missing_docs)]
     pub struct NwkDataFrame {
-        #[transparent(NwkHeader)]
+        #[pack = true]
         pub header: NwkHeader,
-        #[collect(Vec<u8, PAYLOAD_SIZE>)]
+        #[pack = true]
         pub payload: Vec<u8, PAYLOAD_SIZE>,
     }
 }
@@ -84,11 +84,11 @@ impl_pack_bytes! {
     #[derive(Debug)]
     #[allow(missing_docs)]
     pub struct NwkCommandFrame {
-        #[transparent(NwkHeader)]
+        #[pack = true]
         pub header: NwkHeader,
-        #[transparent(CommandFrameIdentifier)]
+        #[pack = true]
         pub command_identifier: CommandFrameIdentifier,
-        #[collect(Vec<u8, PAYLOAD_SIZE>)]
+        #[pack = true]
         pub payload: Vec<u8, PAYLOAD_SIZE>,
     }
 }
@@ -128,65 +128,47 @@ impl PackBytes for CommandFrameIdentifier {
     }
 }
 
-/// 3.3.1 General NPDU Frame Format
-#[derive(Debug)]
-pub struct NwkHeader {
-    /// See Section 3.3.1.1.
-    pub frame_control: FrameControl,
-    /// See Section 3.3.1.2.
-    pub destination: ShortAddress,
-    /// See Section 3.3.1.3.
-    pub source: ShortAddress,
-    /// See Section 3.3.1.4.
-    pub radius: u8,
-    /// See Section 3.3.1.5.
-    pub sequence_number: u8,
-    /// Set only if [`FrameControl::destination_ieee_flag`] is `true`.
-    /// See Section 3.3.1.6.
-    pub destination_ieee: Option<IeeeAddress>,
-    /// Set only if [`FrameControl::source_ieee_flag`] is `true`.
-    /// See Section 3.3.1.7.
-    pub source_ieee: Option<IeeeAddress>,
-    /// Set only if [`FrameControl::multicast_flag`] is `true`.
-    /// See Section 3.3.1.8.
-    pub multicast_control: Option<MulticastControl>,
-    /// Set only if [`FrameControl::source_flag`] is `true`.
-    /// See Section 3.3.1.9.
-    pub source_route_subframe: Option<SourceRouteSubframe>,
-}
-
-impl PackBytes for NwkHeader {
-    fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self> {
-        let mut src = src.into_iter();
-        let frame_control = FrameControl::unpack_from_iter(&mut src)?;
-        Some(Self {
-            destination: PackBytes::unpack_from_iter(&mut src)?,
-            source: PackBytes::unpack_from_iter(&mut src)?,
-            radius: src.next()?,
-            sequence_number: src.next()?,
-            destination_ieee: frame_control
-                .destination_ieee_flag()
-                .then(|| PackBytes::unpack_from_iter(&mut src))
-                .flatten(),
-            source_ieee: frame_control
-                .source_ieee_flag()
-                .then(|| PackBytes::unpack_from_iter(&mut src))
-                .flatten(),
-            multicast_control: frame_control
-                .multicast_flag()
-                .then(|| MulticastControl::unpack_from_iter(&mut src))
-                .flatten(),
-            source_route_subframe: frame_control
-                .source_flag()
-                .then(|| SourceRouteSubframe::unpack_from_iter(src))
-                .flatten(),
-            frame_control,
-        })
+impl_pack_bytes! {
+    /// 3.3.1 General NPDU Frame Format
+    #[derive(Debug)]
+    pub struct NwkHeader {
+        /// See Section 3.3.1.1.
+        #[control_header = FrameControl]
+        pub frame_control: FrameControl,
+        /// See Section 3.3.1.2.
+        #[pack = true]
+        pub destination: ShortAddress,
+        /// See Section 3.3.1.3.
+        #[pack = true]
+        pub source: ShortAddress,
+        /// See Section 3.3.1.4.
+        #[pack = true]
+        pub radius: u8,
+        /// See Section 3.3.1.5.
+        #[pack = true]
+        pub sequence_number: u8,
+        /// Set only if [`FrameControl::destination_ieee_flag`] is `true`.
+        /// See Section 3.3.1.6.
+        #[pack_if = FrameControl::destination_ieee_flag]
+        pub destination_ieee: Option<IeeeAddress>,
+        /// Set only if [`FrameControl::source_ieee_flag`] is `true`.
+        /// See Section 3.3.1.7.
+        #[pack_if = FrameControl::source_ieee_flag]
+        pub source_ieee: Option<IeeeAddress>,
+        /// Set only if [`FrameControl::multicast_flag`] is `true`.
+        /// See Section 3.3.1.8.
+        #[pack_if = FrameControl::multicast_flag]
+        pub multicast_control: Option<MulticastControl>,
+        /// Set only if [`FrameControl::source_flag`] is `true`.
+        /// See Section 3.3.1.9.
+        #[pack_if = FrameControl::source_flag]
+        pub source_route_subframe: Option<SourceRouteSubframe>,
     }
 }
 
 impl_pack_bytes! {
     /// 3.3.1.1 Frame Control Field
+    #[derive(Clone, Copy)]
     pub struct FrameControl(pub u16);
 }
 
@@ -384,18 +366,18 @@ impl_pack_bytes! {
         /// Indicates the number of relays contained in [`SourceRouteSubframe::relay_list`].
         ///
         /// See Section 3.3.1.9.1.
-        #[transparent(u8)]
+        #[pack = true]
         pub relay_count: u8,
         /// Indicates the index of the next relay in [`SourceRouteSubframe::relay_list`] to
         /// which the packet will be transmitted.
         ///
         /// See Section 3.3.1.9.2.
-        #[transparent(u8)]
+        #[pack = true]
         pub relay_index: u8,
         /// List of relay addresses from closest to the destination to closest to the originator.
         ///
         /// See Section 3.3.1.9.2.
-        #[collect(Vec<u8, RELAY_LIST_SIZE>)]
+        #[pack = true]
         pub relay_list: Vec<u8, RELAY_LIST_SIZE>,
     }
 }
