@@ -1,10 +1,8 @@
 //! APS Frame Header
-use core::mem;
-
 use byte::{BytesExt, TryRead};
 
-use super::frame::{DeliveryMode, FrameControl};
-use crate::{common::types::ShortAddress, impl_byte};
+use super::{extended_frame_control::ExtendedFrameControlField, frame::{DeliveryMode, FrameControl}};
+use crate::common::types::ShortAddress;
 
 /// 2.2.5.1 General APDU Frame Format
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,14 +14,14 @@ pub struct Header {
     pub profile_id: Option<u8>,
     pub source_endpoint: Option<ShortAddress>,
     pub counter: u8,
-    pub extended_header: Option<bool>,
+    pub extended_header: ExtendedFrameControlField,
 }
 
-impl<'a> TryRead<'a> for Header {
-    fn try_read(bytes: &'a [u8]) -> byte::Result<(Self, usize)> {
+impl TryRead<'_, ()> for Header {
+    fn try_read(bytes: &'_ [u8], _: ()) -> byte::Result<(Self, usize)> {
         let offset = &mut 0;
 
-        let frame_control: FrameControl<'a> = bytes.read_with(offset, ())?;
+        let frame_control: FrameControl = bytes.read_with(offset, ())?;
 
         let destination: Option<ShortAddress> = if frame_control.delivery_mode() == DeliveryMode::Unicast {
             Some(ShortAddress(bytes.read_with(offset, ())?)) 
@@ -57,7 +55,7 @@ impl<'a> TryRead<'a> for Header {
 
         let counter: u8 = bytes.read_with(offset, ())?;
 
-        let extended_header: ExtendedFrameControlField<'a> = bytes.read_with(offset, ())?;
+        let extended_header: ExtendedFrameControlField  = bytes.read_with(offset, ())?;
 
         let header = Self {
             frame_control,
