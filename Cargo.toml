@@ -21,5 +21,3 @@ strum = { version = "0.27.1", features = ["derive"], default-features = false }
 thiserror = { version = "2.0.6", default-features = false }
 byte = "0.2.7"
 
-[dev-dependencies]
-hex = "0.4.3"
