@@ -9,7 +9,7 @@ description = "ZigBee protocol stack in `no-std` based on the [ZigBee specificat
 documentation = "https://docs.rs/zigbee"
 repository = "https://github.com/thebino/zigbee-rs"
 readme = "README.md"
-keywords = ["zigbee", "208.15.4"]
+keywords = ["zigbee", "ieee802154", "embedded", "iot"]
 categories = ["network-programming", "no-std", "embedded"]
 license = "MIT OR Apache-2.0"
 
