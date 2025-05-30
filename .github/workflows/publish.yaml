@@ -6,8 +6,6 @@ env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
   CARGO_TERM_VERBOSE: 'true'
-  RUSTFLAGS: -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
-  RUSTDOCFLAGS: -Cpanic=abort
 
 permissions:
   contents: write
