@@ -1,12 +1,12 @@
 //! 2.3.2.3 Node Descriptor
 //!
-//! The node descriptor contains information about the capabilities of the ZigBee node and is mandatory for each node.  There shall be only one node descriptor in a node.  
+//! The node descriptor contains information about the capabilities of the
+//! ZigBee node and is mandatory for each node.  There shall be only one node
+//! descriptor in a node.
 
 use heapless::FnvIndexSet;
 use heapless::Vec;
 use strum::EnumCount;
-
-use crate::common::types::macros::bitfield_bits;
 
 const NODE_DESCRIPTOR_SIZE: usize = 13;
 
@@ -116,7 +116,8 @@ impl NodeDescriptor {
 }
 
 // 2.3.2.3.1 Logical Type Field
-// The logical type field of the node descriptor is three bits in length and specifies the device type of the ZigBee node.
+// The logical type field of the node descriptor is three bits in length and
+// specifies the device type of the ZigBee node.
 #[repr(u8)]
 #[derive(Debug, Default, PartialEq)]
 pub enum LogicalType {
@@ -139,13 +140,17 @@ impl From<u8> for LogicalType {
 }
 
 // 2.3.2.3.4 APS Flags Field
-// The APS flags field of the node descriptor is three bits in length and specifies the application support sub-layer capabilities of the node.
+// The APS flags field of the node descriptor is three bits in length and
+// specifies the application support sub-layer capabilities of the node.
 // This field is currently not supported and shall be set to zero.
 
 // 2.3.2.3.5 Frequency Band Field
-// The frequency band field of the node descriptor is five bits in length and specifies the frequency bands that are supported by the underlying IEEE 802.15.4 radio(s) utilized by the node.
-// For each frequency band supported by any  physically present underlying IEEE 802.15.4 radio, the corresponding bit of the frequency band field, shall be set to 1.
-// All other bits shall be set to 0.
+// The frequency band field of the node descriptor is five bits in length and
+// specifies the frequency bands that are supported by the underlying IEEE
+// 802.15.4 radio(s) utilized by the node. For each frequency band supported by
+// any  physically present underlying IEEE 802.15.4 radio, the corresponding bit
+// of the frequency band field, shall be set to 1. All other bits shall be set
+// to 0.
 pub struct FrequencyBands(u8);
 
 #[repr(u8)]
@@ -183,30 +188,39 @@ impl FrequencyBands {
 }
 
 // 2.3.2.3.6 MAC Capability Flags Field
-// The MAC capability flags field is eight bits in length and specifies the node capabilities, as required by the IEEE  802.15.4-2015 MAC sub-layer [B1].
+// The MAC capability flags field is eight bits in length and specifies the node
+// capabilities, as required by the IEEE  802.15.4-2015 MAC sub-layer [B1].
 pub struct MacCapabilities(u8);
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq, EnumCount)]
 pub enum MacCapabilityFlag {
-    /// The alternate PAN coordinator sub-field is one bit in length and shall be set to 1 if this node is capable of becoming a PAN coordinator.
+    /// The alternate PAN coordinator sub-field is one bit in length and shall
+    /// be set to 1 if this node is capable of becoming a PAN coordinator.
     /// Otherwise, the alternative PAN coordinator sub-field shall be set to 0.
     AlternatePanCoordinator = 0,
-    /// The device type sub-field is one bit in length and shall be set to 1 if this node is a full function device (FFD).
-    /// Otherwise, the device type sub-field shall be set to 0, indicating a reduced function device (RFD).
+    /// The device type sub-field is one bit in length and shall be set to 1 if
+    /// this node is a full function device (FFD). Otherwise, the device
+    /// type sub-field shall be set to 0, indicating a reduced function device
+    /// (RFD).
     DeviceType = 1,
-    /// The power source sub-field is one bit in length and shall be set to 1 if the current power source is mains power.
-    /// Otherwise, the power source sub-field shall be set to 0.
-    /// This information is derived from the node current power source field of the node power descriptor.
+    /// The power source sub-field is one bit in length and shall be set to 1 if
+    /// the current power source is mains power. Otherwise, the power source
+    /// sub-field shall be set to 0. This information is derived from the
+    /// node current power source field of the node power descriptor.
     PowerSource = 2,
-    /// The receiver on when idle sub-field is one bit in length and shall be set to 1 if the device does not disable its receiver to conserve power during idle periods.
-    /// Otherwise, the receiver on when idle sub-field shall be set to 0.
+    /// The receiver on when idle sub-field is one bit in length and shall be
+    /// set to 1 if the device does not disable its receiver to conserve power
+    /// during idle periods. Otherwise, the receiver on when idle sub-field
+    /// shall be set to 0.
     ReceiverOnWhenIdle = 3,
-    /// The security capability sub-field is one bit in length and shall be set to 1 if the device is capable of sending
-    /// and receiving frames secured using the security suite specified in [B1].
-    /// Otherwise, the security capability sub-field shall be set to 0.
+    /// The security capability sub-field is one bit in length and shall be set
+    /// to 1 if the device is capable of sending and receiving frames
+    /// secured using the security suite specified in [B1]. Otherwise, the
+    /// security capability sub-field shall be set to 0.
     SecurityCapability = 6,
-    /// The allocate address sub-field is one bit in length and shall be set to 0 or 1
+    /// The allocate address sub-field is one bit in length and shall be set to
+    /// 0 or 1
     AllocateAddress = 7,
 }
 
@@ -305,6 +319,7 @@ impl DescriptorCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::types::macros::bitfield_bits;
 
     #[test]
     fn creating_frequency_bands_should_succeed() {
