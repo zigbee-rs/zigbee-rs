@@ -19,6 +19,8 @@ Zigbee is a wireless communication technology designed for low-power devices in 
 
 It enables these devices to connect and communicate with each other, allowing for efficient control and automation of various systems.
 
+This crate aims to fully implement the [ZigBee specification 22 1.0](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
+
 <p align="center">
 <img src="./docs/stack_architecture_outline.png" alt="Outline of the ZigBee Stack Architecture" width="700" /><br />
 <span>Outline of the ZigBee Stack Architecture</span>
