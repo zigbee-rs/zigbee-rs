@@ -5,7 +5,7 @@ authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 edition = "2018"
 rust-version = "1.50"
 
-description = "ZigBee protocol stack in `no-std` based on the [ZigBee specification 22 1.0](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)"
+description = "ZigBee protocol stack in `no-std` based on the ZigBee specification 22 1.0"
 documentation = "https://docs.rs/zigbee"
 repository = "https://github.com/thebino/zigbee-rs"
 readme = "README.md"
