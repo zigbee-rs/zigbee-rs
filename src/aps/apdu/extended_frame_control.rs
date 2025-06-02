@@ -1,13 +1,13 @@
-use byte::{BytesExt, TryRead, TryWrite};
+use byte::{BytesExt, TryRead, TryWrite, LE};
 
 use crate::impl_byte;
 
 impl_byte! {
     #[derive(Clone, Debug, Eq, PartialEq)]
-    pub(crate) struct ExtendedFrameControlField {
+    pub struct ExtendedFrameControlField {
         pub extended_frame_control: ExtendedFrameControl,
-        pub block_number: BlockNumber,
-        pub ack_bitfield: AckBitfield,
+        pub block_number: u8,
+        pub ack_bitfield: u8,
     }
 }
 
@@ -30,10 +30,10 @@ pub enum Fragmentation {
     Reserved = 0b11,
 }
 
-impl TryRead<'_, ()> for Fragmentation {
-    fn try_read(bytes: &'_ [u8], _: ()) -> byte::Result<(Self, usize)> {
+impl TryRead<'_, byte::ctx::Endian> for Fragmentation {
+    fn try_read(bytes: &'_ [u8], _: byte::ctx::Endian) -> byte::Result<(Self, usize)> {
         let offset = &mut 0;
-        let id: u8 = bytes.read_with(offset, ())?;
+        let id: u8 = bytes.read_with(offset, LE)?;
         let command = match id {
             0b00 => Self::NoFragmentation,
             0b01 => Self::Fragmentation,
@@ -45,28 +45,11 @@ impl TryRead<'_, ()> for Fragmentation {
     }
 }
 
-impl TryWrite for Fragmentation {
-    fn try_write(self, bytes: &mut [u8], _: ()) -> byte::Result<usize> {
+impl TryWrite<byte::ctx::Endian> for Fragmentation {
+    fn try_write(self, bytes: &mut [u8], _: byte::ctx::Endian) -> byte::Result<usize> {
         let offset = &mut 0;
         bytes.write(offset, self as u8)?;
         Ok(*offset)
     }
 }
 
-
-
-impl_byte! {
-    /// Block number
-    ///
-    /// See Section 2.2.5.1.8
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-    pub struct BlockNumber(pub u8);
-}
-
-impl_byte! {
-    /// Ack Bitfield
-    ///
-    /// See Section 2.2.5.1.8
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-    pub struct AckBitfield(pub u8);
-}
