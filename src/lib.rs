@@ -45,7 +45,11 @@
     clippy::future_not_send,
     clippy::ignored_unit_patterns,
     clippy::trivially_copy_pass_by_ref,
-    clippy::struct_excessive_bools
+    clippy::struct_excessive_bools,
+    dead_code,
+    unused_imports,
+    unused_variables,
+    unused_macros
 )]
 
 pub(crate) mod common;

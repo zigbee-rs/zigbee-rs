@@ -36,11 +36,14 @@ pub struct NetworkDescriptor {
     pub beacon_order: u8,
     /// for beacon oriented networks
     pub superframe_order: u8,
-    /// indicates that at least one ZigBee router or network currently permits joineng
+    /// indicates that at least one ZigBee router or network currently permits
+    /// joineng
     pub permit_joining: bool,
-    /// set to TRUE if the device is capable of accepting join requests from router-capable devices
+    /// set to TRUE if the device is capable of accepting join requests from
+    /// router-capable devices
     pub router_capacity: bool,
-    /// set to TRUE if the device is capable of accepting join requests from end devices
+    /// set to TRUE if the device is capable of accepting join requests from end
+    /// devices
     pub end_device_capacity: bool,
 }
 

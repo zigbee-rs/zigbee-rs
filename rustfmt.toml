@@ -1,4 +1,4 @@
-unstable_features = true
+unstable_features = false
 imports_granularity = "Item"
 group_imports = "StdExternalCrate"
 use_field_init_shorthand = true
