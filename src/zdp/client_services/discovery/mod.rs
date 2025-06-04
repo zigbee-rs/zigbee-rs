@@ -1,9 +1,12 @@
 #![allow(dead_code)]
 
-use crate::common::types::{IeeeAddress, NwkAddress};
-use crate::apl::descriptors::node_descriptor::{MacCapabilities, NodeDescriptor, ServerMask};
-
 use heapless::Vec;
+
+use crate::apl::descriptors::node_descriptor::MacCapabilities;
+use crate::apl::descriptors::node_descriptor::NodeDescriptor;
+use crate::apl::descriptors::node_descriptor::ServerMask;
+use crate::common::types::IeeeAddress;
+use crate::common::types::NwkAddress;
 
 const CLUSTER_LIST_SIZE: usize = 2 * 0xffff;
 
@@ -69,14 +72,16 @@ pub struct MatchDescReq {
     nwk_addr_of_interest: NwkAddress,
     /// Profile ID to be matched at the destination.
     profile_id: u16,
-    /// The number of Input Clusters provided for matching within the InClusterList.
+    /// The number of Input Clusters provided for matching within the
+    /// InClusterList.
     num_in_clusters: u8,
     /// List of Input ClusterIDs to be used for matching;
     /// the InClusterList is the desired list to be matched
     /// by the Remote Device (the elements of the InClusterList
     /// are the supported output clusters of the Local Device).
     in_cluster_list: Vec<u16, CLUSTER_LIST_SIZE>,
-    /// The number of Output Clusters provided for matching within OutClusterList.
+    /// The number of Output Clusters provided for matching within
+    /// OutClusterList.
     num_out_clusters: u8,
     /// List of Output ClusterIDs to be used for matching;
     /// the OutClusterList is the desired list to be
@@ -122,9 +127,10 @@ pub struct UserDescSet {
     nwk_addr_of_interest: NwkAddress,
     /// Length of the User Descriptor in bytes.
     length: u8,
-    /// The user description to configure; if the ASCII character string to be entered here is
-    /// less than 16 characters in length, it shall be padded with space characters (0x20) to
-    /// make a total length of 16 characters. Characters with codes 0x00-0x1f are not permitted.
+    /// The user description to configure; if the ASCII character string to be
+    /// entered here is less than 16 characters in length, it shall be
+    /// padded with space characters (0x20) to make a total length of 16
+    /// characters. Characters with codes 0x00-0x1f are not permitted.
     user_description: Vec<u8, 255>,
 }
 
@@ -143,12 +149,15 @@ pub struct DiscoveryStoreReq {
     node_desc_size: u8,
     /// Size in bytes of the Power Descriptor for the Local Device.
     power_desc_size: u8,
-    /// Size in bytes of the ActiveEPCount and ActiveEPList fields of the Active_EP_rsp for the Local Device.
+    /// Size in bytes of the ActiveEPCount and ActiveEPList fields of the
+    /// Active_EP_rsp for the Local Device.
     active_ep_size: u8,
-    /// Number of Simple Descriptors supported by the Local Device (should be the same value as the ActiveEPSize).
+    /// Number of Simple Descriptors supported by the Local Device (should be
+    /// the same value as the ActiveEPSize).
     simple_desc_count: u8,
-    /// List of bytes of simple_desc_count length, each of which represents the size in bytes of the Simple Descriptor
-    /// for each Active Endpoint on the Local Device.
+    /// List of bytes of simple_desc_count length, each of which represents the
+    /// size in bytes of the Simple Descriptor for each Active Endpoint on
+    /// the Local Device.
     simple_desc_size_list: Vec<u8, 255>,
 }
 
