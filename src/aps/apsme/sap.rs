@@ -17,9 +17,7 @@ use super::basemgt::ApsmeUnbindConfirm;
 use super::basemgt::ApsmeUnbindRequest;
 use super::basemgt::ApsmeUnbindRequestStatus;
 use super::Apsme;
-
 use crate::aps::aib::AIBAttribute;
-
 
 /// Application support sub-layer management service - service access point
 ///
@@ -108,17 +106,20 @@ impl ApsmeSap for Apsme {
     // 2.2.4.4.1 APSME-GET.request
     fn get(&self, identifier: u8) -> ApsmeGetConfirm {
         let attr = self.aib.get_attribute(identifier);
-        attr.map_or(ApsmeGetConfirm {
+        attr.map_or(
+            ApsmeGetConfirm {
                 status: ApsmeGetConfirmStatus::UnsupportedAttribute,
                 attribute: identifier,
                 attribute_length: 0,
                 attribute_value: None,
-            }, |attr| ApsmeGetConfirm {
+            },
+            |attr| ApsmeGetConfirm {
                 status: ApsmeGetConfirmStatus::Success,
                 attribute: attr.id(),
                 attribute_length: attr.length(),
                 attribute_value: Some(attr.value()),
-            })
+            },
+        )
     }
 
     // 2.2.4.4.3 APSME-SET.request
@@ -151,4 +152,3 @@ impl ApsmeSap for Apsme {
         todo!()
     }
 }
-

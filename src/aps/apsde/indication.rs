@@ -1,6 +1,7 @@
-use crate::aps::types::{self, DstAddrMode, SrcAddrMode};
-
 use super::status::SecurityStatus;
+use crate::aps::types::DstAddrMode;
+use crate::aps::types::SrcAddrMode;
+use crate::aps::types::{self};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ApsdeSapIndicationStatus {
@@ -27,4 +28,3 @@ pub struct ApsdeSapIndication {
     link_quality: u8,
     rx_time: u8,
 }
-

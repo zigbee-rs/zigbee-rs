@@ -23,7 +23,6 @@ pub struct ApsmeBindRequest {
     pub dst_endpoint: u8,
 }
 
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ApsmeBindRequestStatus {
     #[default]
@@ -137,7 +136,6 @@ pub struct ApsmeRemoveGroupRequest {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveGroupConfirm {}
 
-
 /// 2.2.4.5.5 - APSME-REMOVE-ALL-GROUPS.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsRequest {}
@@ -145,4 +143,3 @@ pub struct ApsmeRemoveAllGroupsRequest {}
 /// 2.2.4.5.6 - APSME-REMOVE-ALL-GROUPs.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsConfirm {}
-

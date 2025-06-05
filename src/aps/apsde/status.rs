@@ -25,4 +25,3 @@ pub enum SecurityStatus {
     SecuredNwkKey,
     SecuredLinkKey,
 }
-

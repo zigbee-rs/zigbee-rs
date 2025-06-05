@@ -1,6 +1,9 @@
-use crate::aps::types::{self, Address, DstAddrMode};
-
-use super::{request::ApsdeSapRequest, status::ApsdeSapConfirmStatus, Apsde};
+use super::request::ApsdeSapRequest;
+use super::status::ApsdeSapConfirmStatus;
+use super::Apsde;
+use crate::aps::types::Address;
+use crate::aps::types::DstAddrMode;
+use crate::aps::types::{self};
 
 /// Application support sub-layer data entity – service access point
 ///
@@ -55,4 +58,3 @@ pub struct ApsdeSapConfirm {
     pub status: ApsdeSapConfirmStatus,
     pub tx_time: u8,
 }
-

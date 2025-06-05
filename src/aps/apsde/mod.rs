@@ -19,7 +19,6 @@ pub(crate) mod request;
 pub(crate) mod sap;
 pub(crate) mod status;
 
-
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Apsde {
     pub(crate) supports_binding_table: bool,
@@ -28,8 +27,7 @@ pub(crate) struct Apsde {
 impl Apsde {
     pub(crate) fn new() -> Self {
         Self {
-            supports_binding_table: true
+            supports_binding_table: true,
         }
     }
 }
-

@@ -1,6 +1,7 @@
-use crate::aps::types::{self, Address, DstAddrMode};
-
 use super::types::TxOptions;
+use crate::aps::types::Address;
+use crate::aps::types::DstAddrMode;
+use crate::aps::types::{self};
 
 /// APSDE Data request
 ///
@@ -21,4 +22,3 @@ pub struct ApsdeSapRequest {
     pub(crate) alias_seq_number: u8,
     pub(crate) radius_counter: u8,
 }
-

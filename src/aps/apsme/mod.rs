@@ -90,13 +90,13 @@ impl Apsme {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use basemgt::ApsmeBindRequestStatus;
 
     use super::*;
-    use crate::aps::{apsme::basemgt::ApsmeBindRequest, types::SrcEndpoint};
+    use crate::aps::apsme::basemgt::ApsmeBindRequest;
+    use crate::aps::types::SrcEndpoint;
 
     // 2.2.4.3.1
     #[test]
@@ -195,4 +195,3 @@ mod tests {
         // assert_eq!(result.status, ApsmeBindRequestStatus::Success);
     }
 }
-

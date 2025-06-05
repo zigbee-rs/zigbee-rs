@@ -14,4 +14,3 @@ impl_byte! {
         endpoint: u8,
     }
 }
-

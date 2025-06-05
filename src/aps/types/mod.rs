@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use crate::impl_byte;
-
 use super::error::ApsError;
+use crate::impl_byte;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum SrcAddrMode {

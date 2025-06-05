@@ -3,8 +3,9 @@ use config::Config;
 pub mod config;
 use crate::aps::apsde::request::ApsdeSapRequest;
 use crate::aps::apsde::sap::ApsdeSap;
-use crate::aps::apsme::Apsme;
 use crate::aps::apsde::Apsde;
+use crate::aps::apsme::Apsme;
+use crate::aps::types::TxOptions;
 
 /// provides an interface between the appication object, the device profile and
 /// the APS
@@ -59,25 +60,22 @@ impl ZigbeeDevice {
     pub fn send_keep_alive(&self) {}
 
     pub fn send_data(&self, _data: &[u8]) {
-        self.apsde.data_request(
-            ApsdeSapRequest {
-                dst_addr_mode: todo!(),
-                dst_address: todo!(),
-                dst_endpoint: todo!(),
-                profile_id: todo!(),
-                cluster_id: todo!(),
-                src_endpoint: todo!(),
-                asdulength: todo!(),
-                asdu: todo!(),
-                tx_options: todo!(),
-                use_alias: todo!(),
-                alias_src_addr: todo!(),
-                alias_seq_number: todo!(),
-                radius_counter: todo!(),
-            }
-        );
+        self.apsde.data_request(ApsdeSapRequest {
+            dst_addr_mode: crate::aps::types::DstAddrMode::default(),
+            dst_address: crate::aps::types::Address::default(),
+            dst_endpoint: 0,
+            profile_id: 0x0000,
+            cluster_id: 0x0000,
+            src_endpoint: crate::aps::types::SrcEndpoint::default(),
+            asdulength: 0,
+            asdu: 0,
+            tx_options: TxOptions::default(),
+            use_alias: false,
+            alias_src_addr: 0,
+            alias_seq_number: 0,
+            radius_counter: 0,
+        });
     }
-    
 
     /// 2.1.3.1 - Device Discovery
     /// is the process whereby a ZigBee device can discover other ZigBee
