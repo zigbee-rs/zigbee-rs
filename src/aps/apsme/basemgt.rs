@@ -8,8 +8,10 @@ use crate::aps::aib::AIBAttribute;
 use crate::aps::aib::AIBAttributeValue;
 use crate::aps::types::Address;
 use crate::aps::types::{self};
+use crate::impl_byte;
 
 type DstAddrMode = u8;
+
 /// 2.2.4.3.1 - APSME-BIND.request
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApsmeBindRequest {
@@ -60,6 +62,7 @@ pub enum ApsmeUnbindRequestStatus {
     IllegalRequest,
     InvalidBinding,
 }
+
 /// 2.2.4.3.4 - APSME-UNBIND.confirm
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApsmeUnbindConfirm {
@@ -128,6 +131,7 @@ pub struct ApsmeAddGroupConfirm {}
 /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveGroupRequest {}
+
 /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveGroupConfirm {}
@@ -135,6 +139,7 @@ pub struct ApsmeRemoveGroupConfirm {}
 /// 2.2.4.5.5 - APSME-REMOVE-ALL-GROUPS.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsRequest {}
+
 /// 2.2.4.5.6 - APSME-REMOVE-ALL-GROUPs.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsConfirm {}

@@ -21,7 +21,7 @@ Follow the [ESP Book](https://docs.esp-rs.org/book/installation/index.html) for 
 
 Install the target and run the application to build and flash the image onto an ESP device.
 ```sh
-rustup target add xtensa-esp32c6-espidf
+rustup target add riscv32imac-unknown-none-elf
 cargo run --release
 ```
 

@@ -12,6 +12,7 @@ pub enum DesignatedDestination {
     GroupAddress(u16),
 }
 
+#[derive(Clone, PartialEq)]
 pub(crate) struct Binding {
     source: Address,
     endpoint: u8,
