@@ -1,24 +1,12 @@
 #![allow(dead_code)]
 
+use byte::{BytesExt, TryRead, TryWrite};
+
 use super::error::ApsError;
 use crate::impl_byte;
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum SrcAddrMode {
-    Reserved = 0x00,
-    #[default]
-    Short,
-    Extended = 0x02,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum DstAddrMode {
-    #[default]
-    None,
-    Group = 0x01,
-    Network = 0x02,
-    Extended = 0x03,
-}
+pub mod addr_mode;
+pub mod tx_option;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Address {
@@ -29,15 +17,6 @@ pub enum Address {
     Extended(u64),
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum TxOptions {
-    SecurityEnabled = 0x01,
-    UseNetworkKey = 0x02,
-    #[default]
-    Acknowledged,
-    FragmentationPermitted = 0x08,
-    IncludeExtendedNonce = 0x10,
-}
 
 impl_byte! {
     #[derive(Debug, Clone, Default, PartialEq)]

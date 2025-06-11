@@ -4,6 +4,7 @@ use super::Apsde;
 use crate::aps::types::Address;
 use crate::aps::types::DstAddrMode;
 use crate::aps::types::{self};
+use crate::impl_byte;
 
 /// Application support sub-layer data entity – service access point
 ///
@@ -49,12 +50,14 @@ impl ApsdeSap for Apsde {
 }
 
 // 2.2.4.1.2
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ApsdeSapConfirm {
-    pub dst_addr_mode: DstAddrMode,
-    pub dst_address: Address,
-    pub dst_endpoint: u8,
-    pub src_endpoint: types::SrcEndpoint,
-    pub status: ApsdeSapConfirmStatus,
-    pub tx_time: u8,
+impl_byte! {
+    #[derive(Debug, Clone, Default, PartialEq)]
+    pub struct ApsdeSapConfirm {
+        pub dst_addr_mode: DstAddrMode,
+        pub dst_address: Address,
+        pub dst_endpoint: u8,
+        pub src_endpoint: types::SrcEndpoint,
+        pub status: ApsdeSapConfirmStatus,
+        pub tx_time: u8,
+    }
 }

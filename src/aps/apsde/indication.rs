@@ -2,6 +2,7 @@ use super::status::SecurityStatus;
 use crate::aps::types::DstAddrMode;
 use crate::aps::types::SrcAddrMode;
 use crate::aps::types::{self};
+use crate::impl_byte;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ApsdeSapIndicationStatus {

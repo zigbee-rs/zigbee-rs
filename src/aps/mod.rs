@@ -1,6 +1,7 @@
 pub(crate) mod error;
 pub(crate) mod types;
 
+pub mod frame;
 /// The APS data entity provides the data transmission service between two or
 /// more application entities located on the same network.
 pub mod apsde;
