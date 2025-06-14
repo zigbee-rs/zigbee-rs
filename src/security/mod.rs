@@ -1,7 +1,13 @@
+use core::convert::TryInto;
+
+use aes::cipher::generic_array::GenericArray as AesGenericArray;
+use aes::cipher::BlockEncrypt;
+use aes::cipher::KeyInit as AesKeyInit;
 use aes::Aes128;
 use byte::BytesExt;
 use byte::TryRead;
 use ccm::aead::generic_array::GenericArray;
+use ccm::aead::Aead;
 use ccm::aead::AeadMutInPlace;
 use ccm::consts::U13;
 use ccm::consts::U4;
@@ -12,14 +18,19 @@ use frame::SecurityControl;
 use frame::SecurityLevel;
 use thiserror::Error;
 
-use crate::common::types::IeeeAddress;
+use crate::aps::apdu::header::Header as ApsHeader;
+use crate::internal::types::IeeeAddress;
 use crate::nwk::frame::header::Header as NwkHeader;
+use crate::security::frame::KeyIdentifier;
+use crate::security::primitives::Aes128Mmo;
+use crate::security::primitives::HmacAes128Mmo;
 
 pub mod frame;
+pub mod primitives;
 
 // Default ZigbeeAlliance09 key
 // centralized security global trust center link key
-const TRUST_CENTER_LINK_KEY: &[u8] = &[
+const TRUST_CENTER_LINK_KEY: [u8; 16] = [
     0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
 ];
 
@@ -78,7 +89,7 @@ impl SecurityContext {
     }
 
     // section 4.3.1.1
-    pub fn secure_nwk_frame(
+    pub fn encrypt_nwk_frame_in_place(
         &self,
         nwk_hdr: NwkHeader<'_>,
         frame_buffer: &mut [u8],
@@ -118,7 +129,7 @@ impl SecurityContext {
     }
 
     // section 4.3.1.2
-    pub fn unsecure_nwk_frame(&self, frame_buffer: &mut [u8]) -> Result<(), SecurityError> {
+    pub fn decrypt_nwk_frame_in_place(&self, frame_buffer: &mut [u8]) -> Result<(), SecurityError> {
         // Sec 4.3.1.2: overwrite the security level with the value from the NIB
         // (default 0x05)
         let sec_level = SecurityLevel::EncMic32;
@@ -168,21 +179,34 @@ impl SecurityContext {
     }
 
     // section 4.4.1.2
-    pub fn unsecure_aps_frame(&self, frame_buffer: &mut [u8]) -> Result<(), SecurityError> {
+    pub fn decrypt_aps_frame_in_place(&self, frame_buffer: &mut [u8]) -> Result<(), SecurityError> {
         // 5) overwrite the security level with the value from the NIB
         // (default 0x05)
         let sec_level = SecurityLevel::EncMic32;
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
 
-        //let (_, aps_hdr_len) = ApsHeader::try_read(frame_buffer, ())?;
-        let aps_hdr_len = 0;
+        let (_, aps_hdr_len) = ApsHeader::try_read(frame_buffer, ())?;
         let (mut aux_hdr, aux_hdr_len) =
             AuxFrameHeader::try_read(&frame_buffer[aps_hdr_len..], ())?;
 
         if aux_hdr.frame_counter == u32::MAX {
             return Err(SecurityError::InvalidData);
         }
+
+        // TODO: select the key from AIB
+        let key = match aux_hdr.security_control.key_identifier() {
+            KeyIdentifier::Data => TRUST_CENTER_LINK_KEY,
+            KeyIdentifier::KeyTransport => {
+                // Section 4.5.3: key-transport key uses 1-octet string '0x00'
+                HmacAes128Mmo::hmac(&TRUST_CENTER_LINK_KEY, &[0x00])?
+            }
+            KeyIdentifier::KeyLoad => {
+                // Section 4.5.3: key-load key uses 1-octet string '0x02'
+                HmacAes128Mmo::hmac(&TRUST_CENTER_LINK_KEY, &[0x02])?
+            }
+            KeyIdentifier::Network => return Err(SecurityError::InvalidData),
+        };
 
         // write back the security level from NIB to aux header
         // the updated values is required as input to ccm
@@ -199,15 +223,13 @@ impl SecurityContext {
             return Err(SecurityError::InvalidData);
         };
 
-        // TODO: select the key from AIB
-        let key = TRUST_CENTER_LINK_KEY;
         let nonce: GenericArray<u8, _> = create_nonce(
             &source_address,
             aux_hdr.frame_counter,
             &aux_hdr.security_control,
         )
         .into();
-        let mut cipher = Aes128Ccm::new(key.into());
+        let mut cipher = Aes128Ccm::new(&key.into());
 
         cipher
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
@@ -226,11 +248,11 @@ fn create_nonce(
 ) -> [u8; 13] {
     let mut nonce = [0u8; 13];
     for i in 0..8 {
-        nonce[i] = (source_address.0 >> (8 * i) & 0xFF) as u8;
+        nonce[i] = (source_address.0 >> (8 * i) & 0xff) as u8;
     }
 
     for i in 0..4 {
-        nonce[i + 8] = (frame_counter >> (8 * i) & 0xFF) as u8;
+        nonce[i + 8] = (frame_counter >> (8 * i) & 0xff) as u8;
     }
     nonce[12] = security_control.0;
     nonce
@@ -254,20 +276,56 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_aps_frame() {
+    fn decrypt_aps_frame_data() {
         let frame_buffer = &mut [
-            0x21, 0x95, // aps header
-            0x30, 0x0, 0x0, 0x0, 0x0, 0xe1, 0x52, 0x38, 0x7d, 0xc1, 0x36, 0xce,
-            0xf4, // aux header
-            0xcc, 0x56, 0x50, 0x5e, 0x7, 0x2d, 0xc5, 0xc1, 0xe8, 0x40, 0xf2, 0xd5, 0xce, 0xc, 0xa9,
-            0x2d, 0x64, 0x23, 0xcc, 0xc, 0x56, 0xcc, 0xc4, 0xcc, 0xf, 0x18, 0xa2, 0xe4, 0x82, 0x88,
-            0x58, 0x4a, 0x90, 0x3e, 0x0, // encrypted data
+            0x21, 0x66, // aps header
+            0x20, 0x4, 0x0, 0x0, 0x0, 0xe5, 0x1, 0x30, 0x38, 0x9c, 0x38, 0xc1,
+            0xa4, // aux header
+            0x1a, 0x31, // enc data
+            0xa4, 0xd7, 0xf4, 0xd7, //mic
+        ];
+
+        let security_context = SecurityContext::new();
+
+        security_context
+            .decrypt_aps_frame_in_place(frame_buffer)
+            .unwrap();
+    }
+
+    #[test]
+    fn decrypt_aps_frame_key_transport() {
+        let frame_buffer = &mut [
+            0x21, 0x95, // aps hdr
+            0x30, 0x0, 0x0, 0x0, 0x0, 0xe1, 0x52, 0x38, 0x7d, 0xc1, 0x36, 0xce, // aux hdr
+            0xf4, 0xcc, 0x56, 0x50, 0x5e, 0x7, 0x2d, 0xc5, 0xc1, 0xe8, 0x40, 0xf2, 0xd5, 0xce, 0xc,
+            0xa9, 0x2d, 0x64, 0x23, 0xcc, 0xc, 0x56, 0xcc, 0xc4, 0xcc, 0xf, 0x18, 0xa2, 0xe4, 0x82,
+            0x88, 0x58, 0x4a, 0x90, 0x3e, 0x0, // enc data
             0x47, 0x60, 0xf2, 0x5d, // mic
         ];
 
         let security_context = SecurityContext::new();
 
-        security_context.unsecure_aps_frame(frame_buffer).unwrap();
+        security_context
+            .decrypt_aps_frame_in_place(frame_buffer)
+            .unwrap();
+    }
+
+    #[test]
+    fn decrypt_aps_frame_key_load() {
+        let frame_buffer = &mut [
+            0x21, 0x97, // aps hdr
+            0x38, 0x1, 0x0, 0x0, 0x0, 0xe1, 0x52, 0x38, 0x7d, 0xc1, 0x36, 0xce, // aux hdr
+            0xf4, 0xe0, 0x4b, 0x37, 0xdb, 0x35, 0xc7, 0x13, 0x41, 0x71, 0xf0, 0xdf, 0xdb, 0x22,
+            0xa5, 0xa1, 0x65, 0xbf, 0xfe, 0x41, 0x5a, 0xb2, 0x5f, 0xd9, 0x85, 0x79, 0x92, 0x5a,
+            0xd4, 0xe6, 0x48, 0xfa, 0x6, 0xfb, 0x11, // enc data
+            0xb7, 0xc9, 0x4, 0x3e, // mic
+        ];
+
+        let security_context = SecurityContext::new();
+
+        security_context
+            .decrypt_aps_frame_in_place(frame_buffer)
+            .unwrap();
     }
 
     #[test]
@@ -283,6 +341,8 @@ mod tests {
         ];
         let security_context = SecurityContext::new();
 
-        security_context.unsecure_nwk_frame(frame_buffer).unwrap();
+        security_context
+            .decrypt_nwk_frame_in_place(frame_buffer)
+            .unwrap();
     }
 }
