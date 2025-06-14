@@ -1,7 +1,13 @@
+use core::convert::TryInto;
+
+use aes::cipher::generic_array::GenericArray as AesGenericArray;
+use aes::cipher::BlockEncrypt;
+use aes::cipher::KeyInit as AesKeyInit;
 use aes::Aes128;
 use byte::BytesExt;
 use byte::TryRead;
 use ccm::aead::generic_array::GenericArray;
+use ccm::aead::Aead;
 use ccm::aead::AeadMutInPlace;
 use ccm::consts::U13;
 use ccm::consts::U4;
@@ -12,14 +18,84 @@ use frame::SecurityControl;
 use frame::SecurityLevel;
 use thiserror::Error;
 
+use crate::aps::apdu::header::Header as ApsHeader;
 use crate::common::types::IeeeAddress;
 use crate::nwk::frame::header::Header as NwkHeader;
+use crate::security::frame::KeyIdentifier;
 
 pub mod frame;
 
+const BLOCK_SIZE: usize = 16;
+
+/// AES-MMO (Matyas-Meyer-Oseas) hash function implementation
+/// Used for Zigbee key derivation as specified in section 4.5.3
+/// Simplified for 16-byte (128-bit) inputs only
+pub struct Aes128Mmo {
+    state: [u8; BLOCK_SIZE], // 128-bit hash state
+}
+
+impl Aes128Mmo {
+    /// Create a new AES-MMO hash context with zero IV
+    pub fn new() -> Self {
+        Self {
+            state: [0u8; 16], // Initialize with zero IV
+        }
+    }
+
+    /// Update the hash with a single 128-bit block
+    pub fn update(&mut self, data: &[u8]) -> Result<(), SecurityError> {
+        let length = data.len();
+        // note: should be able to handle inputs of length <= 2^(2n)
+        // but cases of 2^n <= length <= 2^(2n) are not relevant
+        // for our use case anyways
+        #[allow(clippy::cast_possible_truncation)]
+        if length > 2usize.pow(BLOCK_SIZE as u32) {
+            return Err(SecurityError::InvalidData);
+        }
+
+        for block in data.chunks(BLOCK_SIZE) {
+            // padding
+            let block_len = block.len();
+            let mut padded_block = [0u8; BLOCK_SIZE];
+            padded_block[..block_len].copy_from_slice(block);
+            if block_len < BLOCK_SIZE {
+                padded_block[block_len] = 0b1000_0000;
+            }
+
+            // E_i = E(H_{i-1}, X_i)
+            let cipher = Aes128::new(&AesGenericArray::from(self.state));
+            let mut encrypted_block = *AesGenericArray::from_slice(&padded_block);
+            cipher.encrypt_block(&mut encrypted_block);
+
+            // H_i = E_i ⊕ X_i  (Matyas-Meyer-Oseas)
+            for i in 0..BLOCK_SIZE {
+                self.state[i] = encrypted_block[i] ^ block[i];
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn finalize(self) -> [u8; 16] {
+        self.state
+    }
+
+    pub fn digest(data: &[u8]) -> Result<[u8; 16], SecurityError> {
+        let mut hasher = Self::new();
+        hasher.update(data)?;
+        Ok(hasher.finalize())
+    }
+}
+
+impl Default for Aes128Mmo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Default ZigbeeAlliance09 key
 // centralized security global trust center link key
-const TRUST_CENTER_LINK_KEY: &[u8] = &[
+const TRUST_CENTER_LINK_KEY: [u8; 16] = [
     0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
 ];
 
@@ -175,14 +251,27 @@ impl SecurityContext {
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
 
-        //let (_, aps_hdr_len) = ApsHeader::try_read(frame_buffer, ())?;
-        let aps_hdr_len = 0;
+        let (_, aps_hdr_len) = ApsHeader::try_read(frame_buffer, ())?;
         let (mut aux_hdr, aux_hdr_len) =
             AuxFrameHeader::try_read(&frame_buffer[aps_hdr_len..], ())?;
 
         if aux_hdr.frame_counter == u32::MAX {
             return Err(SecurityError::InvalidData);
         }
+
+        // TODO: select the key from AIB
+        let key = match aux_hdr.security_control.key_identifier() {
+            KeyIdentifier::Data => TRUST_CENTER_LINK_KEY,
+            KeyIdentifier::KeyTransport => {
+                // Section 4.5.3: key-transport key uses 1-octet string '0x00'
+                Aes128Mmo::digest(&TRUST_CENTER_LINK_KEY)?
+            }
+            KeyIdentifier::KeyLoad => {
+                // Section 4.5.3: key-load key uses 1-octet string '0x02'
+                Aes128Mmo::digest(&TRUST_CENTER_LINK_KEY)?
+            }
+            KeyIdentifier::Network => return Err(SecurityError::InvalidData),
+        };
 
         // write back the security level from NIB to aux header
         // the updated values is required as input to ccm
@@ -199,15 +288,13 @@ impl SecurityContext {
             return Err(SecurityError::InvalidData);
         };
 
-        // TODO: select the key from AIB
-        let key = TRUST_CENTER_LINK_KEY;
         let nonce: GenericArray<u8, _> = create_nonce(
             &source_address,
             aux_hdr.frame_counter,
             &aux_hdr.security_control,
         )
         .into();
-        let mut cipher = Aes128Ccm::new(key.into());
+        let mut cipher = Aes128Ccm::new(&key.into());
 
         cipher
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
@@ -226,11 +313,11 @@ fn create_nonce(
 ) -> [u8; 13] {
     let mut nonce = [0u8; 13];
     for i in 0..8 {
-        nonce[i] = (source_address.0 >> (8 * i) & 0xFF) as u8;
+        nonce[i] = (source_address.0 >> (8 * i) & 0xff) as u8;
     }
 
     for i in 0..4 {
-        nonce[i + 8] = (frame_counter >> (8 * i) & 0xFF) as u8;
+        nonce[i + 8] = (frame_counter >> (8 * i) & 0xff) as u8;
     }
     nonce[12] = security_control.0;
     nonce
@@ -254,7 +341,22 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_aps_frame() {
+    fn decrypt_aps_frame_data() {
+        let frame_buffer = &mut [
+            0x21, 0x66, // aps header
+            0x20, 0x4, 0x0, 0x0, 0x0, 0xe5, 0x1, 0x30, 0x38, 0x9c, 0x38, 0xc1,
+            0xa4, // aux header
+            0x1a, 0x31, // enc data
+            0xa4, 0xd7, 0xf4, 0xd7, //mic
+        ];
+
+        let security_context = SecurityContext::new();
+
+        security_context.unsecure_aps_frame(frame_buffer).unwrap();
+    }
+
+    #[test]
+    fn decrypt_aps_frame_key_load() {
         let frame_buffer = &mut [
             0x21, 0x95, // aps header
             0x30, 0x0, 0x0, 0x0, 0x0, 0xe1, 0x52, 0x38, 0x7d, 0xc1, 0x36, 0xce,
@@ -284,5 +386,22 @@ mod tests {
         let security_context = SecurityContext::new();
 
         security_context.unsecure_nwk_frame(frame_buffer).unwrap();
+    }
+
+    #[test]
+    fn test_hmac_aes_mmo_test_vector() {
+        // Test vector from Zigbee spec C.6.1
+        let key = [
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+            0x4E, 0x4F,
+        ];
+        let message = [0xC0];
+        let expected = [
+            0x45, 0x12, 0x80, 0x7B, 0xF9, 0x4C, 0xB3, 0x40, 0x0F, 0x0E, 0x2C, 0x25, 0xFB, 0x76,
+            0xE9, 0x99,
+        ];
+
+        let result = Aes128Mmo::digest(&message).unwrap();
+        assert_eq!(result, expected, "HMAC-AES-MMO test vector failed");
     }
 }
