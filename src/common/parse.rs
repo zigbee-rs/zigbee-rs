@@ -23,6 +23,54 @@ macro_rules! impl_byte {
     };
     (
         $(#[$m:meta])*
+        $v:vis enum $name:ident {
+            $(
+                $(#[doc = $doc:literal])*
+                $(#[fallback = $fallback:literal])?
+                $variant:ident $(= $value:expr)?
+            ),+
+            $(,)?
+         }
+    ) => {
+        $(#[$m])*
+        $v enum $name {
+            $(
+                $(#[doc = $doc])*
+                $variant $(= $value)?
+            ),+
+        }
+
+        impl<C: ::core::default::Default> ::byte::TryRead<'_, C> for $name {
+            fn try_read(bytes: &'_ [u8], _: C) -> ::byte::Result<(Self, usize)> {
+                use ::byte::BytesExt;
+                let offset = &mut 0;
+                let id: u8 = bytes.read(offset)?;
+                let variant = match id {
+                    $(
+                        $($value => Self::$variant)?
+                        $(
+                            _ => {
+                                let _ = $fallback;
+                                Self::$variant
+                            },
+                        )?
+                    ),+
+                };
+                Ok((variant, *offset))
+            }
+        }
+
+        impl<C: ::core::default::Default> ::byte::TryWrite<C> for $name {
+            fn try_write(self, bytes: &mut [u8], _: C) -> ::byte::Result<usize> {
+                use ::byte::BytesExt;
+                let offset = &mut 0;
+                bytes.write_with(offset, self as u8, ::byte::LE)?;
+                Ok(*offset)
+            }
+        }
+    };
+    (
+        $(#[$m:meta])*
         $v:vis struct $name:ident $(<$lifetime:lifetime>)? {
             $(
                 $(#[doc = $doc:literal])*
@@ -148,5 +196,24 @@ mod tests {
         let mut buf = [0u8; 10];
         frame.try_write(&mut buf, ()).unwrap();
         assert_eq!(&buf, bytes);
+    }
+
+    impl_byte! {
+        #[derive(Debug,PartialEq, Eq)]
+        #[repr(u8)]
+        enum Command {
+            Data = 0x01,
+            Payload = 0x02,
+            #[fallback = true]
+            Reserved,
+        }
+    }
+
+    #[test]
+    fn parse_enum() {
+        let bytes = &[0x02];
+        let (command, len) = Command::try_read(bytes, ()).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(command, Command::Payload);
     }
 }

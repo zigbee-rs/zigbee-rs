@@ -5,11 +5,11 @@ authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 edition = "2018"
 rust-version = "1.50"
 
-description = "ZigBee protocol stack in `no-std` based on the [ZigBee specification 22 1.0](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)"
+description = "ZigBee protocol stack in `no-std` based on the ZigBee specification 22 1.0"
 documentation = "https://docs.rs/zigbee"
 repository = "https://github.com/thebino/zigbee-rs"
 readme = "README.md"
-keywords = ["zigbee", "208.15.4"]
+keywords = ["zigbee", "ieee802154", "embedded", "iot"]
 categories = ["network-programming", "no-std", "embedded"]
 license = "MIT OR Apache-2.0"
 
@@ -17,9 +17,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 heapless = "0.8.0"
-strum = { version = "0.26.3", features = ["derive"] }
+strum = { version = "0.27.1", features = ["derive"], default-features = false }
 thiserror = { version = "2.0.6", default-features = false }
 byte = "0.2.7"
 
-[dev-dependencies]
-hex = "0.4.3"

@@ -192,17 +192,20 @@ impl ApsmeSap for Apsme {
     // 2.2.4.4.1 APSME-GET.request
     fn get(&self, identifier: u8) -> ApsmeGetConfirm {
         let attr = self.aib.get_attribute(identifier);
-        attr.map_or(ApsmeGetConfirm {
+        attr.map_or(
+            ApsmeGetConfirm {
                 status: ApsmeGetConfirmStatus::UnsupportedAttribute,
                 attribute: identifier,
                 attribute_length: 0,
                 attribute_value: None,
-            }, |attr| ApsmeGetConfirm {
+            },
+            |attr| ApsmeGetConfirm {
                 status: ApsmeGetConfirmStatus::Success,
                 attribute: attr.id(),
                 attribute_length: attr.length(),
                 attribute_value: Some(attr.value()),
-            })
+            },
+        )
     }
 
     // 2.2.4.4.3 APSME-SET.request

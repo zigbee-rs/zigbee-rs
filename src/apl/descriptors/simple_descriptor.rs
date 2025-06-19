@@ -1,8 +1,8 @@
 //! 2.3.2.5 Simple Descriptor
 //!
-//! The simple descriptor contains information specific to each endpoint contained in this node.
-//! The simple descriptor is  mandatory for each endpoint present in the node.
-//!
+//! The simple descriptor contains information specific to each endpoint
+//! contained in this node. The simple descriptor is  mandatory for each
+//! endpoint present in the node.
 
 use crate::impl_byte;
 

@@ -3,7 +3,8 @@ use config::Config;
 pub mod config;
 use crate::aps::apsme::Apsme;
 
-/// provides an interface between the appication object, the device profile and the APS
+/// provides an interface between the appication object, the device profile and
+/// the APS
 pub struct ZigbeeDevice {
     config: Config,
     apsme: Apsme,
@@ -37,7 +38,8 @@ impl ZigbeeDevice {
         // to join)
     }
 
-    /// tries to connect to the first reachable network by sending a join request
+    /// tries to connect to the first reachable network by sending a join
+    /// request
     pub fn try_to_connect(&self) {
         self.apsme.join_network();
         // TODO: send Association request to choosen network coordinator or

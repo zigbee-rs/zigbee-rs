@@ -1,15 +1,14 @@
 //! 2.3.2.4 Node Power Descriptor
 //!
-//! The node power descriptor gives a dynamic indication of the power status of the node and is mandatory for each node.
-//! There shall be only one node power descriptor in a node.
-//!
+//! The node power descriptor gives a dynamic indication of the power status of
+//! the node and is mandatory for each node. There shall be only one node power
+//! descriptor in a node.
 
 use heapless::FnvIndexSet;
 use heapless::Vec;
 use strum::EnumCount;
 
 use crate::apl::descriptors::error::Error;
-use crate::common::types::macros::bitfield_bits;
 
 const NODE_POWER_DESCRIPTOR_SIZE: usize = 2;
 
@@ -86,7 +85,7 @@ impl From<u8> for CurrentPowerMode {
             0b0000 => Self::Synchronized,
             0b0001 => Self::Periodically,
             0b0010 => Self::Stimulated,
-            _ => panic!("Invalid CurrentPowerMode value: {value}"),
+            _ => panic!("{}", "Invalid CurrentPowerMode value: {value}"),
         }
     }
 }
@@ -139,7 +138,7 @@ impl From<u8> for CurrentPowerSource {
             0 => Self::ConstantMainPower,
             1 => Self::RechargeableBattery,
             2 => Self::DisposableBattery,
-            _ => panic!("Invalid CurrentPowerMode value: {value}"),
+            _ => panic!("{}", "Invalid CurrentPowerMode value: {value}"),
         }
     }
 }
@@ -162,7 +161,7 @@ impl From<u8> for CurrentPowerSourceLevel {
             0b0100 => Self::OneThird,
             0b1000 => Self::TwoThirds,
             0b1100 => Self::Full,
-            _ => panic!("Invalid CurrentPowerSourceLevel value: {value}"),
+            _ => panic!("{}", "Invalid CurrentPowerSourceLevel value: {value}"),
         }
     }
 }
@@ -170,6 +169,7 @@ impl From<u8> for CurrentPowerSourceLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::types::macros::bitfield_bits;
 
     #[test]
     fn creating_available_power_sources_should_succeed() {
