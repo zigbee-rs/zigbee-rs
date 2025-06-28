@@ -140,8 +140,9 @@ macro_rules! impl_byte {
                 $(
                     let ctx = ::byte::LE;
                     $(
-                        let _ = $ctx_hdr;
-                        let ctx = ();
+                        // let _ = $ctx_hdr;
+                        // let ctx = ();
+                        let ctx = $ctx_hdr;
                     )?
 
                     let should_write = true;
@@ -165,6 +166,7 @@ macro_rules! impl_byte {
 mod tests {
     use byte::TryRead;
     use byte::TryWrite;
+    use byte::BytesExt;
 
     use crate::common::types::ShortAddress;
 
@@ -216,4 +218,55 @@ mod tests {
         assert_eq!(len, 1);
         assert_eq!(command, Command::Payload);
     }
+
+    impl<'a> TryRead<'a, &TestHeader> for TestPayload<'a> {
+        fn try_read(bytes: &'a [u8], header: &TestHeader) -> Result<(Self, usize), ::byte::Error> {
+            let offset = &mut 0;
+            let payload = match header.flag {
+                1 => TestPayload::Foo(&[1]),
+                _ => TestPayload::Reserved
+            };
+            
+            Ok((payload, *offset))
+        }
+    }
+
+    impl TryWrite<&TestHeader> for TestPayload<'_> {
+        fn try_write(self, bytes: &mut [u8], _header: &TestHeader) -> Result<usize, ::byte::Error> {
+            let offset = &mut 0;
+            bytes.write(offset, self, ::byte::LE)?;
+
+            Ok(*offset)
+        }
+    }
+
+    impl_byte! {
+        #[derive(Debug)]
+        struct TestType<'a> {
+            header: TestHeader,
+            #[ctx = &header]
+            payload: TestPayload<'a>,
+        }
+    }
+
+    impl_byte! {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        struct TestHeader {
+            flag: u8,
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum TestPayload<'a> {
+        Foo(&'a [u8]),
+        Reserved,
+    }
+
+
+    #[test]
+    fn parse_nested_types() {
+        // given
+
+    }
 }
+
