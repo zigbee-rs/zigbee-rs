@@ -63,6 +63,7 @@ impl_byte! {
         ///
         /// See Section 3.3.1.9.2.
         #[ctx = byte::ctx::Bytes::Len(relay_count as usize)]
+        #[ctx_write = ()]
         pub relay_list: &'a [u8],
     }
 }

@@ -75,6 +75,7 @@ macro_rules! impl_byte {
             $(
                 $(#[doc = $doc:literal])*
                 $(#[ctx = $ctx_hdr:expr])?
+                $(#[ctx_write = $ctx_write:expr])?
                 $(#[parse_if = $parse_if_hdr:expr])?
                 $vf:vis $field_name:ident: $field_ty:ty
             ),+
@@ -140,8 +141,10 @@ macro_rules! impl_byte {
                 $(
                     let ctx = ::byte::LE;
                     $(
-                        let _ = $ctx_hdr;
-                        let ctx = ();
+                        let ctx = $ctx_hdr;
+                    )?
+                    $(
+                        let ctx = $ctx_write;
                     )?
 
                     let should_write = true;
@@ -163,6 +166,7 @@ macro_rules! impl_byte {
 
 #[cfg(test)]
 mod tests {
+    use byte::BytesExt;
     use byte::TryRead;
     use byte::TryWrite;
 
@@ -176,6 +180,7 @@ mod tests {
             opt: Option<u16>,
             length: u8,
             #[ctx = byte::ctx::Bytes::Len(usize::from(length))]
+            #[ctx_write = ()]
             data: &'a [u8],
         }
     }
@@ -215,5 +220,53 @@ mod tests {
         let (command, len) = Command::try_read(bytes, ()).unwrap();
         assert_eq!(len, 1);
         assert_eq!(command, Command::Payload);
+    }
+
+    impl<'a> TryRead<'a, TestHeader> for TestPayload<'a> {
+        fn try_read(bytes: &'a [u8], header: TestHeader) -> Result<(Self, usize), ::byte::Error> {
+            let offset = &mut 0;
+            let payload = match header.flag {
+                1 => TestPayload::Foo(&[1]),
+                _ => TestPayload::Reserved,
+            };
+
+            Ok((payload, *offset))
+        }
+    }
+
+    impl TryWrite<TestHeader> for TestPayload<'_> {
+        fn try_write(self, bytes: &mut [u8], _header: TestHeader) -> Result<usize, ::byte::Error> {
+            let offset = &mut 0;
+            bytes.write(offset, self)?;
+
+            Ok(*offset)
+        }
+    }
+
+    impl_byte! {
+        #[derive(Debug)]
+        struct TestType<'a> {
+            header: TestHeader,
+            #[ctx = header]
+            payload: TestPayload<'a>,
+        }
+    }
+
+    impl_byte! {
+        #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+        struct TestHeader {
+            flag: u8,
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum TestPayload<'a> {
+        Foo(&'a [u8]),
+        Reserved,
+    }
+
+    #[test]
+    fn parse_nested_types() {
+        // given
     }
 }
