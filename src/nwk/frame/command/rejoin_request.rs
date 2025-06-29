@@ -1,4 +1,4 @@
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 pub struct RejoinRequest {
     pub capability_information: CapabilityInformation,

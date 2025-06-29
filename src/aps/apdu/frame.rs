@@ -1,7 +1,7 @@
 //! APS Header Frame Control
 use core::mem;
 
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 impl_byte! {
     /// Frame Control field
@@ -128,4 +128,3 @@ mod tests {
         assert!(!frame_control.extended_header());
     }
 }
-

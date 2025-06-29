@@ -1,4 +1,5 @@
 /// Implements `byte` for a struct.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! impl_byte {
     (
@@ -160,13 +161,14 @@ macro_rules! impl_byte {
         }
     }
 }
+pub use impl_byte;
 
 #[cfg(test)]
 mod tests {
     use byte::TryRead;
     use byte::TryWrite;
 
-    use crate::common::types::ShortAddress;
+    use crate::internal::types::ShortAddress;
 
     impl_byte! {
         struct DataFrame<'a> {

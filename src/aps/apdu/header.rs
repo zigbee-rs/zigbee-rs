@@ -1,8 +1,11 @@
 //! APS Frame Header
-use byte::{BytesExt, TryRead};
+use byte::BytesExt;
+use byte::TryRead;
 
-use super::{extended_frame_control::ExtendedFrameControlField, frame::{DeliveryMode, FrameControl}};
-use crate::common::types::ShortAddress;
+use super::extended_frame_control::ExtendedFrameControlField;
+use super::frame::DeliveryMode;
+use super::frame::FrameControl;
+use crate::internal::types::ShortAddress;
 
 /// 2.2.5.1 General APDU Frame Format
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,39 +26,40 @@ impl TryRead<'_, byte::ctx::Endian> for Header {
 
         let frame_control: FrameControl = bytes.read_with(offset, ())?;
 
-        let destination: Option<ShortAddress> = if frame_control.delivery_mode() == DeliveryMode::Unicast {
-            Some(ShortAddress(bytes.read_with(offset, endian)?)) 
-        } else {
-            None
-        };
+        let destination: Option<ShortAddress> =
+            if frame_control.delivery_mode() == DeliveryMode::Unicast {
+                Some(ShortAddress(bytes.read_with(offset, endian)?))
+            } else {
+                None
+            };
 
-        let group_address: Option<ShortAddress> = if frame_control.delivery_mode() == DeliveryMode::GroubAddressing {
-            Some(ShortAddress(bytes.read_with(offset, endian)?))
-        } else {
-            None
-        };
+        let group_address: Option<ShortAddress> =
+            if frame_control.delivery_mode() == DeliveryMode::GroubAddressing {
+                Some(ShortAddress(bytes.read_with(offset, endian)?))
+            } else {
+                None
+            };
 
         let cluster_id: Option<u8> = match frame_control.frame_type() {
-            super::frame::FrameType::Data |
-            super::frame::FrameType::Acknowledtement => {
+            super::frame::FrameType::Data | super::frame::FrameType::Acknowledtement => {
                 Some(bytes.read_with(offset, endian)?)
-            },
-            _ => None
+            }
+            _ => None,
         };
 
         let profile_id: Option<u8> = match frame_control.frame_type() {
-            super::frame::FrameType::Data |
-            super::frame::FrameType::Acknowledtement => {
+            super::frame::FrameType::Data | super::frame::FrameType::Acknowledtement => {
                 Some(bytes.read_with(offset, endian)?)
-            },
-            _ => None
+            }
+            _ => None,
         };
 
         let source_endpoint = Some(bytes.read_with(offset, ())?);
 
         let counter: u8 = bytes.read_with(offset, endian)?;
 
-        let extended_header: Option<ExtendedFrameControlField> = if frame_control.extended_header() {
+        let extended_header: Option<ExtendedFrameControlField> = if frame_control.extended_header()
+        {
             Some(bytes.read_with(offset, endian)?)
         } else {
             None
@@ -78,7 +82,8 @@ impl TryRead<'_, byte::ctx::Endian> for Header {
 
 #[cfg(test)]
 mod tests {
-    use byte::{TryRead, LE};
+    use byte::TryRead;
+    use byte::LE;
 
     use super::*;
     use crate::aps::apdu::frame::FrameType;

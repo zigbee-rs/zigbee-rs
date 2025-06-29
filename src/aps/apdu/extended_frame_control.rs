@@ -1,6 +1,9 @@
-use byte::{BytesExt, TryRead, TryWrite, LE};
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
+use byte::LE;
 
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 impl_byte! {
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,4 +55,3 @@ impl TryWrite<byte::ctx::Endian> for Fragmentation {
         Ok(*offset)
     }
 }
-

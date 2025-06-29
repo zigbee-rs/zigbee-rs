@@ -49,10 +49,10 @@
     dead_code,
     unused_imports,
     unused_variables,
-    unused_macros
+    unused_macros,
+    clippy::doc_markdown
 )]
 
-pub(crate) mod common;
 pub mod zdp;
 
 /// The `application support sub-layer` provides an interface between the
@@ -73,6 +73,10 @@ pub mod nwk;
 
 /// 4.1 Security Service
 pub mod security;
+
+// Exposes types and macros only to be within zigbee crates. Not public API.
+#[doc(hidden)]
+pub mod internal;
 
 /// Initialize a new zigbee device with the default configuartion.
 ///
