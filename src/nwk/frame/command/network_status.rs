@@ -1,5 +1,5 @@
-use crate::common::types::ShortAddress;
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
+use crate::internal::types::ShortAddress;
 
 pub struct NetworkStatus {
     pub status_code: NetworkStatusCode,

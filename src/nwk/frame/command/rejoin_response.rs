@@ -1,4 +1,4 @@
-use crate::common::types::ShortAddress;
+use crate::internal::types::ShortAddress;
 
 pub struct RejoinResponse {
     pub network_address: ShortAddress,
