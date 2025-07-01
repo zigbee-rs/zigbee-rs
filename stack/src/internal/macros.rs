@@ -76,6 +76,7 @@ macro_rules! impl_byte {
             $(
                 $(#[doc = $doc:literal])*
                 $(#[ctx = $ctx_hdr:expr])?
+                $(#[ctx_write = $ctx_write:expr])?
                 $(#[parse_if = $parse_if_hdr:expr])?
                 $vf:vis $field_name:ident: $field_ty:ty
             ),+
@@ -141,8 +142,10 @@ macro_rules! impl_byte {
                 $(
                     let ctx = ::byte::LE;
                     $(
-                        let _ = $ctx_hdr;
-                        let ctx = ();
+                        let ctx = $ctx_hdr;
+                    )?
+                    $(
+                        let ctx = $ctx_write;
                     )?
 
                     let should_write = true;
@@ -178,6 +181,7 @@ mod tests {
             opt: Option<u16>,
             length: u8,
             #[ctx = byte::ctx::Bytes::Len(usize::from(length))]
+            #[ctx_write = ()]
             data: &'a [u8],
         }
     }
