@@ -1,7 +1,7 @@
 //! NWK Frame Header Control
 use core::mem;
 
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 impl_byte! {
     /// Frame Control field

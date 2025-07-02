@@ -6,8 +6,8 @@ use crate::apl::descriptors::node_descriptor::MacCapabilities;
 use crate::apl::descriptors::node_descriptor::NodeDescriptor;
 use crate::apl::descriptors::node_descriptor::ServerMask;
 use crate::apl::descriptors::user_descriptor::UserDescriptor;
-use crate::common::types::IeeeAddress;
-use crate::common::types::NwkAddress;
+use crate::internal::types::IeeeAddress;
+use crate::internal::types::NwkAddress;
 
 const CLUSTER_LIST_SIZE: usize = 2 * 0xffff;
 

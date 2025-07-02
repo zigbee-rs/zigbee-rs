@@ -1,4 +1,4 @@
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 /// Leave Command Frame
 #[derive(Debug)]

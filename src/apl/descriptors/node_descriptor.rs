@@ -315,7 +315,7 @@ impl DescriptorCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::macros::bitfield_bits;
+    use crate::internal::types::macros::bitfield_bits;
 
     #[test]
     fn creating_frequency_bands_should_succeed() {

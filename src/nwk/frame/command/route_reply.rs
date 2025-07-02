@@ -1,6 +1,6 @@
-use crate::common::types::IeeeAddress;
-use crate::common::types::ShortAddress;
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
+use crate::internal::types::IeeeAddress;
+use crate::internal::types::ShortAddress;
 
 pub struct RouteReply {
     pub command_options: CommandOptions,

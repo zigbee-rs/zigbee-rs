@@ -4,7 +4,7 @@ use core::fmt;
 
 use heapless::FnvIndexSet;
 
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
 
 impl_byte! {
     /// 16-bit network address

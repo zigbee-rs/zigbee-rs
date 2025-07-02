@@ -1,8 +1,8 @@
 //! NWK Frame Header
 use super::frame_control::FrameControl;
-use crate::common::types::IeeeAddress;
-use crate::common::types::ShortAddress;
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
+use crate::internal::types::IeeeAddress;
+use crate::internal::types::ShortAddress;
 
 impl_byte! {
     /// 3.3.1 General NPDU Frame Format

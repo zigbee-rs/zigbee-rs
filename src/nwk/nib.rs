@@ -8,8 +8,8 @@ use core::mem;
 use heapless::FnvIndexMap;
 use heapless::Vec;
 
-use crate::common::types::IeeeAddress;
-use crate::common::types::ShortAddress;
+use crate::internal::types::IeeeAddress;
+use crate::internal::types::ShortAddress;
 use crate::security::frame::SecurityLevel;
 
 /// Zigbee device type.

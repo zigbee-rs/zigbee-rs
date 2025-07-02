@@ -169,7 +169,7 @@ impl From<u8> for CurrentPowerSourceLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::types::macros::bitfield_bits;
+    use crate::internal::types::macros::bitfield_bits;
 
     #[test]
     fn creating_available_power_sources_should_succeed() {

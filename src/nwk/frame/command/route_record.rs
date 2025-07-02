@@ -1,4 +1,4 @@
-use crate::common::types::ShortAddress;
+use crate::internal::types::ShortAddress;
 
 pub struct RouteRecord<'a> {
     pub relay_count: u8,

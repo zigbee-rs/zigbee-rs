@@ -1,8 +1,8 @@
 //! Security Frame Formats
 use core::mem;
 
-use crate::common::types::IeeeAddress;
-use crate::impl_byte;
+use crate::internal::macros::impl_byte;
+use crate::internal::types::IeeeAddress;
 
 impl_byte! {
     /// Auxiliary Frame Header Format
