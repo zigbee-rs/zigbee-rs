@@ -17,7 +17,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 heapless.workspace = true
-strum = { workspace = true, features = ["derive"], default-features = false }
-thiserror = { workspace = true, default-features = false }
+strum = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
 byte.workspace = true
 

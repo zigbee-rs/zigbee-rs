@@ -370,25 +370,39 @@ impl<'a> TryRead<'a, u8> for MiscType<'a> {
 mod tests {
     use byte::TryRead;
 
-    use crate::common::data_types::SignedN;
+    use crate::common::data_types::DataN;
 
     use super::ZclDataType;
 
     #[test]
     fn parse_nodata() {
         // given
-        let input: &[u8] = &[0x3f];
+        let input: &[u8] = &[0x00];
 
         // when
         let (data, len) = ZclDataType::try_read(input, 0x00).unwrap();
 
         // then
+        assert_eq!(len, 0);
+        assert!(matches!(data, ZclDataType::NoData));
+    }
+
+    #[test]
+    fn parse_data() {
+        // given
+        let input: &[u8] = &[0x01];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0x08).unwrap();
+
+        // then
         assert_eq!(len, 1);
-        assert!(matches!(data, ZclDataType::SignedInt(_)));
-        if let ZclDataType::SignedInt(value) = data {
-            assert_eq!(value, SignedN::Int16(2623));
+        assert!(matches!(data, ZclDataType::Data(_)));
+        if let ZclDataType::Data(value) = data {
+            assert_eq!(value, DataN::Data8(1));
         } else {
-            panic!("GeneralCommand expected!");
+            panic!("DataN::Data8 expected!");
         }
     }
 }
+

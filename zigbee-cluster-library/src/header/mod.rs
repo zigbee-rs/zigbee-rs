@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn unpack_header_with_manufacturer_code() {
         // given
-        let input = [0x1c, 0x11, 0x12, 0x01, 0x0a];
+        let input = [0x1c, 0x11, 0x12, 0x02, 0x0a];
 
         // when
         let (header, _) =
@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(header.frame_control.frame_type(), FrameType::GlobalCommand);
         assert!(header.frame_control.is_manufacturer_specific());
         assert_eq!(header.manufacturer_code, Some(ManufacturerCode(4625)));
-        assert_eq!(header.sequence_number, 1);
+        assert_eq!(header.sequence_number, 2);
         assert_eq!(
             header.command_identifier,
             CommandIdentifier::ReportAttributes

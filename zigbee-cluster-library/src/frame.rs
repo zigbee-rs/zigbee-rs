@@ -73,6 +73,7 @@ mod tests {
     use byte::TryRead;
 
     use super::*;
+    use crate::common::data_types::SignedN;
 
     #[test]
     fn parse_attribute_report_payload() {
@@ -90,7 +91,7 @@ mod tests {
         assert_eq!(report.attribute_id, 0u16);
         assert_eq!(
             report.data_type,
-            ZclDataType::SignedInt(crate::common::data_types::SignedN::Int16(939))
+            ZclDataType::SignedInt(SignedN::Int16(939))
         );
     }
 
@@ -98,32 +99,32 @@ mod tests {
     #[test]
     fn zcl_general_command() {
         // given
-        let _input: &[u8] = &[
+        let input: &[u8] = &[
             0x18, // frame control
             0x01, // sequence number
-            0x0a, // command
+            0x0A, // command identifier
             0x00, 0x00, 0x29, 0x3f, 0x0a, // payload
         ];
 
         // when
-        // let (frame, _) = ZclFrame::try_read(input, &ZclHeader).expect("Failed to read ZclFrame");
+        let (frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
 
         // then
-        // assert!(frame.header.frame_control.is_manufacturer_specific());
-        // assert_eq!(frame.header.sequence_number, 1);
-        // assert!(matches!(frame.payload, ZclFramePayload::GeneralCommand(_)));
+        let _expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
+        assert!(matches!(frame.payload, ZclFramePayload::GeneralCommand(_)));
 
-        // let expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
-        // assert!(matches!(frame, ZclFrame::GeneralCommand(_)));
-        // if let ZclFramePayload::GeneralCommand(cmd) = frame.payload {
-        //     if let GeneralCommand::ReportAttributesCommand(report) = cmd {
-        //         assert_eq!(report.len(), 1);
-        //     }  else {
-        //         panic!("Report Attributes Command expected!");
-        //     }
-        // } else {
-        //     panic!("GeneralCommand expecyed!");
-        // }
+        if let ZclFramePayload::GeneralCommand(cmd) = frame.payload {
+            if let GeneralCommand::ReportAttributesCommand(report) = cmd {
+                assert_eq!(report.len(), 1);
+                let attribute_report = report.first().expect("Expected ONE report in test");
+                assert_eq!(attribute_report.attribute_id, 0u16);
+                assert_eq!(attribute_report.data_type, ZclDataType::SignedInt(SignedN::Int16(2623)));
+            }  else {
+                panic!("Report Attributes Command expected!");
+            }
+        } else {
+            panic!("GeneralCommand expecyed!");
+        }
     }
 
     #[allow(clippy::panic)]
@@ -133,24 +134,20 @@ mod tests {
         let input: &[u8] = &[
             0x19, // frame control
             0x01, // sequence number
-            0x0a, // command
+            0x01, // command identifier
             0x00, 0x00, 0x29, 0x3f, 0x0a, // payload
         ];
 
         // when
-        let (_frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
+        let (frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
 
         // then
-        let _expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
-        // assert!(matches!(frame, ZclFrame::ClusterSpecificCommand(_)));
-        // if let ZclFrame::ClusterSpecificCommand(general_command) = frame {
-        //     assert!(!general_command
-        //         .header
-        //         .frame_control
-        //         .is_manufacturer_specific());
-        //     assert_eq!(general_command.payload, expected);
-        // } else {
-        //     panic!("ClusterSpecificCommand expecyed!");
-        // }
+        let expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
+        assert!(matches!(frame.payload, ZclFramePayload::ClusterSpecificCommand(_)));
+        if let ZclFramePayload::ClusterSpecificCommand(cmd) = frame.payload {
+            assert_eq!(cmd, expected);
+        } else {
+            panic!("ClusterSpecificCommand expecyed!");
+        }
     }
 }

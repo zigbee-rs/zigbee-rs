@@ -53,15 +53,17 @@ impl<'a> TryRead<'a, &ZclHeader> for ZclFramePayload<'a> {
                 };
                 ZclFramePayload::GeneralCommand(cmd)
             }
-            FrameType::ClusterCommand => todo!(),
+            FrameType::ClusterCommand => {
+                ZclFramePayload::ClusterSpecificCommand(bytes)
+            },
             FrameType::Reserved => todo!(),
         };
 
         Ok((payload, *offset))
     }
 }
-impl TryWrite<&ZclHeader> for ZclFramePayload<'_> {
-    fn try_write(self, _bytes: &mut [u8], _header: &ZclHeader) -> Result<usize, ::byte::Error> {
+impl TryWrite<()> for ZclFramePayload<'_> {
+    fn try_write(self, _bytes: &mut [u8], _: ()) -> Result<usize, ::byte::Error> {
         unimplemented!()
     }
 }
