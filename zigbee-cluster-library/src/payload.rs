@@ -1,10 +1,13 @@
-use byte::{BytesExt, TryRead, TryWrite};
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
 use heapless::Vec;
 
-use crate::{
-    frame::{AttributeReport, GeneralCommand},
-    header::{command_identifier::CommandIdentifier, frame_control::FrameType, ZclHeader},
-};
+use crate::frame::AttributeReport;
+use crate::frame::GeneralCommand;
+use crate::header::command_identifier::CommandIdentifier;
+use crate::header::frame_control::FrameType;
+use crate::header::ZclHeader;
 
 #[derive(Debug)]
 pub enum ZclFramePayload<'a> {
@@ -53,9 +56,7 @@ impl<'a> TryRead<'a, &ZclHeader> for ZclFramePayload<'a> {
                 };
                 ZclFramePayload::GeneralCommand(cmd)
             }
-            FrameType::ClusterCommand => {
-                ZclFramePayload::ClusterSpecificCommand(bytes)
-            },
+            FrameType::ClusterCommand => ZclFramePayload::ClusterSpecificCommand(bytes),
             FrameType::Reserved => todo!(),
         };
 

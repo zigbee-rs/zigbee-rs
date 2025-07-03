@@ -5,13 +5,12 @@ pub mod command_identifier;
 pub mod frame_control;
 pub mod manufacturer_code;
 
+use core::fmt::Debug;
+
 use command_identifier::CommandIdentifier;
 use frame_control::FrameControl;
 use manufacturer_code::ManufacturerCode;
-
 use zigbee::internal::macros::impl_byte;
-
-use core::fmt::Debug;
 
 impl_byte! {
     /// 2.4.1 ZCL Header
@@ -33,9 +32,8 @@ impl_byte! {
 mod tests {
     use byte::TryRead;
 
-    use crate::header::frame_control::FrameType;
-
     use super::*;
+    use crate::header::frame_control::FrameType;
 
     #[test]
     fn unpack_header_without_manufacturer_code() {

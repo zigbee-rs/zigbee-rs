@@ -32,11 +32,11 @@ impl FrameControl {
         unsafe { mem::transmute((self.0 & mask::FRAME_TYPE) >> offset::FRAME_TYPE) }
     }
 
-    /// The Manufacturer Specific field specifies whether this command refers to a
-    /// manufacturer specific extension.
+    /// The Manufacturer Specific field specifies whether this command refers to
+    /// a manufacturer specific extension.
     ///
-    /// If this value is set to 1, the manufacturer code field SHALL be present in
-    /// the ``ZCLframe``.
+    /// If this value is set to 1, the manufacturer code field SHALL be present
+    /// in the ``ZCLframe``.
     ///
     /// See Section 2.4.1.1.2
     pub fn is_manufacturer_specific(self) -> bool {

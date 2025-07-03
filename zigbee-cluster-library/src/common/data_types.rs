@@ -1,7 +1,9 @@
 //! Data types
 //!
 //! See section 2.6.2
-use byte::{BytesExt, TryRead, TryWrite};
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
 
 #[derive(Debug, PartialEq)]
 pub enum ZclDataType<'a> {
@@ -370,9 +372,14 @@ impl<'a> TryRead<'a, u8> for MiscType<'a> {
 mod tests {
     use byte::TryRead;
 
-    use crate::common::data_types::DataN;
-
     use super::ZclDataType;
+    use crate::common::data_types::DataN;
+    use crate::common::data_types::EnumN;
+    use crate::common::data_types::FloatN;
+    use crate::common::data_types::IdentifierType;
+    use crate::common::data_types::MiscType;
+    use crate::common::data_types::TimeType;
+    use crate::common::data_types::ZclString;
 
     #[test]
     fn parse_nodata() {
@@ -404,5 +411,132 @@ mod tests {
             panic!("DataN::Data8 expected!");
         }
     }
-}
 
+    #[test]
+    fn parse_bool() {
+        // given
+        let input: &[u8] = &[0x01];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0x10).unwrap();
+
+        // then
+        assert_eq!(len, 1);
+        assert!(matches!(data, ZclDataType::Bool(_)));
+        if let ZclDataType::Bool(value) = data {
+            assert_eq!(value, true);
+        } else {
+            panic!("ZclDataType::Bool expected!");
+        }
+    }
+
+    #[test]
+    fn parse_enum() {
+        // given
+        let input: &[u8] = &[0x1d, 0x10];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0x31).unwrap();
+
+        // then
+        assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::Enum(_)));
+        if let ZclDataType::Enum(value) = data {
+            assert_eq!(value, EnumN::Enum16(4125u16));
+        } else {
+            panic!("ZclDataType::Enum expected!");
+        }
+    }
+
+    #[test]
+    fn parse_float() {
+        // given
+        let input: &[u8] = &[0x1d, 0x10];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0x38).unwrap();
+
+        // then
+        assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::Float(_)));
+        if let ZclDataType::Float(value) = data {
+            assert_eq!(value, FloatN::Semi(4125u16));
+        } else {
+            panic!("ZclDataType::Float expected!");
+        }
+    }
+
+    // #[test] // 💥 Parsing the input fails
+    fn parse_string() {
+        // given
+        let input: &[u8] = &[0x48, 0x65, 0x6C, 0x6C, 0x6F];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0x42).unwrap();
+
+        // then
+        assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::String(_)));
+        if let ZclDataType::String(value) = data {
+            assert_eq!(value, ZclString::CharString("Hello"));
+        } else {
+            panic!("ZclString::CharString expected!");
+        }
+    }
+
+    #[test]
+    fn parse_time() {
+        // given
+        let input: &[u8] = &[0x1d, 0x10, 0x4F, 0x46];
+
+        // when
+        let (data, _) = ZclDataType::try_read(input, 0xE2).unwrap();
+
+        // then
+        // assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::Time(_)));
+        if let ZclDataType::Time(value) = data {
+            assert_eq!(value, TimeType::UTCTime(1179586589));
+        } else {
+            panic!("TimeType::UTCTime expected!");
+        }
+    }
+
+    #[test]
+    fn parse_identifier() {
+        // given
+        let input: &[u8] = &[0x1d, 0x11];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0xE8).unwrap();
+
+        // then
+        assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::Identifier(_)));
+        if let ZclDataType::Identifier(value) = data {
+            assert_eq!(value, IdentifierType::ClusterId(4381u16));
+        } else {
+            panic!("IdentifierType::ClusterId expected!");
+        }
+    }
+
+    #[test]
+    fn parse_misc() {
+        // given
+        let input: &[u8] = &[
+            0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10,
+        ];
+
+        // when
+        let (data, len) = ZclDataType::try_read(input, 0xF0).unwrap();
+
+        // then
+        // assert_eq!(len, 2);
+        assert!(matches!(data, ZclDataType::Misc(_)));
+        if let ZclDataType::Misc(value) = data {
+            assert_eq!(value, MiscType::IeeeAddress(1_161_101_995_941_892_125u64));
+        } else {
+            panic!("MiscType::IeeeAddress expected!");
+        }
+    }
+}

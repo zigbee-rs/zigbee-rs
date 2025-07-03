@@ -2,14 +2,15 @@
 #![allow(missing_docs)]
 #![allow(clippy::panic)]
 
-use byte::{ctx, BytesExt, TryRead};
+use byte::ctx;
+use byte::BytesExt;
+use byte::TryRead;
 use heapless::Vec;
-
 use zigbee::internal::macros::impl_byte;
 
-use crate::{
-    common::data_types::ZclDataType, header::ZclHeader, payload::ZclFramePayload,
-};
+use crate::common::data_types::ZclDataType;
+use crate::header::ZclHeader;
+use crate::payload::ZclFramePayload;
 
 impl_byte! {
     /// ZCL Frame
@@ -84,8 +85,8 @@ mod tests {
         ];
 
         // when
-        let (report, _) =
-            AttributeReport::try_read(input, ()).expect("Failed to read AttributeReport payload in test");
+        let (report, _) = AttributeReport::try_read(input, ())
+            .expect("Failed to read AttributeReport payload in test");
 
         // then
         assert_eq!(report.attribute_id, 0u16);
@@ -118,8 +119,11 @@ mod tests {
                 assert_eq!(report.len(), 1);
                 let attribute_report = report.first().expect("Expected ONE report in test");
                 assert_eq!(attribute_report.attribute_id, 0u16);
-                assert_eq!(attribute_report.data_type, ZclDataType::SignedInt(SignedN::Int16(2623)));
-            }  else {
+                assert_eq!(
+                    attribute_report.data_type,
+                    ZclDataType::SignedInt(SignedN::Int16(2623))
+                );
+            } else {
                 panic!("Report Attributes Command expected!");
             }
         } else {
@@ -143,7 +147,10 @@ mod tests {
 
         // then
         let expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
-        assert!(matches!(frame.payload, ZclFramePayload::ClusterSpecificCommand(_)));
+        assert!(matches!(
+            frame.payload,
+            ZclFramePayload::ClusterSpecificCommand(_)
+        ));
         if let ZclFramePayload::ClusterSpecificCommand(cmd) = frame.payload {
             assert_eq!(cmd, expected);
         } else {

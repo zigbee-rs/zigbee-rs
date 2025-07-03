@@ -1,5 +1,6 @@
 //! Command Identifier.
-use byte::{TryRead, TryWrite};
+use byte::TryRead;
+use byte::TryWrite;
 
 /// Command Identifier.
 ///
@@ -84,17 +85,48 @@ mod tests {
     use byte::TryRead;
 
     use super::*;
+    use crate::test_branches_command_identifier;
 
-    #[test]
-    fn unpack_command_identifier() {
-        // given
-        let input = [0x0a];
-
-        // when
-        let (command_identifier, _) = CommandIdentifier::try_read(&input, byte::LE)
-            .expect("Could not read CommandIdentifier in test");
-
-        // then
-        assert_eq!(command_identifier, CommandIdentifier::ReportAttributes);
+    test_branches_command_identifier! {
+        cmd_ident_read_attributes: &[0x00] => CommandIdentifier::ReadAttributes,
+        cmd_ident_read_attributes_response: &[0x01] => CommandIdentifier::ReadAttributesResponse,
+        cmd_ident_write_attributes: &[0x02] => CommandIdentifier::WriteAttributes,
+        cmd_ident_write_attributes_undivided: &[0x03] => CommandIdentifier::WriteAttributesUndivided,
+        cmd_ident_write_attributes_response: &[0x04] => CommandIdentifier::WriteAttributesResponse,
+        cmd_ident_write_attributes_no_response: &[0x05] => CommandIdentifier::WriteAttributesNoResponse,
+        cmd_ident_configure_reporting: &[0x06] => CommandIdentifier::ConfigureReporting,
+        cmd_ident_configure_reporting_response: &[0x07] => CommandIdentifier::ConfigureReportingResponse,
+        cmd_ident_read_reporting_configuration: &[0x08] => CommandIdentifier::ReadReportingConfiguration,
+        cmd_ident_read_reporting_configuration_response: &[0x09] => CommandIdentifier::ReadReportingConfigurationResponse,
+        cmd_ident_report_attributes: &[0x0a] => CommandIdentifier::ReportAttributes,
+        cmd_ident_default_response: &[0x0b] => CommandIdentifier::DefaultResponse,
+        cmd_ident_discover_attributes: &[0x0c] => CommandIdentifier::DiscoverAttributes,
+        cmd_ident_discover_attributes_response: &[0x0d] => CommandIdentifier::DiscoverAttributesResponse,
+        cmd_ident_read_attributes_structured: &[0x0e] => CommandIdentifier::ReadAttributesStructured,
+        cmd_ident_write_attributes_structured: &[0x0f] => CommandIdentifier::WriteAttributesStructured,
+        cmd_ident_write_attributes_structured_response: &[0x10] => CommandIdentifier::WriteAttributesStructuredResponse,
+        cmd_ident_discover_commands_received: &[0x11] => CommandIdentifier::DiscoverCommandsReceived,
+        cmd_ident_discovercommandsreceivedresponse: &[0x12] => CommandIdentifier::DiscoverCommandsReceivedResponse,
+        cmd_ident_discovercommandsgenerated: &[0x13] => CommandIdentifier::DiscoverCommandsGenerated,
+        cmd_ident_discovercommandsgeneratedresponse: &[0x14] => CommandIdentifier::DiscoverCommandsGeneratedResponse,
+        cmd_ident_discoverattributesextended: &[0x15] => CommandIdentifier::DiscoverAttributesExtended,
+        cmd_ident_discoverattributesextendedresponse: &[0x16] => CommandIdentifier::DiscoverAttributesExtendedResponse,
     }
+}
+
+#[macro_export]
+macro_rules! test_branches_command_identifier {
+    ($($name:ident: $input:expr => $want:expr,)+) => {
+        $(
+            #[test]
+            fn $name() {
+                // when
+                let (command_identifier, _) = CommandIdentifier::try_read($input, byte::LE)
+                    .expect("Could not read CommandIdentifier in test");
+
+                // then
+                assert_eq!(command_identifier, $want);
+            }
+        )+
+    };
 }
