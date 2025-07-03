@@ -123,7 +123,7 @@ mod tests {
                 panic!("Report Attributes Command expected!");
             }
         } else {
-            panic!("GeneralCommand expecyed!");
+            panic!("GeneralCommand expected!");
         }
     }
 
@@ -147,7 +147,7 @@ mod tests {
         if let ZclFramePayload::ClusterSpecificCommand(cmd) = frame.payload {
             assert_eq!(cmd, expected);
         } else {
-            panic!("ClusterSpecificCommand expecyed!");
+            panic!("ClusterSpecificCommand expected!");
         }
     }
 }
