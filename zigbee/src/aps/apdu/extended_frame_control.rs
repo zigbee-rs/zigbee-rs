@@ -46,3 +46,34 @@ impl_byte! {
         Reserved,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use byte::TryRead;
+
+    use super::*;
+
+    #[test]
+    fn parse_extended_frame_control_with_fragmentation() {
+        let raw = [0b01u8];
+
+        let (frame_control, len) = ExtendedFrameControl::try_read(&raw, ()).unwrap();
+        assert_eq!(len, 1);
+        assert!(matches!(
+            frame_control.fragmentation,
+            Fragmentation::Fragmentation
+        ));
+    }
+
+    #[test]
+    fn parse_extended_frame_control_without_fragmentation() {
+        let raw = [0b00u8];
+
+        let (frame_control, len) = ExtendedFrameControl::try_read(&raw, ()).unwrap();
+        assert_eq!(len, 1);
+        assert!(matches!(
+            frame_control.fragmentation,
+            Fragmentation::NoFragmentation
+        ));
+    }
+}

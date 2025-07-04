@@ -1,0 +1,19 @@
+[package]
+name = "zigbee-cluster-library"
+version = "0.1.0-alpha.2"
+authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
+edition = "2018"
+rust-version = "1.50"
+
+description = "ZigBee cluster library based on the official ZigBee Cluster Library Rev 6 Draft 1.0"
+documentation = "https://docs.rs/zigbee-cluster-library"
+repository = "https://github.com/thebino/zigbee-cluster-library"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "cluster-library", "zcl"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+byte.workspace = true
+heapless.workspace = true
+zigbee = { path = "../zigbee" }

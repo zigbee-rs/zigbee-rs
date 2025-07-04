@@ -73,7 +73,7 @@ jobs:
         run: cargo test
 
       - name: Coverage
-        run: grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing -o ./target/debug/coverage
+        run: grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*"  -o ./target/debug/coverage
 
       - name: Report code coverage
         uses: zgosalvez/github-actions-report-lcov@v4
