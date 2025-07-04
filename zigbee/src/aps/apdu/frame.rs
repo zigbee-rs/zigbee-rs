@@ -77,7 +77,7 @@ impl core::fmt::Debug for FrameControl {
 pub enum FrameType {
     Data = 0b00,
     Command = 0b01,
-    Acknowledtement = 0b10,
+    Acknowledgement = 0b10,
     InterPan = 0b11,
 }
 
