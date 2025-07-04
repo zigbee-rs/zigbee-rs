@@ -1,23 +1,19 @@
-[package]
-name = "zigbee"
-version = "0.1.0-alpha.1"
+[workspace.package]
 authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
-edition = "2018"
-rust-version = "1.50"
-
-description = "ZigBee protocol stack in `no-std` based on the ZigBee specification 22 1.0"
-documentation = "https://docs.rs/zigbee"
-repository = "https://github.com/thebino/zigbee-rs"
+repository = "https://github.com/zigbee-rs"
 readme = "README.md"
-keywords = ["zigbee", "ieee802154", "embedded", "iot"]
-categories = ["network-programming", "no-std", "embedded"]
-license = "MIT OR Apache-2.0"
+edition = "2021"
 
-[features]
+[workspace]
+members = [
+    "zigbee",
+    "zigbee-cluster-library",
+]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
 heapless = "0.8.0"
-strum = { version = "0.27.1", features = ["derive"], default-features = false }
-thiserror = { version = "2.0.6", default-features = false }
+strum = { version = "0.27.1" }
+thiserror = { version = "2.0.6" }
 byte = "0.2.7"
 
