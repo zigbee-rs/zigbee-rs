@@ -7,11 +7,11 @@ pub struct NetworkStatus {
 }
 
 impl_byte! {
+    #[tag(u8)]
     /// Network Status Codes
     ///
     /// See Section 3.4.3.3.1.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    #[repr(u8)]
     pub enum NetworkStatusCode {
         /// No route available
         NoRouteAvailable = 0x00,
@@ -53,6 +53,6 @@ impl_byte! {
         BadKeySequenceNumber = 0x12,
         /// Reserved
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }

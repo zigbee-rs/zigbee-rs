@@ -11,6 +11,7 @@ use frame_control::FrameType;
 use header::Header;
 
 use crate::internal::macros::impl_byte;
+use crate::nwk::frame::command::Command;
 use crate::security::frame::AuxFrameHeader;
 use crate::security::SecurityContext;
 
@@ -26,66 +27,16 @@ pub enum Frame<'a> {
     InterPan(Header<'a>),
 }
 
-impl<'a> TryRead<'a, SecurityContext> for Frame<'a> {
-    fn try_read(bytes: &'a [u8], cx: SecurityContext) -> byte::Result<(Self, usize)> {
-        let offset = &mut 0;
-
-        let header: Header<'a> = bytes.read_with(offset, ())?;
-
-        let has_security = header.frame_control.security_flag();
-
-        let frame = match header.frame_control.frame_type() {
-            FrameType::Data => {
-                unimplemented!()
-            }
-            FrameType::NwkCommand => {
-                unimplemented!()
-            }
-            FrameType::Reserved => Self::Reserved(header),
-            FrameType::InterPan => Self::InterPan(header),
-        };
-
-        Ok((frame, *offset))
-    }
-}
-
 /// NWK Data Frame
 pub struct DataFrame<'a> {
     pub header: Header<'a>,
-    pub aux_header: Option<AuxFrameHeader>,
     pub payload: &'a [u8],
 }
 
 /// NWK Command Frame
 pub struct CommandFrame<'a> {
     pub header: Header<'a>,
-    pub aux_header: Option<AuxFrameHeader>,
     pub command: Command,
-}
-
-impl_byte! {
-    /// Comand Frame Identifiers.
-    ///
-    /// See Section 3.4.
-    #[derive(Debug)]
-    #[repr(u8)]
-    pub enum Command {
-        RouteRequest = 0x01,
-        RouteReply = 0x02,
-        NetworkStatus = 0x03,
-        Leave = 0x04,
-        RouteRecord = 0x05,
-        RejoinRequest = 0x06,
-        RejoinResponse = 0x07,
-        LinkStatus = 0x08,
-        NetworkReport = 0x09,
-        NetworkUpdate = 0x0a,
-        EndDeviceTimeoutRequest = 0x0b,
-        EndDeviceTimeoutResponse = 0x0c,
-        LinkPowerDelta = 0x0d,
-        #[fallback = true]
-        Reserved,
-    }
 }
 
 #[cfg(test)]
