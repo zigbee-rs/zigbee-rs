@@ -2,10 +2,10 @@
 use byte::BytesExt;
 use byte::TryRead;
 
-use super::extended_frame_control::ExtendedFrameControlField;
-use super::frame::DeliveryMode;
-use super::frame::FrameControl;
-use crate::aps::apdu::frame::FrameType;
+use super::frame_control::DeliveryMode;
+use super::frame_control::FrameControl;
+use crate::aps::apdu::frame::frame_control::ExtendedFrameControlField;
+use crate::aps::apdu::frame::frame_control::FrameType;
 use crate::impl_byte;
 use crate::internal::types::ShortAddress;
 

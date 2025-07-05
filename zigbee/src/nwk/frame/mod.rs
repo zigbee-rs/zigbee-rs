@@ -52,23 +52,21 @@ impl<'a> TryRead<'a, SecurityContext> for Frame<'a> {
 /// NWK Data Frame
 pub struct DataFrame<'a> {
     pub header: Header<'a>,
-    pub aux_header: Option<AuxFrameHeader>,
     pub payload: &'a [u8],
 }
 
 /// NWK Command Frame
 pub struct CommandFrame<'a> {
     pub header: Header<'a>,
-    pub aux_header: Option<AuxFrameHeader>,
     pub command: Command,
 }
 
 impl_byte! {
+    #[tag(u8)]
     /// Comand Frame Identifiers.
     ///
     /// See Section 3.4.
     #[derive(Debug)]
-    #[repr(u8)]
     pub enum Command {
         RouteRequest = 0x01,
         RouteReply = 0x02,
@@ -84,7 +82,7 @@ impl_byte! {
         EndDeviceTimeoutResponse = 0x0c,
         LinkPowerDelta = 0x0d,
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }
 

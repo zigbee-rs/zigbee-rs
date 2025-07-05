@@ -50,7 +50,8 @@
     unused_imports,
     unused_variables,
     unused_macros,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::cast_lossless
 )]
 
 pub mod zdp;

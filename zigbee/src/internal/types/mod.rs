@@ -2,9 +2,35 @@ pub type NwkAddress = u16;
 
 use core::fmt;
 
+use byte::ctx;
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
 use heapless::FnvIndexSet;
 
 use crate::internal::macros::impl_byte;
+
+/// A fixed-size byte array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteArray<const N: usize>(pub [u8; N]);
+
+impl<'a, const N: usize, C: Default> TryRead<'a, C> for ByteArray<N> {
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        let mut buf = [0u8; N];
+        let data = bytes.read_with(offset, ctx::Bytes::Len(N))?;
+        buf.copy_from_slice(data);
+        Ok((Self(buf), *offset))
+    }
+}
+
+impl<const N: usize, C: Default> TryWrite<C> for ByteArray<N> {
+    fn try_write(self, bytes: &mut [u8], _: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        bytes.write_with(&mut 0, &self.0[..], ())?;
+        Ok(*offset)
+    }
+}
 
 impl_byte! {
     /// 16-bit network address

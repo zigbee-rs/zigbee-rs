@@ -27,7 +27,7 @@ impl_byte! {
     /// Security Control
     ///
     /// See Section 4.5.1.1.
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct SecurityControl(pub u8);
 }
 
@@ -58,6 +58,10 @@ impl SecurityControl {
         unsafe { mem::transmute((self.0 >> 3) & 0b11) }
     }
 
+    pub fn set_key_identifier(&mut self, key_id: KeyIdentifier) {
+        self.0 = (self.0 & !mask::KEY_IDENTIFIER) | ((key_id as u8) << offset::KEY_IDENTIFIER);
+    }
+
     pub(crate) fn is_network_key(&self) -> bool {
         self.key_identifier() == KeyIdentifier::Network
     }
@@ -65,6 +69,11 @@ impl SecurityControl {
     /// Set if the sender address of the auxiliary header is present.
     pub fn extended_nonce(&self) -> bool {
         self.0 >> 5 != 0
+    }
+
+    pub fn set_extended_nonce(&mut self, extended_nonce: bool) {
+        self.0 =
+            (self.0 & !mask::EXTENDED_NONCE) | ((extended_nonce as u8) << offset::EXTENDED_NONCE);
     }
 }
 

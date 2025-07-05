@@ -18,7 +18,11 @@ use frame::SecurityControl;
 use frame::SecurityLevel;
 use thiserror::Error;
 
-use crate::aps::apdu::header::Header as ApsHeader;
+use crate::aps::apdu::frame::command::Command as ApsCommand;
+use crate::aps::apdu::frame::command::TransportKey;
+use crate::aps::apdu::frame::frame_control::FrameType as ApsFrameType;
+use crate::aps::apdu::frame::header::Header as ApsHeader;
+use crate::aps::apdu::frame::Frame as ApsFrame;
 use crate::internal::types::IeeeAddress;
 use crate::nwk::frame::header::Header as NwkHeader;
 use crate::security::frame::KeyIdentifier;
@@ -103,11 +107,7 @@ impl SecurityContext {
         };
         let mic_length = SecurityLevel::EncMic32.mic_length();
 
-        let nonce_bytes = create_nonce(
-            &aux_hdr.source_address.unwrap(),
-            aux_hdr.frame_counter,
-            &aux_hdr.security_control,
-        );
+        let nonce_bytes = create_nonce(&aux_hdr)?;
         let nonce = GenericArray::from(nonce_bytes);
 
         let offset = &mut 0;
@@ -163,17 +163,138 @@ impl SecurityContext {
             return Err(SecurityError::InvalidData);
         };
 
-        let nonce: GenericArray<u8, _> = create_nonce(
-            &source_address,
-            aux_hdr.frame_counter,
-            &aux_hdr.security_control,
-        )
-        .into();
+        let nonce: GenericArray<u8, _> = create_nonce(&aux_hdr)?.into();
         let mut cipher = Aes128Ccm::new(key.into());
 
         cipher
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
             .map_err(SecurityError::CcmError)?;
+
+        Ok(())
+    }
+
+    pub fn encrypt_aps_frame_in_place(
+        &self,
+        aps_frame: ApsFrame<'_>,
+        frame_buffer: &mut [u8],
+    ) -> Result<(), SecurityError> {
+        // Step 1: Obtain security material and key identifier
+        let (key, key_id) = match &aps_frame {
+            // APSDE-DATA frame
+            ApsFrame::Data(data_frame) => {
+                // TODO: get link key associated with destination from AIB
+                // For now, use a default key
+                let key = TRUST_CENTER_LINK_KEY;
+                let key_id = KeyIdentifier::Data;
+                (key, key_id)
+            }
+            ApsFrame::ApsCommand(command_frame) => {
+                // TODO: get from AIB
+                let key = TRUST_CENTER_LINK_KEY;
+                let key_id = match command_frame.command {
+                    ApsCommand::TransportKey(TransportKey::StandardNetworkKey(_)) => {
+                        KeyIdentifier::KeyTransport
+                    }
+                    ApsCommand::TransportKey(TransportKey::ApplicationLinkKey(_)) => {
+                        KeyIdentifier::KeyLoad
+                    }
+                    _ => KeyIdentifier::Data,
+                };
+                (key, key_id)
+            }
+            ApsFrame::Acknowledgement(_) => {
+                return Ok(());
+            }
+        };
+
+        // Step 2: Extract frame counter (and key sequence number if needed)
+        // TODO: Get from AIB
+        let frame_counter = 0x1;
+        if frame_counter == u32::MAX {
+            return Err(SecurityError::InvalidData);
+        }
+
+        // Step 3: Obtain security level from NIB
+        // TODO: Get from NIB
+        let sec_level = SecurityLevel::EncMic32;
+        let mic_length = sec_level.mic_length();
+
+        // Set key identifier
+        let mut security_control = SecurityControl::default();
+        security_control.set_security_level(sec_level);
+        security_control.set_key_identifier(key_id);
+
+        // TODO: also set if TxOptions == 0x10
+        if matches!(aps_frame, ApsFrame::ApsCommand(_)) {
+            security_control.set_extended_nonce(true);
+        }
+
+        let source_address = if security_control.extended_nonce() {
+            // TODO: get from local device
+            Some(IeeeAddress(0x1234_5678_90ab_cdef))
+        } else {
+            None
+        };
+
+        // Step 4: Construct auxiliary header
+        let aux_hdr = AuxFrameHeader {
+            security_control,
+            frame_counter,
+            source_address,
+            key_sequence_number: None, /* this is should be never set because key_id = 0x01
+                                        * (NetworkKey) is invalid */
+        };
+        let nonce = create_nonce(&aux_hdr)?;
+
+        // Write APS header
+        match aps_frame {
+            ApsFrame::Data(data_frame) => {
+                let offset = &mut 0;
+                frame_buffer.write_with(offset, data_frame.header, ())?;
+                frame_buffer.write_with(offset, aux_hdr, ())?;
+
+                let hdr_len = *offset;
+                frame_buffer.write_with(offset, data_frame.payload, ())?;
+
+                Self::encrypt_in_place(frame_buffer, &key, nonce, hdr_len, mic_length)?;
+            }
+            ApsFrame::ApsCommand(command_frame) => {
+                let offset = &mut 0;
+                frame_buffer.write_with(offset, command_frame.header, ())?;
+                frame_buffer.write_with(offset, aux_hdr, ())?;
+
+                let hdr_len = *offset;
+                frame_buffer.write_with(offset, command_frame.command, ())?;
+
+                Self::encrypt_in_place(frame_buffer, &key, nonce, hdr_len, mic_length)?;
+            }
+            ApsFrame::Acknowledgement(header) => {
+                // no encryption for acknowledgements
+                frame_buffer.write_with(&mut 0, header, ())?;
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
+    fn encrypt_in_place(
+        frame_buffer: &mut [u8],
+        key: &[u8],
+        nonce: [u8; 13],
+        hdr_len: usize,
+        mic_len: usize,
+    ) -> Result<(), SecurityError> {
+        let (aad, payload) = frame_buffer.split_at_mut(hdr_len);
+        let (payload, tag) = payload.split_at_mut(payload.len() - mic_len);
+
+        let nonce = GenericArray::from(nonce);
+
+        let mut cipher = Aes128Ccm::new(GenericArray::from_slice(key));
+        let t = cipher
+            .encrypt_in_place_detached(&nonce, aad, payload)
+            .map_err(SecurityError::CcmError)?;
+        tag.copy_from_slice(t.as_slice());
 
         Ok(())
     }
@@ -223,12 +344,7 @@ impl SecurityContext {
             return Err(SecurityError::InvalidData);
         };
 
-        let nonce: GenericArray<u8, _> = create_nonce(
-            &source_address,
-            aux_hdr.frame_counter,
-            &aux_hdr.security_control,
-        )
-        .into();
+        let nonce: GenericArray<u8, _> = create_nonce(&aux_hdr)?.into();
         let mut cipher = Aes128Ccm::new(&key.into());
 
         cipher
@@ -241,21 +357,27 @@ impl SecurityContext {
 
 // Figure 4-20
 #[allow(clippy::needless_range_loop)]
-fn create_nonce(
-    source_address: &IeeeAddress,
-    frame_counter: u32,
-    security_control: &SecurityControl,
-) -> [u8; 13] {
+fn create_nonce(aux_header: &AuxFrameHeader) -> Result<[u8; 13], SecurityError> {
+    let AuxFrameHeader {
+        security_control,
+        frame_counter,
+        source_address: Some(IeeeAddress(source_address)),
+        ..
+    } = aux_header
+    else {
+        return Err(SecurityError::InvalidData);
+    };
+
     let mut nonce = [0u8; 13];
     for i in 0..8 {
-        nonce[i] = (source_address.0 >> (8 * i) & 0xff) as u8;
+        nonce[i] = (source_address >> (8 * i) & 0xff) as u8;
     }
 
     for i in 0..4 {
         nonce[i + 8] = (frame_counter >> (8 * i) & 0xff) as u8;
     }
     nonce[12] = security_control.0;
-    nonce
+    Ok(nonce)
 }
 
 #[cfg(test)]
@@ -265,10 +387,16 @@ mod tests {
 
     #[test]
     fn test_create_nonce() {
-        let source_address = IeeeAddress(0xaaaa_bbbb_cccc_dddd);
+        let source_address = Some(IeeeAddress(0xaaaa_bbbb_cccc_dddd));
         let frame_counter = 0x0;
         let security_control = SecurityControl(0x40);
-        let nonce = create_nonce(&source_address, frame_counter, &security_control);
+        let aux_hdr = AuxFrameHeader {
+            security_control,
+            frame_counter,
+            source_address,
+            key_sequence_number: None,
+        };
+        let nonce = create_nonce(&aux_hdr).unwrap();
         assert_eq!(
             nonce,
             [0xdd, 0xdd, 0xcc, 0xcc, 0xbb, 0xbb, 0xaa, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x40]
