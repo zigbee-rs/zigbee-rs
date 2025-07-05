@@ -1,10 +1,16 @@
+//! Temperature Measurement Cluster
 //!
-//! 4.4 Temperature Measurement Cluster
+//! See Section 4.4
+//!
+//! Provides an interface to temperature measurement functionality, including configuration
+//! and provision of notifications of temperature measurements.
 use heapless::Vec;
+use zigbee::internal::macros::impl_byte;
 
-use crate::common::parse::PackBytes;
-
-/// TODO: add useful information
+/// Temperature Measurement Attribute Set
+///
+/// See Section 4.4.2.2.1
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemperatureMeasurement {
     Measured(i16),
     MinMeasuredValue(i16),
@@ -13,21 +19,21 @@ pub enum TemperatureMeasurement {
     Unknown,
 }
 
-impl PackBytes for TemperatureMeasurement {
-    fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self> {
-        let b = src.into_iter().next()?;
-
-        match b {
-            0x0000 => Some(Self::Measured(0)),
-            0x0001 => Some(Self::MinMeasuredValue(0)),
-            0x0002 => Some(Self::MaxMeasuredValue(0)),
-            0x0003 => Some(Self::Tolerance(0)),
-            // TODO: handle unknown u16
-            // 0x8000 => Some(Self::Unknown),
-            _ => None
-        }
-    }
-}
+// impl PackBytes for TemperatureMeasurement {
+//     fn unpack_from_iter(src: impl IntoIterator<Item = u8>) -> Option<Self> {
+//         let b = src.into_iter().next()?;
+//
+//         match b {
+//             0x0000 => Some(Self::Measured(0)),
+//             0x0001 => Some(Self::MinMeasuredValue(0)),
+//             0x0002 => Some(Self::MaxMeasuredValue(0)),
+//             0x0003 => Some(Self::Tolerance(0)),
+//             // TODO: handle unknown u16
+//             // 0x8000 => Some(Self::Unknown),
+//             _ => None
+//         }
+//     }
+// }
 
 
 impl TemperatureMeasurement {
