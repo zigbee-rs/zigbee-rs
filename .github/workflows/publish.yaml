@@ -2,13 +2,14 @@ name: Publish
 
 on: 
   workflow_dispatch:
-    crate:
-      description: 'Crate to publish'
-      required: true
-      type: choice
-      options:
-        - zigbee
-        - zigbee-cluster-library
+    inputs:
+      crate:
+        description: 'Crate to publish'
+        required: true
+        type: choice
+        options:
+          - zigbee
+          - zigbee-cluster-library
 
 
 env:
