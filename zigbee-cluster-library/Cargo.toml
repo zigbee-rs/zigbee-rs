@@ -16,4 +16,4 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 byte.workspace = true
 heapless.workspace = true
-zigbee = { path = "../zigbee" }
+zigbee = { version = "1", path = "../zigbee" }
