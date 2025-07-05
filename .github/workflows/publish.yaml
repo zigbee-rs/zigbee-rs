@@ -1,6 +1,15 @@
 name: Publish
 
-on: workflow_dispatch
+on: 
+  workflow_dispatch:
+    crate:
+      description: 'Crate to publish'
+      required: true
+      type: choice
+      options:
+        - zigbee
+        - zigbee-cluster-library
+
 
 env:
   RUST_BACKTRACE: 1
@@ -13,9 +22,6 @@ permissions:
 
 jobs:
   publish:
-    strategy:
-      matrix:
-        crate: [zigbee, zigbee-cluster-library]
     runs-on: ubuntu-latest
     container:
       image: rust:latest
@@ -24,8 +30,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Publish
-        run: cargo publish -p ${{ matrix.crate }} 
+      - name: Publish ${{ inputs.crate }}
+        run: cargo publish -p ${{ inputs.crate }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
