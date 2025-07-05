@@ -1,8 +1,8 @@
-# zigbee cluster library
+# Zigbee Cluster Library
 
 A `no-std` ZigBee Cluster Library implementation based on the [ZigBee Cluster Library Rev 6 Draft 1.0](https://zigbeealliance.org/wp-content/uploads/2019/12/07-5123-06-zigbee-cluster-library-specification.pdf)
 
-This library defines a set of standard clusters (collection of commands and attributes) that enable interoperable communication between devices in a Zigbee network.
+This library defines a set of standard clusters (collection of commands and attributes) that enable interoperable communication between devices in a ZigBee network.
 
 ZigBee is a wireless communication technology designed for low-power devices in smart homes and industrial settings. 
 It enables these devices to connect and communicate with each other, allowing for efficient control and automation of various systems.
