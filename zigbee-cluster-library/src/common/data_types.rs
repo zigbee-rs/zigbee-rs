@@ -531,7 +531,7 @@ mod tests {
         let (data, len) = ZclDataType::try_read(input, 0xF0).unwrap();
 
         // then
-        // assert_eq!(len, 2);
+        assert_eq!(len, 8);
         assert!(matches!(data, ZclDataType::Misc(_)));
         if let ZclDataType::Misc(value) = data {
             assert_eq!(value, MiscType::IeeeAddress(1_161_101_995_941_892_125u64));

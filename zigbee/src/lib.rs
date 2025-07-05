@@ -49,7 +49,8 @@
     unused_imports,
     unused_variables,
     unused_macros,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    private_interfaces,
 )]
 
 
