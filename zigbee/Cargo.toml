@@ -1,6 +1,6 @@
 [package]
 name = "zigbee"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 edition = "2018"
 rust-version = "1.50"
