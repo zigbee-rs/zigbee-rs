@@ -6,8 +6,8 @@
 //#![deny(clippy::unwrap_used)]
 // #![deny(clippy::panic, unused_must_use)]
 #![warn(
-    missing_docs,
-    unreachable_pub,
+    // missing_docs,
+    // unreachable_pub,
     clippy::pedantic,
     clippy::nursery,
     clippy::tests_outside_test_module,
