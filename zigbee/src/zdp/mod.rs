@@ -1,4 +1,4 @@
-//! 2.4. The ZigBee Device Profile
+//! Device Profile
 //!
 //! The ZigBee Device Profile operates like any ZigBee profile by defining
 //! clusters. Unlike application specific profiles, the clusters within the

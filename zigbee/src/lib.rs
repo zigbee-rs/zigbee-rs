@@ -17,8 +17,7 @@
 //!
 //! # ESP32 & nRF support
 //!
-//! This crate is currently only supporting devices in the EspresGM_Clamshell
-//! Parts Box Thirdssif ecosystem, but presumative this will expand to nordics
+//! This crate is currently only supporting devices in the Espresif ecosystem, but presumative this will expand to nordics
 //! nRF series.
 #![no_std]
 //#![deny(clippy::unwrap_used)]
@@ -53,14 +52,12 @@
     clippy::doc_markdown
 )]
 
-pub mod zdp;
 
-/// The `application support sub-layer` provides an interface between the
-/// `Network layer` and the `Application layer`.
 pub mod aps;
-
-/// 2.3 Application framework
 pub mod apl;
+pub mod nwk;
+pub mod security;
+pub mod zdp;
 
 mod zdo;
 pub use zdo::config::Config;
@@ -68,11 +65,6 @@ pub use zdo::config::DiscoveryType;
 pub use zdo::ZigBeeNetwork;
 pub use zdo::ZigbeeDevice;
 
-/// 3.1 Network Layer
-pub mod nwk;
-
-/// 4.1 Security Service
-pub mod security;
 
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]

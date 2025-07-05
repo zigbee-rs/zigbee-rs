@@ -1,3 +1,6 @@
+//! The extended header sub-frame contains further sub-fields
+//!
+//! See Section 2.2.5.1.8
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
