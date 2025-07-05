@@ -1,4 +1,6 @@
-//! 2.3.2.5 Simple Descriptor
+//! Simple Descriptor
+//!
+//! See Section 2.3.2.5
 //!
 //! The simple descriptor contains information specific to each endpoint
 //! contained in this node. The simple descriptor is  mandatory for each

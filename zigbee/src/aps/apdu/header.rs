@@ -1,4 +1,6 @@
 //! APS Frame Header
+//!
+//! See Section 2.2.5.1
 use byte::BytesExt;
 use byte::TryRead;
 
