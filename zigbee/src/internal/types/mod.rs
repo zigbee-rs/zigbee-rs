@@ -7,6 +7,7 @@ use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
 use heapless::FnvIndexSet;
+use heapless::Vec;
 
 use crate::internal::macros::impl_byte;
 

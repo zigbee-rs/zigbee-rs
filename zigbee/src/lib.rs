@@ -53,6 +53,7 @@
     clippy::doc_markdown,
     clippy::cast_lossless
 )]
+#![feature(macro_metavar_expr_concat)]
 
 pub mod zdp;
 
