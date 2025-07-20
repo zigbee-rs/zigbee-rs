@@ -163,11 +163,11 @@ pub struct DiscoveryStoreReq {
 }
 
 /// 2.4.3.1.16 Node_Desc_store_req
-pub struct NodeDescStoreReq {
+pub struct NodeDescStoreReq<'a> {
     /// NWK Address for the Local Device
     nwk_addr: NwkAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
     // Node Descriptor
-    node_descriptor: NodeDescriptor,
+    node_descriptor: NodeDescriptor<'a>,
 }

@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn serializing_user_descriptor_should_succeed() {
+    fn writing_user_descriptor_should_succeed() {
         // given
         let mut bytes: [u8; 16] = [0; 16];
         let user_descriptor = UserDescriptor(b"Bedroom TV");
