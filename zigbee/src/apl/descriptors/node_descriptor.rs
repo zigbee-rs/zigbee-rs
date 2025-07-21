@@ -14,7 +14,7 @@ const NODE_DESCRIPTOR_SIZE: usize = 13;
 
 impl_byte! {
     pub struct NodeDescriptor<'a> {
-        #[ctx = byte::ctx::Bytes::Len(NODE_DESCRIPTOR_SIZE as usize)]
+        #[ctx = byte::ctx::Bytes::Len(NODE_DESCRIPTOR_SIZE)]
         #[ctx_write = ()]
         bytes: &'a [u8]
     }
@@ -45,7 +45,7 @@ impl NodeDescriptor<'_> {
     pub fn manufacturer_code(&self) -> u16 {
         let lower = self.bytes[3];
         let upper = self.bytes[4];
-        ((upper as u16) << 8) | lower as u16
+        (u16::from(upper) << 8) | u16::from(lower)
     }
 
     pub fn maximum_buffer_size(&self) -> u8 {
@@ -55,19 +55,19 @@ impl NodeDescriptor<'_> {
     pub fn maximum_incoming_transfer_size(&self) -> u16 {
         let lower = self.bytes[6];
         let upper = self.bytes[7];
-        ((upper as u16) << 8) | lower as u16
+        (u16::from(upper) << 8) | u16::from(lower)
     }
 
     pub fn server_mask(&self) -> ServerMask {
         let lower = self.bytes[8];
         let upper = self.bytes[9];
-        ServerMask(((upper as u16) << 8) | lower as u16)
+        ServerMask((u16::from(upper) << 8) | u16::from(lower))
     }
 
     pub fn maximum_outgoing_transfer_size(&self) -> u16 {
         let lower = self.bytes[10];
         let upper = self.bytes[11];
-        ((upper as u16) << 8) | lower as u16
+        (u16::from(upper) << 8) | u16::from(lower)
     }
 
     pub fn descriptor_capabilities(&self) -> DescriptorCapabilities {
@@ -80,7 +80,7 @@ impl NodeDescriptor<'_> {
 // specifies the device type of the ZigBee node.
 impl_byte! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum LogicalType {
         Coordinator = 0b000,
         Router = 0b001,
@@ -126,7 +126,7 @@ pub enum FrequencyBandFlag {
 
 impl FrequencyBands {
     fn is_set(&self, frequency_band_flag: FrequencyBandFlag) -> bool {
-        return (self.0 & (1 << frequency_band_flag as u8)) != 0;
+        (self.0 & (1 << frequency_band_flag as u8)) != 0
     }
 }
 
@@ -169,7 +169,7 @@ pub enum MacCapabilityFlag {
 
 impl MacCapabilities {
     fn is_set(&self, mac_capability_flag: MacCapabilityFlag) -> bool {
-        return (self.0 & (1 << mac_capability_flag as u8)) != 0;
+        (self.0 & (1 << mac_capability_flag as u8)) != 0
     }
 }
 
@@ -189,11 +189,11 @@ pub enum ServerMaskFlag {
 
 impl ServerMask {
     fn is_set(&self, server_mask_flag: ServerMaskFlag) -> bool {
-        return self.0 & (1 << server_mask_flag as u16) != 0;
+        self.0 & (1 << server_mask_flag as u16) != 0
     }
 
     fn get_stack_compliance_revision(&self) -> u8 {
-        return (self.0 >> 9) as u8;
+        (self.0 >> 9) as u8
     }
 }
 
@@ -208,7 +208,7 @@ pub enum DescriptorCapabilityFlag {
 
 impl DescriptorCapabilities {
     fn is_set(&self, descriptor_capability_flag: DescriptorCapabilityFlag) -> bool {
-        return (self.0 & (1 << descriptor_capability_flag as u8)) != 0;
+        (self.0 & (1 << descriptor_capability_flag as u8)) != 0
     }
 }
 
@@ -220,36 +220,6 @@ mod tests {
     #[test]
     fn creating_node_descriptor_should_succeed() {
         // given
-        // logical_type = LogicalType::Router
-        // complex_descriptor_available = true
-        // user_descriptor_available = true
-        // 00011001 = 0x19
-
-        // APS flags unsupported and set to 0
-        // frequency_bands = { High }
-        // 01000000 = 0x40
-
-        // mac_capabilities = { AllocateAddress, SecurityCapability }
-        // 11000000 = 0xC0
-
-        // manufacturer_code = 42
-        // 00000000 00101010 = 0x002A
-
-        // maximum_buffer_size = 8
-        // 00001000 = 0x08
-
-        // maximum_incoming_transfer_size = 500
-        // 00000001 11110100 = 0x01F4
-
-        // server_mask = { PrimaryTrustCenter, BackupBindingTableCache }
-        // stack_compliance_revision = 22
-        // 00101100 00001001 = 0x2C09
-
-        // maximum_outgoing_transfer_size = 1000
-        // 00000011 11101000 = 0x03E8
-
-        // descriptor_capabilities = { ExtendedActiveEndpontListAvailable }
-        // 00000001 = 0x01
         let bytes = [
             0x19, 0x40, 0xC0, 0x2A, 0x00, 0x08, 0xF4, 0x01, 0x09, 0x2C, 0xE8, 0x03, 0x01,
         ];

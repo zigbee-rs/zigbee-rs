@@ -1,11 +1,17 @@
-//! 2.3.2.7 User Descriptor
-//! The user descriptor contains information that allows the user to identify the device using a user-friendly character string,
-//! such as “Bedroom TV” or “Stairs light”.
-//! The use of the user descriptor is optional.
+//! User Descriptor
 //!
+//! See Section 2.3.2.7
+//!
+//! The user descriptor contains information that allows the user to identify
+//! the device using a user-friendly character string, such as “Bedroom TV” or
+//! “Stairs light”. The use of the user descriptor is optional.
 
-use byte::{ctx, BytesExt, TryRead, TryWrite};
 use core::cmp::min;
+
+use byte::ctx;
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
 
 const USER_DESCRIPTOR_SIZE: usize = 16;
 
@@ -39,7 +45,8 @@ impl TryWrite for UserDescriptor<'_> {
 
 impl UserDescriptor<'_> {
     fn value(&self) -> &str {
-        // Safety: We verify that a user descriptor only contains valid ASCII characters upon creation.
+        // Safety: We verify that a user descriptor only contains valid ASCII characters
+        // upon creation.
         unsafe { str::from_utf8_unchecked(&self.0) }
     }
 }

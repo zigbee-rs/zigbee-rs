@@ -22,11 +22,11 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
     fn try_read(bytes: &'a [u8], endian: byte::ctx::Endian) -> byte::Result<(Self, usize)> {
         let offset = &mut 0;
 
-        let byte0: u8 = bytes.read_with(offset, endian)?;
-        let available_power_sources = AvailablePowerSources(byte0 >> 4);
+        let byte: u8 = bytes.read_with(offset, endian)?;
+        let available_power_sources = AvailablePowerSources(byte >> 4);
 
-        let byte1: u8 = bytes.read_with(offset, endian)?;
-        let current_power_source = CurrentPowerSource::try_read(&[byte1 & 0b1111], ())
+        let byte: u8 = bytes.read_with(offset, endian)?;
+        let current_power_source = CurrentPowerSource::try_read(&[byte & 0b1111], ())
             .unwrap()
             .0;
 
@@ -43,12 +43,12 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
             }
         };
 
-        if !available_power_sources.is_set(power_source) {
-            return Err(byte::Error::BadInput {
-                err: "CurrentPowerSourceNotAvailable: Current power source not in available power sources",
-            });
-        } else {
+        if available_power_sources.is_set(power_source) {
             Ok((NodePowerDescriptor { bytes }, *offset))
+        } else {
+            Err(byte::Error::BadInput {
+                err: "CurrentPowerSourceNotAvailable: Current power source not in available power sources",
+            })
         }
     }
 }
@@ -80,7 +80,7 @@ impl NodePowerDescriptor<'_> {
 // 2.3.2.4.1 Current Power Mode Field
 impl_byte! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerMode {
         // Receiver synchronized with the receiver on when  idle subfield of the node descriptor.
         Synchronized = 0b0000,
@@ -107,14 +107,14 @@ pub enum AvailablePowerSourcesFlag {
 
 impl AvailablePowerSources {
     fn is_set(&self, power_source: AvailablePowerSourcesFlag) -> bool {
-        return (self.0 & (1 << power_source as u8)) != 0;
+        (self.0 & (1 << power_source as u8)) != 0
     }
 }
 
 // 2.3.2.4.3 Current Power Source Field
 impl_byte! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerSource {
         ConstantMainPower = 0b000,
         RechargeableBattery = 0b010,
@@ -127,7 +127,7 @@ impl_byte! {
 // 2.3.2.4.4 Current Power Source Level Field
 impl_byte! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerSourceLevel {
         Critical = 0b0000,
         OneThird = 0b0100,
@@ -145,13 +145,6 @@ mod tests {
     #[test]
     fn creating_node_power_descriptor_should_succeed() {
         // given
-        // current_power_mode = CurrentPowerMode::Synchronized
-        // available_power_sources = { ConstantMainPower, DisposableBattery }
-        // 01010000 = 0x50
-
-        // current_power_source = CurrentPowerSource::DisposableBattery
-        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
-        // 10000100 = 0x84
         let bytes: [u8; 2] = [0x50, 0x84];
 
         // when
@@ -186,13 +179,6 @@ mod tests {
     #[test]
     fn creating_node_power_descriptor_should_fail() {
         // given
-        // current_power_mode = CurrentPowerMode::Synchronized
-        // available_power_sources = { ConstantMainPower, DisposableBattery }
-        // 01010000 = 0x50
-
-        // current_power_source = CurrentPowerSource::RechargeableBattery
-        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
-        // 10000010 = 0x82
         let bytes: [u8; 2] = [0x50, 0x82];
 
         // when
