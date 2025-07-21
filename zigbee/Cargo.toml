@@ -1,7 +1,6 @@
 [package]
 name = "zigbee"
 version = "0.1.0-alpha.3"
-
 description = "ZigBee protocol stack in `no-std` based on the official ZigBee Specification Rev 23"
 documentation = "https://docs.rs/zigbee"
 readme = "README.md"

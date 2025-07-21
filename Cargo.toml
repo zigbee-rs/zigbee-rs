@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
     "zigbee",
+    "zigbee-base-device-behavior",
     "zigbee-cluster-library",
 ]
 resolver = "3"

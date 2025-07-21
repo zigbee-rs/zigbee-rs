@@ -1,8 +1,7 @@
 [package]
 name = "zigbee-cluster-library"
 version = "0.1.0-alpha.3"
-
-description = "ZigBee cluster library in `no-std` based on the official ZigBee Cluster Library Specification Rev 8"
+description = "ZigBee cluster library based on the official ZigBee Cluster Library Specification Rev 8"
 documentation = "https://docs.rs/zigbee-cluster-library"
 readme = "README.md"
 keywords = ["zigbee", "ieee802154", "cluster-library", "zcl"]
