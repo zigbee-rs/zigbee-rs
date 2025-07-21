@@ -76,7 +76,7 @@ jobs:
         run: grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*"  -o ./target/debug/coverage
 
       - name: Report code coverage
-        uses: zgosalvez/github-actions-report-lcov@v4
+        uses: zgosalvez/github-actions-report-lcov@hotfix/branch_coverage
         with:
           coverage-files: ./target/debug/coverage
           minimum-coverage: 14
