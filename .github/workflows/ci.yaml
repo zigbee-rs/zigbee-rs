@@ -79,7 +79,7 @@ jobs:
         run: cargo llvm-cov --all-features --workspace --lcov --output-path ./target/debug/lcov.info
 
       - name: remove full path from coverage
-        run: sed -i '' "s;$PWD/;;g" ./target/debug/lcov.info
+        run: sed -i "s;$PWD/;;g" ./target/debug/lcov.info
 
       - name: Report code coverage
         uses: zgosalvez/github-actions-report-lcov@v4
