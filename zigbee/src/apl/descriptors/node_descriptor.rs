@@ -220,6 +220,36 @@ mod tests {
     #[test]
     fn creating_node_descriptor_should_succeed() {
         // given
+        // logical_type = LogicalType::Router
+        // complex_descriptor_available = true
+        // user_descriptor_available = true
+        // 00011001 = 0x19
+
+        // APS flags unsupported and set to 0
+        // frequency_bands = { High }
+        // 01000000 = 0x40
+
+        // mac_capabilities = { AllocateAddress, SecurityCapability }
+        // 11000000 = 0xC0
+
+        // manufacturer_code = 42
+        // 00000000 00101010 = 0x002A
+
+        // maximum_buffer_size = 8
+        // 00001000 = 0x08
+
+        // maximum_incoming_transfer_size = 500
+        // 00000001 11110100 = 0x01F4
+
+        // server_mask = { PrimaryTrustCenter, BackupBindingTableCache }
+        // stack_compliance_revision = 22
+        // 00101100 00001001 = 0x2C09
+
+        // maximum_outgoing_transfer_size = 1000
+        // 00000011 11101000 = 0x03E8
+
+        // descriptor_capabilities = { ExtendedActiveEndpontListAvailable }
+        // 00000001 = 0x01
         let bytes = [
             0x19, 0x40, 0xC0, 0x2A, 0x00, 0x08, 0xF4, 0x01, 0x09, 0x2C, 0xE8, 0x03, 0x01,
         ];

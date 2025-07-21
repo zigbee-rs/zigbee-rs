@@ -145,6 +145,13 @@ mod tests {
     #[test]
     fn creating_node_power_descriptor_should_succeed() {
         // given
+        // current_power_mode = CurrentPowerMode::Synchronized
+        // available_power_sources = { ConstantMainPower, DisposableBattery }
+        // 01010000 = 0x50
+
+        // current_power_source = CurrentPowerSource::DisposableBattery
+        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
+        // 10000100 = 0x84
         let bytes: [u8; 2] = [0x50, 0x84];
 
         // when
@@ -179,6 +186,13 @@ mod tests {
     #[test]
     fn creating_node_power_descriptor_should_fail() {
         // given
+        // current_power_mode = CurrentPowerMode::Synchronized
+        // available_power_sources = { ConstantMainPower, DisposableBattery }
+        // 01010000 = 0x50
+
+        // current_power_source = CurrentPowerSource::RechargeableBattery
+        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
+        // 10000010 = 0x82
         let bytes: [u8; 2] = [0x50, 0x82];
 
         // when

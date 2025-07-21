@@ -40,6 +40,14 @@ mod tests {
     #[test]
     fn creating_simple_descriptor_with_input_and_output_cluster_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 15 = 0x0F
+        // application_input_cluster_list = [0x01 - 0x0F]
+        // application_output_cluster_count: u8 = 9 = 0x09
+        // application_output_cluster_list = [0x02 - 0x0A]
         let bytes = [
             0x2A, 0x7B, 0x00, 0xC8, 0x01, 0x05, 0x0F, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
             0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x09, 0x02, 0x03, 0x04, 0x05, 0x06,
@@ -81,6 +89,14 @@ mod tests {
     #[test]
     fn creating_simple_descriptor_with_only_input_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 15 = 0x0F
+        // application_input_cluster_list = [0x01 - 0x0F]
+        // application_output_cluster_count: u8 = 0 = 0x00
+        // application_output_cluster_list = []
         let bytes = [
             0x2A, 0x7B, 0x00, 0xC8, 0x01, 0x05, 0x0F, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
             0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00,
@@ -112,6 +128,14 @@ mod tests {
     #[test]
     fn creating_simple_descriptor_with_only_output_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 0 = 0x00
+        // application_input_cluster_list = []
+        // application_output_cluster_count: u8 = 9 = 0x09
+        // application_output_cluster_list = [0x02 - 0x0A]
         let bytes = [
             0x2A, 0x7B, 0x00, 0xC8, 0x01, 0x05, 0x00, 0x09, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
             0x08, 0x09, 0x0A,
@@ -143,6 +167,14 @@ mod tests {
     #[test]
     fn writing_simple_descriptor_with_input_and_output_cluster_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 15 = 0x0F
+        // application_input_cluster_list = [0x01 - 0x0F]
+        // application_output_cluster_count: u8 = 9 = 0x09
+        // application_output_cluster_list = [0x02 - 0x0A]
         let application_input_cluster_list = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
             0x0F,
@@ -179,6 +211,14 @@ mod tests {
     #[test]
     fn writting_simple_descriptor_with_only_input_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 15 = 0x0F
+        // application_input_cluster_list = [0x01 - 0x0F]
+        // application_output_cluster_count: u8 = 0 = 0x00
+        // application_output_cluster_list = []
         let application_input_cluster_list = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
             0x0F,
@@ -210,6 +250,14 @@ mod tests {
     #[test]
     fn writting_simple_descriptor_with_only_output_list_should_succeed() {
         // given
+        // endpoint = 42 = 0x2A
+        // application_profile_identifier = 123 = 0x007B
+        // application_device_identifier = 456 = 0x01C8
+        // application_device_version = 5 = 0x05
+        // application_input_cluster_count = 0 = 0x00
+        // application_input_cluster_list = []
+        // application_output_cluster_count: u8 = 9 = 0x09
+        // application_output_cluster_list = [0x02 - 0x0A]
         let application_output_cluster_list =
             [0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
 
