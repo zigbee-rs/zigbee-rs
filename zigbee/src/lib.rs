@@ -80,3 +80,4 @@ pub fn init(config: Config) -> ZigbeeDevice {
 
     device
 }
+

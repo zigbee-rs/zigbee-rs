@@ -72,13 +72,19 @@ jobs:
           LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
         run: cargo test
 
-      - name: Coverage
-        run: grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore '../*' --ignore "/*"  -o ./target/debug/coverage
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate code coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path ./target/debug/lcov.info
+
+      - name: remove full path from coverage
+        run: sed -i "s;$PWD/;;g" ./target/debug/lcov.info
 
       - name: Report code coverage
-        uses: zgosalvez/github-actions-report-lcov@v4
+        uses: zgosalvez/github-actions-report-lcov@hotfix/branch_coverage
         with:
-          coverage-files: ./target/debug/coverage
+          coverage-files: ./target/debug/lcov.info
           minimum-coverage: 14
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
