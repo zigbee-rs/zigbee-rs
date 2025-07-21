@@ -80,3 +80,11 @@ pub fn init(config: Config) -> ZigbeeDevice {
 
     device
 }
+
+
+mod test {
+    #[test]
+    fn fail_fast() {
+        assert_eq!(1, 0);
+    }
+}
