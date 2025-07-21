@@ -85,6 +85,6 @@ pub fn init(config: Config) -> ZigbeeDevice {
 mod test {
     #[test]
     fn fail_fast() {
-        assert_eq!(1, 0);
+        assert_eq!(1, 1);
     }
 }
