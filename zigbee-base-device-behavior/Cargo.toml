@@ -4,7 +4,7 @@ version = "0.1.0-alpha.1"
 description = "ZigBee base device behavior based on the official ZigBee Base Device Behavior Specification Rev 13"
 documentation = "https://docs.rs/zigbee-base-device-behavior"
 readme = "README.md"
-keywords = ["zigbee", "ieee802154", "cluster-library", "zigbee base device behavior"]
+keywords = ["zigbee", "ieee802154", "cluster-library", "zigbee base device behavior", "base device", "profile interoperability"]
 categories = ["network-programming", "no-std", "embedded"]
 license = "MIT OR Apache-2.0"
 
@@ -15,3 +15,4 @@ edition.workspace = true
 [features]
 
 [dependencies]
+byte.workspace = true

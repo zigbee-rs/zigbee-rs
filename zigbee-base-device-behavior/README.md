@@ -1,8 +1,8 @@
 # Zigbee Base Device Behavior
 
-A `no-std` Zigbee Base Device Behavior implementation based on the [ZigBee Base Device Behavior Specification Rev. 12](https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf)
+A `no-std` Zigbee Base Device Behavior implementation based on the [ZigBee Base Device Behavior Specification Rev. 13](https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf)
 
-This library defines the environment, initialization, commissioning and operating procedures of a base device operating on the ZigBee stack to ensure profile interoperability.
+This crate defines the initialization, commissioning and operating procedures of a zigbee base device operating on the ZigBee stack to ensure profile interoperability.
 
 ## 🏛️ License
 

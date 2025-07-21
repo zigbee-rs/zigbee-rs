@@ -104,6 +104,9 @@ dependencies = [
 [[package]]
 name = "zigbee-base-device-behavior"
 version = "0.1.0-alpha.1"
+dependencies = [
+ "byte",
+]
 
 [[package]]
 name = "zigbee-cluster-library"

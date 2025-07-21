@@ -1,9 +1,7 @@
 # Zigbee Stack
 
 A `no_std` ZigBee Protocol Stack implementation based on the [ZigBee specification 23](https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf)
-
-ZigBee is a wireless communication technology designed for low-power devices in smart homes and industrial settings. 
-It enables these devices to connect and communicate with each other, allowing for efficient control and automation of various systems.
+=======
 
 The core network layer and security features. Deals with addressing, keys, trust center, formation and discovery mechanisms.
 
