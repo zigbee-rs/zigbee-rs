@@ -22,4 +22,6 @@ thiserror = { workspace = true, default-features = false }
 byte.workspace = true
 ccm.workspace = true
 aes.workspace = true
+embedded-storage = "0.3.1"
+spin = { version = "0.9.8", default-features = false, features = ["spin_mutex", "mutex"] }
 
