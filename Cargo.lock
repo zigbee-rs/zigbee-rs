@@ -275,7 +275,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "zigbee"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.3"
 dependencies = [
  "aes",
  "byte",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "zigbee-cluster-library"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "byte",
  "heapless",

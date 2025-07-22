@@ -1,4 +1,6 @@
-//! 2.3.2.4 Node Power Descriptor
+//! Node Power Descriptor
+//!
+//! See Section 2.3.2.4
 //!
 //! The node power descriptor gives a dynamic indication of the power status of
 //! the node and is mandatory for each node. There shall be only one node power

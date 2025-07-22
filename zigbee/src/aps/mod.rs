@@ -1,3 +1,10 @@
+//! Application Support Sub-Layer
+//!
+//! See Section 2.2
+//!
+//! The application support sub-layer provides an interface between the
+//! `Network layer` and the `Application layer`.
+
 pub(crate) mod error;
 pub(crate) mod types;
 

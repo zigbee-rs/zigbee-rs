@@ -1,9 +1,11 @@
-#![allow(dead_code)]
-#![allow(missing_docs)]
+//! Information Base Maintenance
 //!
-//! 2.2.4.4 Information Base Maintenance
+//! See Section 2.2.4.4
+//!
 //! This set of primitives defines how the next higher layer of a device can
 //! read and write attributes in the AIB
+#![allow(dead_code)]
+#![allow(missing_docs)]
 use crate::aps::aib::AIBAttribute;
 use crate::aps::aib::AIBAttributeValue;
 use crate::aps::types::Address;

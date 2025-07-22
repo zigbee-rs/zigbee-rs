@@ -1,4 +1,6 @@
 //! APS Header Frame Control
+//!
+//! See Section 2.2.5.1
 use core::mem;
 
 use crate::internal::macros::impl_byte;

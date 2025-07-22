@@ -1,12 +1,27 @@
-/// Provides an interface to Illuminance level sensing functionality, including
-/// configuration and provision of notifications of wheter the illuminance is
-/// within, above or below a target band.
+//! Measurement and Sensing
+//!
+//! See Section 4
+//!
+//! Generic measurement and sensing interfaces
+
+// 4.2 | 4.3
 pub mod illuminance;
 
-// Provides an interface to pressure measurement functionality, including
-// configuration and provision of notifications of pressure measurements.
-// pub mod pressure;
+// 4.4 
+pub mod temperature;
 
-// Provides an interface to temperature measurement functionality, including
-// configuration and provision of notifications of temperature measurements.
-// pub mod temperature;
+// 4.5
+pub mod pressure;
+
+// 4.6
+pub mod flow;
+
+// 4.7
+pub mod humidity;
+
+// 4.8
+pub mod occupancy;
+
+// 4.9
+pub mod electrical;
+

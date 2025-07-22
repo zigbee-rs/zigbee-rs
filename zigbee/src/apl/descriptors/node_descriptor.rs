@@ -1,4 +1,6 @@
-//! 2.3.2.3 Node Descriptor
+//! Node Descriptor
+//!
+//! See Section 2.3.2.3
 //!
 //! The node descriptor contains information about the capabilities of the
 //! ZigBee node and is mandatory for each node.  There shall be only one node

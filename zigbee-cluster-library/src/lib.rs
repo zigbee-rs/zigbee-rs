@@ -6,8 +6,8 @@
 //#![deny(clippy::unwrap_used)]
 // #![deny(clippy::panic, unused_must_use)]
 #![warn(
-    missing_docs,
-    unreachable_pub,
+    // missing_docs,
+    // unreachable_pub,
     clippy::pedantic,
     clippy::nursery,
     clippy::tests_outside_test_module,
@@ -32,10 +32,17 @@
 pub(crate) mod common;
 
 /// General ZCL Frame
-pub mod frame;
+pub(crate) mod frame;
 pub(crate) mod payload;
 
-pub mod header;
+pub(crate) mod header;
 
-/// Measurement
+// Chapter 4
 pub mod measurement;
+// Chapter 5
+pub mod lighting;
+// Chapter 6
+pub mod hvac;
+// Chapter 10
+pub mod energy;
+

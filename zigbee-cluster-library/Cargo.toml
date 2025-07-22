@@ -1,6 +1,6 @@
 [package]
 name = "zigbee-cluster-library"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 edition = "2018"
 rust-version = "1.50"
@@ -16,4 +16,4 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 byte.workspace = true
 heapless.workspace = true
-zigbee = { path = "../zigbee" }
+zigbee = { version = "0.1.0-alpha.3", path = "../zigbee" }

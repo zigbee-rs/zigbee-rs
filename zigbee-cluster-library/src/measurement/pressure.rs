@@ -1,9 +1,15 @@
+//! Pressure Measurement Cluster
 //!
-//! 4.5 Pressure Measurement Cluster
+//! See Section 4.5
+//!
+//! Provides an interface to pressure measurement functionality, including configuration and
+//! provision of notifications of pressure measurements.
 use core::convert::TryInto;
 use heapless::Vec;
 
-/// 4.5.2.2.1   Pressure Measurement Information Attribute Set
+/// Pressure Measurement Information Attribute Set
+///
+/// See Section 4.5.2.2.1
 #[derive(Debug)]
 pub struct PressureMeasurement {
     measured_value: i16,     // MeasuredValue in 0.1 kPa units

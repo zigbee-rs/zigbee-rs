@@ -1,4 +1,4 @@
-//! 2.4.3 Client Services
+//! Client Services
 //!
 //! The Device Profile Client Services support the transport of device and
 //! service discovery requests, end device binding requests, bind requests,

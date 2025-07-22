@@ -1,3 +1,7 @@
+//! Security Service
+//!
+//! Security services provided for ZigBee include methods for key establishment, key transport, frame protection, and
+//! device management.
 use core::convert::TryInto;
 
 use aes::cipher::generic_array::GenericArray as AesGenericArray;
