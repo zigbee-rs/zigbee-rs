@@ -1,27 +1,36 @@
 //! NWK information base
 //!
 //! See Section 3.5.
-#![allow(dead_code)]
-
 use core::mem;
 
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
+use embedded_storage::ReadStorage;
+use embedded_storage::Storage;
 use heapless::FnvIndexMap;
 use heapless::Vec;
+use spin::Mutex;
 
+use crate::impl_byte;
 use crate::internal::types::IeeeAddress;
 use crate::internal::types::ShortAddress;
 use crate::security::frame::SecurityLevel;
 
-/// Zigbee device type.
-#[derive(Debug)]
-#[repr(u8)]
-pub enum DeviceType {
-    /// Zigbee coordinator
-    Coordinator = 0x00,
-    /// Zigbee router
-    Router = 0x01,
-    /// Zigbee end device
-    EndDevice = 0x02,
+impl_byte! {
+    #[tag(u8)]
+    /// Zigbee device type.
+    #[derive(Debug)]
+    pub enum DeviceType {
+        /// Zigbee coordinator
+        Coordinator = 0x00,
+        /// Zigbee router
+        Router = 0x01,
+        /// Zigbee end device
+        EndDevice = 0x02,
+        #[fallback = true]
+        Invalid(u8),
+    }
 }
 
 /// See Section 3.5.1.
@@ -52,124 +61,213 @@ const MAX_ROUTE_RECORD_TABLE: usize = 8;
 const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
 
-/// Network Information Base.
-///
-/// See Section 3.5.2.
-#[derive(Debug, Default)]
-pub(crate) struct Nib {
-    // A sequence number used to identify outgoing frames
-    sequence_number: u8,
-    // defined in stack profile
-    passive_ack_timeout: u32,
-    // 0x03
-    max_broadcast_retries: u8,
-    // defined in stack profile
-    max_children: u8,
-    // defined in stack profile
-    max_depth: u8,
-    // defined in stack profile
-    max_routers: u8,
-    neighbor_table: Vec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
-    // defined in stack profile
-    network_broadcast_delivery_time: u32,
-    // 0x00
-    report_constant_cost: u8,
-    route_table: Vec<NwkRoute, MAX_ROUTE_TABLE>,
-    // false
-    sym_link: bool,
-    // 0x0
-    capability_information: CapabilityInformation,
-    // 0x0
-    addr_alloc: u8,
-    // true
-    use_tree_routing: bool,
-    // default: 0x0000
-    manager_addr: u16,
-    // default: 0x0c
-    max_source_route: u8,
-    // 0x00
-    update_id: u8,
-    // 0x01f4
-    transaction_persistence_time: u16,
-    // 0xffff
-    network_address: ShortAddress,
-    stack_profile: u8,
-    broadcast_transaction_table: Vec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
-    group_idtable: Vec<u16, MAX_GROUP_ID_TABLE>,
-    extended_panid: IeeeAddress,
-    // true
-    use_multicast: bool,
-    route_record_table: Vec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
-    is_concentrator: bool,
-    concentrator_radius: u8,
-    concentrator_discovery_time: u8,
-    security_level: SecurityLevel,
+macro_rules! construct_nib {
+    (
+        $(
+            $(#[doc = $doc:literal])*
+            $(#[ctx = $ctx_hdr:expr])?
+            $(#[ctx_write = $ctx_write:expr])?
+            $field:ident: $field_ty:path $(= $default:expr)?,
+        )+
+    ) => {
+        #[repr(usize)]
+        #[allow(non_camel_case_types)]
+        #[derive(Copy, Clone, PartialEq)]
+        enum NibId {
+            $($field),+
+        }
+
+        // might not be the exact size of the field
+        // because encoding (produced by byte::TryWrite)
+        // might be different than struct alignment
+        // but `size_of` gives us an upper bound
+        const NIB_ID_SIZE_LUT: &[usize] = &[
+            $(
+                size_of::<$field_ty>()
+            ),+
+        ];
+
+        pub const NIB_BUFFER_SIZE: usize = nib_buffer_size();
+
+        const fn nib_buffer_size() -> usize {
+            let mut size = 0usize;
+            let mut i = 0;
+            while i < NIB_ID_SIZE_LUT.len() {
+                size += NIB_ID_SIZE_LUT[i];
+                i += 1;
+            }
+            size
+        }
+
+        impl NibId {
+            const fn size(&self) -> usize {
+                NIB_ID_SIZE_LUT[*self as usize]
+            }
+
+            const fn offset(&self) -> usize {
+                let mut i = 0usize;
+                let mut offset = 0usize;
+                while i != *self as usize {
+                    offset += NIB_ID_SIZE_LUT[i];
+                    i += 1;
+                }
+                offset
+            }
+        }
+
+        /// Network Information Base.
+        ///
+        /// See Section 3.5.2.
+        pub struct Nib<C> {
+            storage: Mutex<C>,
+        }
+
+        #[allow(clippy::cast_possible_truncation)]
+        impl<C: Storage> Nib<C> {
+            pub fn new(storage: C) -> Self {
+                Self { storage: Mutex::new(storage) }
+            }
+
+            pub fn init(&self) {
+                $(
+                    let cx = ::byte::LE;
+                    $(
+                        let cx = $ctx_write;
+                    )?
+                    $(
+                        let mut buf = [0u8; NibId::$field.size()];
+                        let value: $field_ty = $default;
+                        buf.write_with(&mut 0, value, cx).expect("init");
+                        let _ = self.storage.lock().write(NibId::$field.offset() as u32, &buf);
+                    )?
+                )+
+            }
+
+            $(
+                $(#[doc = $doc])*
+                pub fn $field(&self) -> $field_ty {
+                    const SIZE: usize = NibId::$field.size();
+                    let mut buf = [0u8; SIZE];
+                    let cx = ::byte::LE;
+                    $(
+                        let cx = $ctx_hdr;
+                    )?
+
+                    let _ = self.storage.lock().read(NibId::$field.offset() as u32, &mut buf);
+                    buf.read_with(&mut 0, cx).unwrap()
+                }
+
+                pub fn ${ concat(set_, $field) }(&self, value: $field_ty) {
+                    const SIZE: usize = NibId::$field.size();
+                    let mut buf = [0u8; SIZE];
+
+                    let cx = ::byte::LE;
+                    $(
+                        let cx = $ctx_write;
+                    )?
+                    buf.write_with(&mut 0, value, cx).unwrap();
+
+                    let _ = self.storage.lock().write(NibId::$field.offset() as u32, &buf);
+                }
+            )+
+        }
+    };
+}
+
+construct_nib! {
+    /// Sequence number
+    sequence_number: u8, // random value, read only
+    passive_ack_timeout: u32, // stack profile
+    max_broadcast_retries: u8 = 0x03,
+    max_children: u8, // stack profile
+    max_depth: u8, // stack profile, read only
+    max_routers: u8, // stack profile
+    neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
+    network_broadcast_delivery_time: u32, // stack profile
+    report_constant_cost: u8 = 0x00, // 0x00 - 0x01
+    route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    sym_link: bool = false, // bool
+    capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
+    addr_alloc: u8 = 0x0, // 0x00 - 0x02
+    #[ctx = ()]
+    #[ctx_write = ()]
+    use_tree_routing: bool = true,
+    manager_addr: u16 = 0x0000, // <= 0xfff7
+    max_source_route: u8 = 0x0c,
+    update_id: u8 = 0x00,
+    transaction_persistence_time: u16 = 0x01f4,
+    network_address: u16 = 0xffff, //  <= 0xfff7
+    stack_profile: u8, // <= 0x0f
+    broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
+    group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
+    extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
+    #[ctx = ()]
+    #[ctx_write = ()]
+    use_multicast: bool = true,
+    route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    is_concentrator: bool = false,
+    concentrator_radius: u8 = 0x00,
+    concentrator_discovery_time: u8 = 0x00,
+    security_level: u8,
     security_material_set: u8,
     active_key_seq_number: u8,
     all_fresh: u8,
-    // 0x0f
-    link_status_period: u8,
-    // 0x03
-    router_age_limit: u8,
-    // true
-    unique_addr: bool,
-    address_map: FnvIndexMap<IeeeAddress, ShortAddress, MAX_NWK_ADDRESS_MAP>,
-    time_stamp: bool,
-    panid: ShortAddress,
-    tx_total: u16,
-    // true
-    leave_request_allowed: bool,
-    parent_information: u8,
-    // 0x08
-    end_device_timeout_default: u8,
-    // true
-    leave_request_without_rejoin_allowed: bool,
-    ieee_address: IeeeAddress,
-    mac_interface_table: Vec<MacInterface, MAX_MAC_INTERFACE_TABLE>,
+    link_status_period: u8 = 0x0f,
+    router_age_limit: u8 = 0x03,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    unique_addr: bool = true,
+    address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    time_stamp: bool = false,
+    panid: u16 = 0xffff,
+    tx_total: u16 = 0x0000,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    leave_request_allowed: bool = true,
+    parent_information: u8 = 0x00,
+    end_device_timeout_default: u8 = 0x08,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    leave_request_without_rejoin_allowed: bool = true,
+    ieee_address: IeeeAddress, // read only
+    // mac_interface_table: StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>,
 }
 
-impl Nib {
-    pub(crate) fn init() -> Self {
-        Self {
-            max_broadcast_retries: 0x03,
-            use_tree_routing: true,
-            max_source_route: 0x0c,
-            transaction_persistence_time: 0x01f4,
-            network_address: ShortAddress(0xffff),
-            use_multicast: true,
-            link_status_period: 0x0f,
-            router_age_limit: 0x03,
-            unique_addr: true,
-            end_device_timeout_default: 0x08,
-            leave_request_without_rejoin_allowed: true,
-            ..Default::default()
-        }
+impl_byte! {
+    #[derive(Debug, Default)]
+    pub struct CapabilityInformation(u8);
+}
+
+impl_byte! {
+    #[derive(Debug)]
+    pub struct NwkNeighbor {
+        extended_address: IeeeAddress,
+        network_address: ShortAddress,
+        device_type: DeviceType,
+        #[ctx = ()]
+        rx_on_when_idle: bool,
+        end_device_configuration: u16,
+        timeout_counter: u32,
+        device_timeout: u32,
+        relationship: u8,
+        transmit_failure: u8,
+        lqi: u8,
+        outgoing_cost: u8,
+        age: u8,
+        incoming_beacon_timestamp: u8,
+        beacon_transmission_time: u8,
+        #[ctx = ()]
+        keepalive_received: bool,
+        mac_interface_index: u8,
+        mac_unicast_bytes_transmitted: u32,
+        mac_unicast_bytes_received: u32,
     }
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct CapabilityInformation(u8);
-
-#[derive(Debug)]
-pub(crate) struct NwkNeighbor {
-    extended_address: IeeeAddress,
-    network_address: ShortAddress,
-    device_type: DeviceType,
-    rx_on_when_idle: bool,
-    end_device_configuration: u16,
-    timeout_counter: u32,
-    device_timeout: u32,
-    relationship: u8,
-    transmit_failure: u8,
-    lqi: u8,
-    outgoing_cost: Option<u8>,
-    age: Option<u8>,
-    incoming_beacon_timestamp: Option<u8>,
-    beacon_transmission_time: Option<u8>,
-    keepalive_received: bool,
-    mac_interface_index: u8,
-    mac_unicast_bytes_transmitted: Option<u32>,
-    mac_unicast_bytes_received: Option<u32>,
 }
 
 /// See Table 3-67.
@@ -184,12 +282,14 @@ pub(crate) enum RouteStatus {
     Reserved,
 }
 
-/// See Table 3-66.
-#[derive(Debug)]
-pub(crate) struct NwkRoute {
-    pub destination_address: ShortAddress,
-    pub next_hop_address: ShortAddress,
-    status: u8,
+impl_byte! {
+    /// See Table 3-66.
+    #[derive(Debug)]
+    pub struct NwkRoute {
+        pub destination_address: ShortAddress,
+        pub next_hop_address: ShortAddress,
+        status: u8,
+    }
 }
 
 impl NwkRoute {
@@ -227,22 +327,87 @@ impl NwkRoute {
     }
 }
 
-/// See Table 3-70.
-#[derive(Debug)]
-pub(crate) struct TransactionRecord {
-    pub source_address: ShortAddress,
-    pub sequence_number: u8,
-    pub expiration_time: u8,
+impl_byte! {
+    /// See Table 3-70.
+    #[derive(Debug)]
+    pub struct TransactionRecord {
+        pub source_address: ShortAddress,
+        pub sequence_number: u8,
+        pub expiration_time: u8,
+    }
 }
 
-/// See Table 3-59.
-#[derive(Debug)]
-pub(crate) struct RouteRecord {
-    pub network_address: ShortAddress,
-    pub relay_count: u16,
-    pub path: Vec<ShortAddress, 16>,
+impl_byte! {
+    /// See Table 3-59.
+    #[derive(Debug)]
+    pub struct RouteRecord {
+        pub network_address: ShortAddress,
+        pub relay_count: u16,
+        pub path: StorageVec<ShortAddress, 16>,
+    }
+}
+
+impl_byte! {
+    pub struct AddressMap {
+        pub ieee_address: IeeeAddress,
+        pub network_address: ShortAddress,
+    }
 }
 
 /// See Table 3-61.
 #[derive(Debug)]
 pub(crate) struct MacInterface {}
+
+#[derive(Debug)]
+pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
+
+impl<'a, const N: usize, C, T> TryRead<'a, C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryRead<'a, C>,
+{
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length, should be enough
+        let len: u16 = bytes.read_with(offset, byte::LE)?;
+
+        let mut data: Vec<T, N> = Vec::new();
+        for _i in 0..len {
+            let entry: T = bytes.read_with(offset, ctx)?;
+            let _ = data.push(entry);
+        }
+        Ok((Self(data), *offset))
+    }
+}
+
+impl<const N: usize, C, T> TryWrite<C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryWrite<C>,
+{
+    #[allow(clippy::cast_possible_truncation)]
+    fn try_write(self, bytes: &mut [u8], ctx: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length
+        bytes.write_with(&mut 0, self.0.len() as u16, byte::LE)?;
+        for entry in self.0 {
+            bytes.write_with(&mut 0, entry, ctx)?;
+        }
+        Ok(*offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::internal::storage::InMemoryStorage;
+
+    #[test]
+    fn nib_init() {
+        let nib = Nib::new(InMemoryStorage::<NIB_BUFFER_SIZE>::default());
+        nib.init();
+
+        nib.set_max_broadcast_retries(0x03);
+        assert_eq!(nib.transaction_persistence_time(), 0x01f4);
+    }
+}

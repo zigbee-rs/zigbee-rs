@@ -17,8 +17,8 @@
 //!
 //! # ESP32 & nRF support
 //!
-//! This crate is currently only supporting devices in the Espresif ecosystem, but presumative this will expand to nordics
-//! nRF series.
+//! This crate is currently only supporting devices in the Espresif ecosystem,
+//! but presumative this will expand to nordics nRF series.
 #![no_std]
 //#![deny(clippy::unwrap_used)]
 #![deny(clippy::panic, unused_must_use)]
@@ -50,12 +50,13 @@
     unused_variables,
     unused_macros,
     clippy::doc_markdown,
-    private_interfaces,
+    clippy::cast_lossless,
+    private_interfaces
 )]
+#![feature(macro_metavar_expr_concat)]
 
-
-pub mod aps;
 pub mod apl;
+pub mod aps;
 pub mod nwk;
 pub mod security;
 pub mod zdp;
@@ -65,7 +66,6 @@ pub use zdo::config::Config;
 pub use zdo::config::DiscoveryType;
 pub use zdo::ZigBeeNetwork;
 pub use zdo::ZigbeeDevice;
-
 
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]
@@ -80,4 +80,3 @@ pub fn init(config: Config) -> ZigbeeDevice {
 
     device
 }
-
