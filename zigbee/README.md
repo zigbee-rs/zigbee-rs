@@ -1,9 +1,10 @@
 # Zigbee Stack
 
 A `no_std` ZigBee Protocol Stack implementation based on the [ZigBee specification 23](https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf)
-=======
 
 The core network layer and security features. Deals with addressing, keys, trust center, formation and discovery mechanisms.
+
+---
 
 ```mermaid
 sequenceDiagram

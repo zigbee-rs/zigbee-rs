@@ -46,12 +46,8 @@ pub mod nwk;
 pub mod security;
 pub mod zdp;
 
-mod zdo;
-pub use zdo::config::Config;
-pub use zdo::config::DiscoveryType;
-pub use zdo::ZigBeeNetwork;
-pub use zdo::ZigbeeDevice;
-
+// ZDO is not directly called by the application—it is controlled by BDB or used internally by the stack.
+pub mod zdo;
 
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]

@@ -135,15 +135,37 @@ pub enum CommissioningMode {
     Touchlink,
 }
 
-/// Status codes for BDB commissioning as per BDB Spec Section 5.2.9.
+/// Status codes for BDB commissioning
+///
+/// See Section 5.3.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BdbCommissioningStatus {
     /// Commissioning was successful.
     Success,
+    /// One of the commissioning sub-procedures has started but is not yet complete.
+    InProgress,
+    /// The initiator is not address assignment capable during touchlink.
+    NotAaCapable,
     /// No network was found during commissioning.
     NoNetwork,
-    /// An error occurred during commissioning.
-    Error,
+    /// A node has not joined a network when requested during touchlink.
+    TargetFailure,
+    /// A network could not be formed during network formation.
+    FormationFailure,
+    /// No response to an identify query command has been received during finding & binding.
+    NoIdentifyQueryResponse,
+    /// A binding table entry could not be created due to insufficient space in the binding table during finding & binding.
+    BindingTableFull,
+    /// No response to a scan request inter-PAN command has been received during touchlink.
+    NoScanResponse,
+    /// A touchlink (steal) attempt was made when a node is already connected to a centralized security network.
+    NotPermitted,
+    /// The Trust Center link key exchange procedure has failed attempting to join a centralized security network.
+    TclkExFailure,
+    /// A commissioning procedure was forbidden since the node was not currently on a network.
+    NotOnANetwork,
+    /// A commissioning procedure was forbidden since the node was currently on a network.
+    OnANetwork,
 }
 
 /// Trait for Zigbee Base Device Behavior: Network Steering (finding and joining

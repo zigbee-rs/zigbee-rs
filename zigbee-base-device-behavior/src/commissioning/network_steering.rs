@@ -1,4 +1,4 @@
-//! Network Steering Commissioning Mode
+//! Handles scanning / joining a network
 //!
 //! See Section 5.2.2
 //!

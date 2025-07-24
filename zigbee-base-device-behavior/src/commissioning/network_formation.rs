@@ -1,4 +1,4 @@
-//! Network Formation Commissioning Mode
+//! Forms a ZigBee network (coordinator only)
 //!
 //! See Section 5.2.3
 //!

@@ -18,18 +18,22 @@ _It enables these devices to connect and communicate with each other, allowing f
 
 
 ---
+
 In this repository:
-- [ZigBee](./zigbee/README.md)
+- [ZigBee Stack](./zigbee/README.md)
+
   The core network layer and security features.
   Deals with addressing, keys, trust center, formation and discovery mechanisms.
   For more, see the official [ZigBee Specification Rev. 23](https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf)
 
 - [ZigBee Base Device Behavior](./zigbee-base-device-behavior/README.md)
+
   Defines the standard commissioning procedures all devices must support.
   Provides a high-level abstraction over the zigbee stack.
   For more, see the official [ZigBee Base Device Behavior Specification Rev. 13](https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf)
 
 - [ZigBee Cluster Library](./zigbee-cluster-library/README.md)
+
   Defines application-level behaviors, like reading attributes, reporting, and commands.
   Contains standard clusters like Temperature Measurement, Basic Identify, etc.
   For more, see the official [ZigBee Cluster Library Rev 8](https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf)
