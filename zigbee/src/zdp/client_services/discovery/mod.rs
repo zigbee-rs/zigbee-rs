@@ -5,6 +5,7 @@ use heapless::Vec;
 use crate::apl::descriptors::node_descriptor::MacCapabilities;
 use crate::apl::descriptors::node_descriptor::NodeDescriptor;
 use crate::apl::descriptors::node_descriptor::ServerMask;
+use crate::apl::descriptors::user_descriptor::UserDescriptor;
 use crate::internal::types::IeeeAddress;
 use crate::internal::types::NwkAddress;
 
@@ -122,7 +123,7 @@ pub struct ParentAnnce {
 }
 
 // 2.4.3.1.13 User_Desc_set
-pub struct UserDescSet {
+pub struct UserDescSet<'a> {
     /// NWK address for the request.
     nwk_addr_of_interest: NwkAddress,
     /// Length of the User Descriptor in bytes.
@@ -131,7 +132,7 @@ pub struct UserDescSet {
     /// entered here is less than 16 characters in length, it shall be
     /// padded with space characters (0x20) to make a total length of 16
     /// characters. Characters with codes 0x00-0x1f are not permitted.
-    user_description: Vec<u8, 255>,
+    user_description: UserDescriptor<'a>,
 }
 
 /// 2.4.3.1.14 System_Server_Discovery_req
@@ -162,11 +163,11 @@ pub struct DiscoveryStoreReq {
 }
 
 /// 2.4.3.1.16 Node_Desc_store_req
-pub struct NodeDescStoreReq {
+pub struct NodeDescStoreReq<'a> {
     /// NWK Address for the Local Device
     nwk_addr: NwkAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
     // Node Descriptor
-    node_descriptor: NodeDescriptor,
+    node_descriptor: NodeDescriptor<'a>,
 }
