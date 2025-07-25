@@ -46,8 +46,15 @@ pub mod nwk;
 pub mod security;
 pub mod zdp;
 
-// ZDO is not directly called by the application—it is controlled by BDB or used internally by the stack.
+// ZDO is not directly called by the application — it is controlled by BDB or used internally by the stack.
+#[doc(hidden)]
 pub mod zdo;
+
+// Device object config
+pub use zdo::config::Config;
+// Logical type
+pub use apl::descriptors::node_descriptor::LogicalType;
+
 
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]

@@ -17,6 +17,8 @@ edition.workspace = true
 
 [dependencies]
 byte.workspace = true
+embedded-storage.workspace = true
+spin.workspace = true
 thiserror.workspace = true
 zigbee = { path = "../zigbee" }
 

@@ -80,7 +80,7 @@ impl NodeDescriptor<'_> {
 // specifies the device type of the ZigBee node.
 impl_byte! {
     #[repr(u8)]
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum LogicalType {
         Coordinator = 0b000,
         Router = 0b001,

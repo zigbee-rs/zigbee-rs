@@ -7,63 +7,63 @@
 //! support. It provides a high-level abstraction over the zigbee stack.
 //!
 //! Start with the [comissioning](commissioning/index.html)
+//!
+//! ```rust
+//! let behavior = BaseDeviceBehavior::new();
+//! let _ = behavior.start_initialization_procedure();
+//! ```
 
+use byte::BytesExt;
+use spin::Mutex;
+
+use embedded_storage::Storage;
+use embedded_storage::ReadStorage;
 use thiserror::Error;
 
-pub mod commissioning { 
-    pub mod network_steering;
-
-    pub mod network_formation;
-
-    pub mod finding_binding;
-
-    /// For touchlink commissioning (if supported)
-    pub mod touchlink;
-}
-pub mod leave;
-
-pub mod rejoin;
-pub mod reset;
 pub mod types;
 
-// Re-export key types for crate users
-pub use commissioning::finding_binding::FindingBinding;
-pub use commissioning::network_formation::NetworkFormation;
-pub use commissioning::network_steering::NetworkSteering;
-pub use commissioning::touchlink::TouchlinkCommissioning;
-pub use leave::leave_network;
-pub use rejoin::attempt_rejoin;
-pub use reset::factory_reset;
-pub use types::BdbCommissioningStatus;
-pub use types::CommissioningMode;
-pub use types::NetworkDescriptor;
-use zigbee::zdo::ZigbeeDevice;
+use types::{BdbCommissioningStatus, CommissioningMode};
+use zigbee::{zdo::ZigbeeDevice, Config, LogicalType};
 
-pub struct BaseDeviceBehavior {
+pub struct BaseDeviceBehavior<C> {
+    storage: Mutex<C>,
     device: ZigbeeDevice,
+    bdb_commissioning_mode: CommissioningMode,
     bdb_commisioning_capability: u8,
-    logical_type: u8,
+    bdb_commissioning_status: BdbCommissioningStatus,
 }
 
-impl BaseDeviceBehavior {
+impl<C: Storage> BaseDeviceBehavior<C> {
     fn new(
-        device: ZigbeeDevice,
+        storage: C,
+        config: Config,
         bdb_commisioning_capability: u8,
-        logical_type: u8
         ) -> Self {
+        let device = ZigbeeDevice::new(config);
+ 
         Self {
+            storage: Mutex::new(storage),
             device,
+            bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commisioning_capability,
-            logical_type,
+            bdb_commissioning_status: BdbCommissioningStatus::Success,
         }
     }
 
-    /// Fig. 1 - Initialization procedure
-    /// See Section 7.1
+    /// Initialization procedure
+    ///
+    /// A node performs initialization whenever it is supplied with power either the first time or 
+    /// subsequent times after some form of power outage or power-cycle.
+    ///
+    /// See Section 7.1 - Figure 1 
     fn start_initialization_procedure(&self) -> Result<(), ZigbeeError> {
         // TODO: restore persistent zigbee data
+        let mut buf = [0u8; 1];
+        let _ = self.storage.lock().read(0, &mut buf);
+        buf.read_with(&mut 0, ()).unwrap()
 
         if self.node_is_on_a_network() {
+            // TODO: done
             if self.is_end_device() {
                 let result = self.attempt_to_rejoin();
                 if result.is_ok() {
@@ -74,6 +74,7 @@ impl BaseDeviceBehavior {
             if self.is_router() {
                 if self.is_touchlink_supported() {
                     // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
+                    unimplemented!()
                 }
             }
         }
@@ -81,17 +82,27 @@ impl BaseDeviceBehavior {
         Ok(())
     }
 
+    /// Starts the network steering process.
+    ///
+    /// See Section 8.2
+    pub fn start_network_steering(&mut self) -> Result<BdbCommissioningStatus, SteeringError> {
+        self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+
+        Ok(BdbCommissioningStatus::Success)
+    }
+
+
     fn node_is_on_a_network(&self) -> bool {
         // TODO: check if a network info is stored in the persistent zigbee data
         true
     }
 
     fn is_end_device(&self) -> bool {
-        self.logical_type == 0b010
+        self.device.logical_type() == LogicalType::EndDevice
     }
 
     fn is_router(&self) -> bool {
-        self.logical_type == 0b001
+        self.device.logical_type() == LogicalType::Router
     }
 
     fn is_touchlink_supported(&self) -> bool {
@@ -105,6 +116,15 @@ impl BaseDeviceBehavior {
     fn broadcast_annce(&self) -> Result<(), ZigbeeError> {
         unimplemented!()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SteeringError {
+    #[error("Trust center link key exchange failed")]
+    NwkJoinFailure,
+
+    #[error("No open network discovered to join")]
+    NoNetwork,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
