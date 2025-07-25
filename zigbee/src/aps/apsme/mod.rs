@@ -83,7 +83,7 @@ impl Apsme {
             binding_table: ApsBindingTable::new(),
             joined_network: None,
             aib: ApsInformationBase::new(),
-            nwk: Nlme::new(),
+            nwk: Nlme {},
         }
     }
     fn is_joined(&self) -> bool {

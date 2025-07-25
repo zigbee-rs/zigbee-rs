@@ -53,9 +53,14 @@ pub struct NlmeNetworkFormationRequest {}
 pub struct NlmeNetworkFormationConfirm {}
 
 /// 3.2.2.7 - NLME-PERMIT-JOINING.request
-pub struct NlmePermitJoiningRequest {}
+pub struct NlmePermitJoiningRequest {
+    pub permit_duration: u8
+}
 /// 3.2.2.8 - NLME-PERMIT-JOINING.confirm
-pub struct NlmePermitJoiningConfirm {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NlmePermitJoiningConfirm {
+    pub status: NlmeJoinStatus
+}
 /// 3.2.2.9 - NLME-START-ROUTER.request
 pub struct NlmeStartRouterRequest {}
 /// 3.2.2.10 - NLME-START-ROUTER.confirm
@@ -66,12 +71,12 @@ pub struct NlmeEdScanRequest {}
 pub struct NlmeEdScanConfirm {}
 /// 3.2.2.13 - NLME-JOIN.request
 pub struct NlmeJoinRequest {
-    pub(crate) extended_pan_id: u64,
-    pub(crate) rejoin_network: u8,
+    pub extended_pan_id: u64,
+    pub rejoin_network: u8,
     // ScanChannelsListStructure
-    pub(crate) scan_duration: u8,
+    pub scan_duration: u8,
     // CapabilityInformation
-    pub(crate) security_enabled: bool,
+    pub security_enabled: bool,
 }
 /// 3.2.2.14 - NLME-JOIN.indication
 pub struct NlmeJoinIndication {
@@ -83,15 +88,16 @@ pub struct NlmeJoinIndication {
 }
 /// 3.2.2.15 - NLME-JOIN.confirm
 pub struct NlmeJoinConfirm {
-    pub(crate) status: NlmeJoinStatus,
-    pub(crate) network_address: u16,
-    pub(crate) extended_pan_id: u64,
+    pub status: NlmeJoinStatus,
+    pub network_address: u16,
+    pub extended_pan_id: u64,
     // Channel List Structure
-    pub(crate) enhanced_beacon_type: bool,
-    pub(crate) mac_interface_index: u8,
+    pub enhanced_beacon_type: bool,
+    pub mac_interface_index: u8,
 }
 
-pub(crate) enum NlmeJoinStatus {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NlmeJoinStatus {
     Success,
     InvalidRequest,
     NotPermitted,

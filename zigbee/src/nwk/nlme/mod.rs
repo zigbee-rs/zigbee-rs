@@ -18,6 +18,7 @@ use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
+use management::NlmeJoinStatus;
 use management::NlmeNetworkDiscoveryConfirm;
 use management::NlmeNetworkDiscoveryRequest;
 use management::NlmeNetworkFormationConfirm;
@@ -57,13 +58,7 @@ pub trait NlmeSap {
     fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
 }
 
-pub(crate) struct Nlme {}
-
-impl Nlme {
-    pub(crate) fn new() -> Self {
-        Self {}
-    }
-}
+pub struct Nlme {}
 
 impl NlmeSap for Nlme {
     fn network_discovery(
@@ -81,8 +76,10 @@ impl NlmeSap for Nlme {
         todo!()
     }
 
+    // Permitting Devices to Join a Network
+    // Figure 3-39
     fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
-        todo!()
+        NlmePermitJoiningConfirm { status: NlmeJoinStatus::InvalidRequest }
     }
 
     fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
@@ -94,11 +91,10 @@ impl NlmeSap for Nlme {
     }
 
     fn join(&self, _request: NlmeJoinRequest) -> NlmeJoinConfirm {
-        // Figure 3-39
         // TODO: update neighbor table if join is successful
         // TODO: start routing (3.6.4.1)
         NlmeJoinConfirm {
-            status: management::NlmeJoinStatus::InvalidRequest,
+            status: NlmeJoinStatus::InvalidRequest,
             network_address: 0u16,
             extended_pan_id: 0u64,
             enhanced_beacon_type: false,
@@ -106,3 +102,4 @@ impl NlmeSap for Nlme {
         }
     }
 }
+
