@@ -12,30 +12,51 @@
 //! let behavior = BaseDeviceBehavior::new();
 //! let _ = behavior.start_initialization_procedure();
 //! ```
+#![allow(unused)]
 
 use byte::BytesExt;
 use spin::Mutex;
 
 use embedded_storage::Storage;
-use embedded_storage::ReadStorage;
 use thiserror::Error;
 
 pub mod types;
 
-use types::{BdbCommissioningStatus, CommissioningMode};
+// BDB 5.1 | Table 1
+#[allow(non_upper_case_globals)]
+const bdbcMaxSameNetworkRetryAttempts: u8 = 10;
+#[allow(non_upper_case_globals)]
+const bdbcMinCommissioningTime: u8 = 0xb4;
+#[allow(non_upper_case_globals)]
+const bdbcRecSameNetworkRetryAttempts: u8 = 3; 
+#[allow(non_upper_case_globals)]
+const bdbcTCLinkKeyExchangeTimeout: u8 = 5;
+
+use types::CommissioningMode;
+use types::BdbCommissioningStatus;
+use zigbee::nwk::nlme::management::NlmeJoinRequest;
+use zigbee::nwk::nlme::management::NlmeJoinStatus;
+use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
+use zigbee::nwk::nlme::NlmeSap;
 use zigbee::{zdo::ZigbeeDevice, Config, LogicalType};
 
-pub struct BaseDeviceBehavior<C> {
+pub struct BaseDeviceBehavior<C, T: NlmeSap> {
     storage: Mutex<C>,
     device: ZigbeeDevice,
+    nlme: T,
+    bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commisioning_capability: u8,
     bdb_commissioning_status: BdbCommissioningStatus,
 }
 
-impl<C: Storage> BaseDeviceBehavior<C> {
+impl<C, T> BaseDeviceBehavior<C, T> where 
+    C: Storage, 
+    T: NlmeSap 
+{
     fn new(
         storage: C,
+        nlme: T,
         config: Config,
         bdb_commisioning_capability: u8,
         ) -> Self {
@@ -44,6 +65,8 @@ impl<C: Storage> BaseDeviceBehavior<C> {
         Self {
             storage: Mutex::new(storage),
             device,
+            nlme,
+            bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commisioning_capability,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
@@ -56,45 +79,69 @@ impl<C: Storage> BaseDeviceBehavior<C> {
     /// subsequent times after some form of power outage or power-cycle.
     ///
     /// See Section 7.1 - Figure 1 
-    fn start_initialization_procedure(&self) -> Result<(), ZigbeeError> {
-        // TODO: restore persistent zigbee data
+    fn start_initialization_procedure(&mut self) -> Result<(), ZigbeeError> {
+        // restore persistent zigbee data
         let mut buf = [0u8; 1];
         let _ = self.storage.lock().read(0, &mut buf);
-        buf.read_with(&mut 0, ()).unwrap()
+        self.bdb_node_is_on_a_network = buf.read_with(&mut 0, ()).unwrap();
 
-        if self.node_is_on_a_network() {
-            // TODO: done
-            if self.is_end_device() {
-                let result = self.attempt_to_rejoin();
-                if result.is_ok() {
-                    self.broadcast_annce();
-                }
-            };
-        } else {
-            if self.is_router() {
-                if self.is_touchlink_supported() {
-                    // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
-                    unimplemented!()
-                }
+        if self.bdb_node_is_on_a_network {
+            return match self.device.logical_type() {
+                LogicalType::EndDevice => {
+                    let result = self.attempt_to_rejoin();
+                    if result.is_ok() {
+                        self.broadcast_annce()
+                    } else {
+                        // TODO: retry the procedure at some application specific time or quit
+                        
+                        Ok(())
+                    }
+                },
+                LogicalType::Router => Ok(()),
+                _ => Ok(())
             }
-        }
+        } else if self.is_router() && self.is_touchlink_supported() {
+                // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
+                return Ok(());
+            }
 
         Ok(())
     }
 
-    /// Starts the network steering process.
+    /// Network steering procedure
     ///
     /// See Section 8.2
     pub fn start_network_steering(&mut self) -> Result<BdbCommissioningStatus, SteeringError> {
-        self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+        if self.bdb_node_is_on_a_network {
+            // Section 8.1 | for a node on a network
+            self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+
+            // TODO: Mgmt_permit_join_request | zigbee 2.4.3.3.7
+            // with PermitDuration set to at least bdbcMinCommissioningTime
+            // with TC_Significance field set to 0x01
+            if self.device.logical_type() == LogicalType::Coordinator ||
+                self.device.logical_type() == LogicalType::Router {
+                    // TODO: enable permit join >= bdbcMinCommissioningTime seconds
+                    //
+                    let request = NlmePermitJoiningRequest {
+                        permit_duration: bdbcMinCommissioningTime
+                    };
+
+                    let confirm = self.nlme.permit_joining(request);
+                }
+
+            self.bdb_commissioning_status = BdbCommissioningStatus::Success;
+        } else {
+            // Section 8.2 | for a node NOT on a network
+            self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+
+            // TODO: perform network discovery over the channels vScanChannels
+            // if success determine a list of suitable open networks
+            // join network using MAC association
+            // if success wait for network key
+        }
 
         Ok(BdbCommissioningStatus::Success)
-    }
-
-
-    fn node_is_on_a_network(&self) -> bool {
-        // TODO: check if a network info is stored in the persistent zigbee data
-        true
     }
 
     fn is_end_device(&self) -> bool {
@@ -110,11 +157,30 @@ impl<C: Storage> BaseDeviceBehavior<C> {
     }
 
     fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
-        unimplemented!()
+        let request = NlmeJoinRequest {
+            // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
+            extended_pan_id: 0u64,
+            rejoin_network: 0x02,
+            // TODO: set ScanChannels parameter to 0x00000000
+            scan_duration: 0x00,
+            // TODO: set the CapabilityInformation appropriately for the node
+            security_enabled: true,
+        };
+
+        let confirm = self.nlme.join(request);
+
+        if confirm.status == NlmeJoinStatus::Success {
+            Ok(())
+        } else {
+            Err(ZigbeeError::NotSupported)
+        }
     }
 
+    /// Trigger Device_annce on ZDO command 
     fn broadcast_annce(&self) -> Result<(), ZigbeeError> {
-        unimplemented!()
+        // TODO: Device_annce should be sent by NWK automatically after a device has
+        // joined/rejoined 
+        Ok(())
     }
 }
 
