@@ -17,6 +17,10 @@ edition.workspace = true
 
 [dependencies]
 byte.workspace = true
+ccm.workspace = true
+aes.workspace = true
+embedded-storage.workspace = true
+spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 

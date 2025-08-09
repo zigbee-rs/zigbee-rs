@@ -1,10 +1,11 @@
-//! Implements the ZigBee protocol stack in `no-std` based on the [ZigBee Specification R23]
+//! Implements the ZigBee protocol stack in `no-std` based on the [ZigBee
+//! Specification R23]
 //!
 //! [ZigBee Specification R23]: https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf
 //!
 //! This crate contains the core network layer and security features.
-//! It deals with addressing, keys, trust center, formation and discovery mechanisms.
-//!
+//! It deals with addressing, keys, trust center, formation and discovery
+//! mechanisms.
 #![no_std]
 //#![deny(clippy::unwrap_used)]
 #![deny(clippy::panic, unused_must_use)]
@@ -36,12 +37,13 @@
     unused_variables,
     unused_macros,
     clippy::doc_markdown,
-    private_interfaces,
+    clippy::cast_lossless,
+    private_interfaces
 )]
+#![feature(macro_metavar_expr_concat)]
 
-
-pub mod aps;
 pub mod apl;
+pub mod aps;
 pub mod nwk;
 pub mod security;
 pub mod zdp;
@@ -52,8 +54,6 @@ pub use zdo::config::DiscoveryType;
 pub use zdo::ZigBeeNetwork;
 pub use zdo::ZigbeeDevice;
 
-
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]
 pub mod internal;
-
