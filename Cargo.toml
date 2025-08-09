@@ -3,6 +3,7 @@ authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 repository = "https://github.com/zigbee-rs"
 readme = "README.md"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 members = [
@@ -13,8 +14,9 @@ resolver = "3"
 
 [workspace.dependencies]
 heapless = "0.8.0"
-strum = { version = "0.27.1", default-features = false }
 thiserror = { version = "2.0.6", default-features = false }
+embedded-storage = "0.3.1"
+spin = { version = "0.9.8", default-features = false, features = ["spin_mutex", "mutex"] }
 byte = "0.2.7"
 ccm = "0.5.0"
 aes = "0.8.4"
