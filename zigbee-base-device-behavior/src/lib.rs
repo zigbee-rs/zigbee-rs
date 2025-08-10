@@ -54,7 +54,7 @@ impl<C, T> BaseDeviceBehavior<C, T> where
     C: Storage, 
     T: NlmeSap 
 {
-    fn new(
+    pub fn new(
         storage: C,
         nlme: T,
         config: Config,
@@ -79,7 +79,7 @@ impl<C, T> BaseDeviceBehavior<C, T> where
     /// subsequent times after some form of power outage or power-cycle.
     ///
     /// See Section 7.1 - Figure 1 
-    fn start_initialization_procedure(&mut self) -> Result<(), ZigbeeError> {
+    pub fn start_initialization_procedure(&mut self) -> Result<(), ZigbeeError> {
         // restore persistent zigbee data
         let mut buf = [0u8; 1];
         let _ = self.storage.lock().read(0, &mut buf);

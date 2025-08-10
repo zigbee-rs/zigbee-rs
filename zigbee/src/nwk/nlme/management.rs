@@ -9,8 +9,8 @@ pub struct NlmeNetworkDiscoveryRequest {
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
 pub struct NlmeNetworkDiscoveryConfirm {
     pub status: NlmeNetworkDiscoveryStatus,
-    pub(crate) network_count: u8,
-    pub(crate) network_descriptor: NetworkDescriptor,
+    pub network_count: u8,
+    pub network_descriptor: NetworkDescriptor,
 }
 
 #[derive(Debug, PartialEq, Eq)]
