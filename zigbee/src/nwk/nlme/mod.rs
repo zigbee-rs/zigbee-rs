@@ -28,6 +28,9 @@ use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
 
+#[cfg(test)]
+use mockall::{automock, mock, predicate::*};
+
 /// Network management entity
 pub mod management;
 
@@ -37,10 +40,11 @@ pub mod management;
 ///
 /// allows the transport of management commands between the next higher layer
 /// and the NLME.
+#[cfg_attr(test, automock)]
 pub trait NlmeSap {
     /// 3.2.2.3
     fn network_discovery(
-        &self,
+        &mut self,
         request: NlmeNetworkDiscoveryRequest,
     ) -> NlmeNetworkDiscoveryConfirm;
     /// 3.2.2.5
@@ -62,7 +66,7 @@ pub struct Nlme {}
 
 impl NlmeSap for Nlme {
     fn network_discovery(
-        &self,
+        &mut self,
         _request: NlmeNetworkDiscoveryRequest,
     ) -> NlmeNetworkDiscoveryConfirm {
         // TODO: perform an active network scan

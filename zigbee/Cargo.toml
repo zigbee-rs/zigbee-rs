@@ -20,3 +20,6 @@ byte.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 
+[dev-dependencies]
+mockall.workspace = true
+

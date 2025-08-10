@@ -35,7 +35,7 @@ impl ZigbeeDevice {
     }
 
     /// scans for nearby reachable networks by sending a beacon request
-    pub fn scan_for_available_networks(&self) {
+    pub fn scan_for_available_networks(&mut self) {
         self.apsme.start_network_discovery();
         // TODO: send beacon requests to actively scan for networks
         // TODO: Beacon response (signal strenght - RSSI, network PAN ID, permit

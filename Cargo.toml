@@ -17,6 +17,6 @@ resolver = "3"
 byte = "0.2.7"
 embedded-storage = "0.3.1"
 heapless = "0.8.0"
+mockall = "0.13"
 spin = { version = "0.10.0", default-features = false, features = ["spin_mutex", "mutex"] }
 thiserror = { version = "2.0.6", default-features = false }
-
