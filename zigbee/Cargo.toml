@@ -14,12 +14,11 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
+mock = ["dep:mockall"]
 
 [dependencies]
 byte.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
-
-[dev-dependencies]
-mockall.workspace = true
+mockall = { workspace = true, optional = true }
 

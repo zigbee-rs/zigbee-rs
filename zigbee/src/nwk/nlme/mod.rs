@@ -28,8 +28,8 @@ use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
 
-#[cfg(test)]
-use mockall::{automock, mock, predicate::*};
+#[cfg(feature = "mock")]
+use mockall::{automock, mock};
 
 /// Network management entity
 pub mod management;
@@ -40,7 +40,7 @@ pub mod management;
 ///
 /// allows the transport of management commands between the next higher layer
 /// and the NLME.
-#[cfg_attr(test, automock)]
+#[cfg_attr(feature = "mock", automock)]
 pub trait NlmeSap {
     /// 3.2.2.3
     fn network_discovery(

@@ -202,9 +202,11 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "byte",
  "embedded-storage",
+ "mockall",
  "spin",
  "thiserror",
  "zigbee",
+ "zigbee-base-device-behavior",
 ]
 
 [[package]]

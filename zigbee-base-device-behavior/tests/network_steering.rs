@@ -40,28 +40,26 @@ impl<const N: usize> Storage for InMemoryStorage<N> {
 
 pub const STORAGE_SIZE: usize = 15;
 
-#[cfg(test)]
-mod tests {
-    use zigbee::nwk::nlme::MockNlmeSap;
-    use zigbee_base_device_behavior::BaseDeviceBehavior;
+#[cfg(feature = "mock")]
+use zigbee::nwk::nlme::MockNlmeSap;
+use zigbee_base_device_behavior::BaseDeviceBehavior;
 
-    use crate::{InMemoryStorage, STORAGE_SIZE};
+#[test]
+fn test_initialization_procedure() {
+    // given
+    let storage = InMemoryStorage::<STORAGE_SIZE>::default();
 
-    fn test_initialization_procedure() {
-        // given
-        let storage = InMemoryStorage::<STORAGE_SIZE>::default();
+    let mut nlme = MockNlmeSap::new();
+    let config = zigbee::Config::default();
+    let bdb_commisioning_capability = 0u8;
+    let mut bdb = BaseDeviceBehavior::new(storage, &nlme, config, bdb_commisioning_capability);
 
-        let mut nlme = MockNlmeSap::new();
-        let config = zigbee::Config::default();
-        let bdb_commisioning_capability = 0u8;
-        let mut bdb = BaseDeviceBehavior::new(storage, nlme, config, bdb_commisioning_capability);
+    // when
+    let result = bdb.start_initialization_procedure();
 
-        // when
-        let result = bdb.start_initialization_procedure();
-
-        // then
-        assert!(result.is_ok());
-        assert!(nlme.expect_network_discovery());
-    }
+    // then
+    assert!(result.is_ok());
+    nlme.expect_network_discovery().times(1);
+    // nlme.expect_network_formation().times(0);
 }
 

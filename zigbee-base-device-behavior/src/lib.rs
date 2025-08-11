@@ -14,6 +14,8 @@
 //! ```
 #![allow(unused)]
 
+use std::rc::Rc;
+
 use byte::BytesExt;
 use spin::Mutex;
 
@@ -40,23 +42,23 @@ use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::nwk::nlme::NlmeSap;
 use zigbee::{zdo::ZigbeeDevice, Config, LogicalType};
 
-pub struct BaseDeviceBehavior<C, T: NlmeSap> {
+pub struct BaseDeviceBehavior<'a, C, T: NlmeSap> {
     storage: Mutex<C>,
     device: ZigbeeDevice,
-    nlme: T,
+    nlme: &'a T,
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commisioning_capability: u8,
     bdb_commissioning_status: BdbCommissioningStatus,
 }
 
-impl<C, T> BaseDeviceBehavior<C, T> where 
+impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where 
     C: Storage, 
     T: NlmeSap 
 {
     pub fn new(
         storage: C,
-        nlme: T,
+        nlme: &'a T,
         config: Config,
         bdb_commisioning_capability: u8,
         ) -> Self {
