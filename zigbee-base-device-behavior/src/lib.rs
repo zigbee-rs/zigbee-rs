@@ -8,13 +8,12 @@
 //!
 //! Start with the [comissioning](commissioning/index.html)
 //!
-//! ```rust
+//! ```no_test
+//! use zigbee_base_device_behavior::BaseDeviceBehavior;
 //! let behavior = BaseDeviceBehavior::new();
 //! let _ = behavior.start_initialization_procedure();
 //! ```
 #![allow(unused)]
-
-use std::rc::Rc;
 
 use byte::BytesExt;
 use spin::Mutex;
@@ -38,6 +37,7 @@ use types::CommissioningMode;
 use types::BdbCommissioningStatus;
 use zigbee::nwk::nlme::management::NlmeJoinRequest;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
+use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::nwk::nlme::NlmeSap;
 use zigbee::{zdo::ZigbeeDevice, Config, LogicalType};
@@ -103,10 +103,13 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
                 _ => Ok(())
             }
         } else if self.is_router() && self.is_touchlink_supported() {
-                // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
-                return Ok(());
-            }
+            // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
 
+        } else {
+            let request = NlmeNetworkFormationRequest {
+            };
+            self.nlme.network_formation(request);
+        }
         Ok(())
     }
 
@@ -159,17 +162,7 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
     }
 
     fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
-        let request = NlmeJoinRequest {
-            // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
-            extended_pan_id: 0u64,
-            rejoin_network: 0x02,
-            // TODO: set ScanChannels parameter to 0x00000000
-            scan_duration: 0x00,
-            // TODO: set the CapabilityInformation appropriately for the node
-            security_enabled: true,
-        };
-
-        let confirm = self.nlme.join(request);
+        let confirm = self.nlme.rejoin();
 
         if confirm.status == NlmeJoinStatus::Success {
             Ok(())

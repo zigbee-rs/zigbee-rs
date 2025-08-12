@@ -24,7 +24,7 @@ In this repository:
 
   The core network layer and security features.
   Deals with addressing, keys, trust center, formation and discovery mechanisms.
-  For more, see the official [ZigBee Specification Rev. 23](https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf)
+  For more, see the official [ZigBee Specification Rev. 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
 
 - [ZigBee Base Device Behavior](./zigbee-base-device-behavior/README.md)
 

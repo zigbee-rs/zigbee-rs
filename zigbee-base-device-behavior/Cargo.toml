@@ -14,6 +14,7 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
+default = []
 mock = ["zigbee/mock", "dep:mockall"]
 
 [dependencies]
@@ -26,3 +27,4 @@ mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
 zigbee-base-device-behavior = { path = ".", features = ["mock"] }
+

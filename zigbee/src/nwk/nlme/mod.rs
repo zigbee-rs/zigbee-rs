@@ -60,8 +60,11 @@ pub trait NlmeSap {
     fn ed_scan(&self, request: NlmeEdScanRequest) -> NlmeEdScanConfirm;
     // 3.2.2.13
     fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
+
+    fn rejoin(&self) -> NlmeJoinConfirm;
 }
 
+#[derive(Clone, Copy)]
 pub struct Nlme {}
 
 impl NlmeSap for Nlme {
@@ -104,6 +107,21 @@ impl NlmeSap for Nlme {
             enhanced_beacon_type: false,
             mac_interface_index: 0u8,
         }
+    }
+
+    fn rejoin(&self) -> NlmeJoinConfirm {
+        // TODO: read extended_pan_id from NIB
+        let request = NlmeJoinRequest {
+            // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
+            extended_pan_id: 0u64,
+            rejoin_network: 0x02,
+            // TODO: set ScanChannels parameter to 0x00000000
+            scan_duration: 0x00,
+            // TODO: set the CapabilityInformation appropriately for the node
+            security_enabled: true,
+        };
+
+        self.join(request)
     }
 }
 

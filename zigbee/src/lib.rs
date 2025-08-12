@@ -60,3 +60,6 @@ pub use apl::descriptors::node_descriptor::LogicalType;
 #[doc(hidden)]
 pub mod internal;
 
+#[doc(hidden)]
+pub use internal::storage::InMemoryStorage;
+

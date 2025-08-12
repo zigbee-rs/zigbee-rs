@@ -191,6 +191,7 @@ name = "zigbee"
 version = "0.1.0-alpha.3"
 dependencies = [
  "byte",
+ "embedded-storage",
  "heapless",
  "mockall",
  "thiserror",
