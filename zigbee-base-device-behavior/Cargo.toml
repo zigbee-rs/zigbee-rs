@@ -1,0 +1,30 @@
+[package]
+name = "zigbee-base-device-behavior"
+version = "0.1.0-alpha.1"
+
+description = "ZigBee base device behavior based on the official ZigBee Base Device Behavior Specification Rev 13"
+documentation = "https://docs.rs/zigbee-base-device-behavior"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "base-device-behavior", "bdb"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+mock = ["zigbee/mock", "dep:mockall"]
+
+[dependencies]
+byte.workspace = true
+embedded-storage.workspace = true
+spin.workspace = true
+thiserror.workspace = true
+zigbee = { path = "../zigbee" }
+mockall = { workspace = true, optional = true }
+
+[dev-dependencies]
+zigbee-base-device-behavior = { path = ".", features = ["mock"] }
+

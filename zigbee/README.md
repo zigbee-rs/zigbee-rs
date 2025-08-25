@@ -1,14 +1,31 @@
 # Zigbee Stack
 
-A `no_std` ZigBee protocol stack implementation based on the [ZigBee specification 22 1.0](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
+A `no_std` ZigBee Protocol Stack implementation based on the [ZigBee specification 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
 
-ZigBee is a wireless communication technology designed for low-power devices in smart homes and industrial settings. 
-It enables these devices to connect and communicate with each other, allowing for efficient control and automation of various systems.
+The core network layer and security features. Deals with addressing, keys, trust center, formation and discovery mechanisms.
 
-<p align="center">
-<img src="../docs/stack_architecture_outline.png" alt="Outline of the ZigBee Stack Architecture" width="700" /><br />
-<span>Outline of the ZigBee Stack Architecture</span>
-</p>
+---
+
+```mermaid
+sequenceDiagram
+    participant Device
+    participant Coordinator
+    rect rgb(255, 120, 120)
+    note right of Device: Unencrypted
+    Device->>Coordinator: Beacon Request (0x07)
+    Coordinator-->>Device: Zigbee Beacon
+    Device->>Coordinator: Association Request (0x01)
+    Coordinator-->>Device: Association Request
+    end
+    rect rgb(255, 180, 100)
+    note right of Device: APS encrypted only
+    Coordinator-->>Device: Transport Key
+    end
+    rect rgb(125, 235, 150)
+    note right of Device: NWK encrypted
+    Device->>Coordinator: Device Announcement
+    end
+```
 
 ## 🏛️ License
 

@@ -3,3 +3,8 @@
 **/target
 docs/spec
 .idea
+
+
+# Debug and profiling cruft
+*.profraw
+*profdata
