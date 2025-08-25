@@ -20,7 +20,7 @@ permissions:
   pull-requests: write 
 
 jobs:
-  build:
+  tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -65,12 +65,12 @@ jobs:
             target
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Build
+      - name: Run tests
         env:
           CARGO_INCREMENTAL: 0
           RUSTFLAGS: '-Cinstrument-coverage'
           LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
-        run: cargo test
+        run: cargo test --all-features
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -89,4 +89,45 @@ jobs:
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
           update-comment: true
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          # - stable
+          - nightly
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # - name: Check semver
+        # uses: obi1kenobi/cargo-semver-checks-action@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }} 
+          override: true
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-dependencies
+        with:
+          path: |
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run build
+        env:
+          CARGO_INCREMENTAL: 0
+        run: cargo build 
 

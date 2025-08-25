@@ -5,7 +5,7 @@
 //! This crate contains the core network layer and security features.
 //! It deals with addressing, keys, trust center, formation and discovery mechanisms.
 //!
-#![no_std]
+#![cfg_attr(not(feature = "mock"), no_std)]
 //#![deny(clippy::unwrap_used)]
 #![deny(clippy::panic, unused_must_use)]
 #![warn(
@@ -46,14 +46,20 @@ pub mod nwk;
 pub mod security;
 pub mod zdp;
 
-mod zdo;
+// ZDO is not directly called by the application — it is controlled by BDB or used internally by the stack.
+#[doc(hidden)]
+pub mod zdo;
+
+// Device object config
 pub use zdo::config::Config;
-pub use zdo::config::DiscoveryType;
-pub use zdo::ZigBeeNetwork;
-pub use zdo::ZigbeeDevice;
+// Logical type
+pub use apl::descriptors::node_descriptor::LogicalType;
 
 
 // Exposes types and macros only to be within zigbee crates. Not public API.
 #[doc(hidden)]
 pub mod internal;
+
+#[doc(hidden)]
+pub use internal::storage::InMemoryStorage;
 
