@@ -24,6 +24,7 @@ spin.workspace = true
 thiserror.workspace = true
 zigbee = { path = "../zigbee" }
 mockall = { workspace = true, optional = true }
+log = "0.4.27"
 
 [dev-dependencies]
 zigbee-base-device-behavior = { path = ".", features = ["mock"] }

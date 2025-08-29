@@ -13,6 +13,7 @@
 //! let behavior = BaseDeviceBehavior::new();
 //! let _ = behavior.start_initialization_procedure();
 //! ```
+#![no_std]
 #![allow(unused)]
 
 use byte::BytesExt;
@@ -88,6 +89,8 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
         self.bdb_node_is_on_a_network = buf.read_with(&mut 0, ()).unwrap();
 
         if self.bdb_node_is_on_a_network {
+            log::error!("bdb_node_is_on_a_network");
+
             return match self.device.logical_type() {
                 LogicalType::EndDevice => {
                     let result = self.attempt_to_rejoin();
@@ -103,9 +106,13 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
                 _ => Ok(())
             }
         } else if self.is_router() && self.is_touchlink_supported() {
+            log::error!("is router and touchlink supported");
+
             // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
 
         } else {
+            log::error!("not on a network");
+
             let request = NlmeNetworkFormationRequest {
             };
             self.nlme.network_formation(request);
