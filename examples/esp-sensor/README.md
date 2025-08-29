@@ -23,5 +23,7 @@ Install the target and run the application to build and flash the image onto an 
 ```sh
 rustup target add xtensa-esp32c6-espidf
 cargo run --release
+# opt: update the pre-built application in the repository
+cp target/riscv32imac-unknown-none-elf/release/esp-sensor firmware.bin
 ```
 

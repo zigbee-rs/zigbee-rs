@@ -1,0 +1,45 @@
+[workspace]
+
+[package]
+name = "esp-sensor"
+version = "0.1.0"
+authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
+edition = "2021"
+
+[[bin]]
+name = "esp-sensor"
+harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true    # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[dependencies]
+esp-hal = { version = "=1.0.0-rc.0", features = [
+    "esp32c6", 
+    "log-04",  # Enable logging output using version 0.4 of the log crate.
+    "unstable" # add unstable Interrupt support
+] }
+# esp32c6-hal = "0.8.1"
+esp-backtrace = { version = "0.17.0", features = [
+    "esp32c6",
+    "exception-handler",
+    "panic-handler",
+    "println",
+] }
+esp-println = { version = "0.15.0", features = ["esp32c6", "log-04"] }
+embedded-storage = "0.3.1"
+esp-storage = { version = "0.7.0", features = ["esp32c6"] }
+# use PAC for Timer interrupts
+esp32c6 = { version = "0.21.0", features = ["rt"] }
+riscv-rt = "0.15.0"
+
+
+critical-section = "1.2.0"
+# esp-storage = "0.7.0"
+log = { version = "0.4.21" }
+zigbee = { path = "../../zigbee" }
+zigbee-base-device-behavior = { path = "../../zigbee-base-device-behavior" }
