@@ -1,6 +1,7 @@
 pub type NwkAddress = u16;
 
 use core::fmt;
+use core::ops::Deref;
 
 use byte::ctx;
 use byte::BytesExt;
@@ -15,6 +16,14 @@ use crate::internal::macros::impl_byte;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteArray<const N: usize>(pub [u8; N]);
 
+impl<const N: usize> Deref for ByteArray<N> {
+    type Target = [u8; N];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl<'a, const N: usize, C: Default> TryRead<'a, C> for ByteArray<N> {
     fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
         let offset = &mut 0;
@@ -28,7 +37,7 @@ impl<'a, const N: usize, C: Default> TryRead<'a, C> for ByteArray<N> {
 impl<const N: usize, C: Default> TryWrite<C> for ByteArray<N> {
     fn try_write(self, bytes: &mut [u8], _: C) -> Result<usize, byte::Error> {
         let offset = &mut 0;
-        bytes.write_with(&mut 0, &self.0[..], ())?;
+        bytes.write_with(offset, &self.0[..], ())?;
         Ok(*offset)
     }
 }

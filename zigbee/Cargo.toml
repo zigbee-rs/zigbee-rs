@@ -23,4 +23,5 @@ embedded-storage.workspace = true
 spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
+lazy_static = "1.5.0"
 

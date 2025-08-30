@@ -44,12 +44,11 @@ impl core::fmt::Debug for SecurityControl {
 impl SecurityControl {
     /// Indicates how a frame is secured.
     pub fn security_level(&self) -> SecurityLevel {
-        // SAFETY: any 3 bit permutation is a valid SecurityLevel
-        unsafe { mem::transmute(self.0 & mask::SECURITY_LEVEL) }
+        SecurityLevel::from_bits(self.0 & mask::SECURITY_LEVEL)
     }
 
     pub fn set_security_level(&mut self, level: SecurityLevel) {
-        self.0 = (self.0 & !mask::SECURITY_LEVEL) | ((level as u8) << offset::SECURITY_LEVEL);
+        self.0 = (self.0 & !mask::SECURITY_LEVEL) | ((level.into_bits()) << offset::SECURITY_LEVEL);
     }
 
     /// Identifies the key in use.
@@ -89,22 +88,25 @@ mod offset {
     pub const EXTENDED_NONCE: u8 = 5;
 }
 
-/// Security Level
-///
-/// See Section 4.5.1.1.1.
-#[repr(u8)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(missing_docs)]
-pub enum SecurityLevel {
-    #[default]
-    None = 0b000,
-    Mic32 = 0b001,
-    Mic64 = 0b010,
-    Mic128 = 0b011,
-    Enc = 0b100,
-    EncMic32 = 0b101,
-    EncMic64 = 0b110,
-    EncMic128 = 0b111,
+impl_byte! {
+    #[tag(u8)]
+    /// Security Level
+    ///
+    /// See Section 4.5.1.1.1.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[allow(missing_docs)]
+    pub enum SecurityLevel {
+        None = 0b000,
+        Mic32 = 0b001,
+        Mic64 = 0b010,
+        Mic128 = 0b011,
+        Enc = 0b100,
+        EncMic32 = 0b101,
+        EncMic64 = 0b110,
+        EncMic128 = 0b111,
+        #[fallback = true]
+        Reserved(u8)
+    }
 }
 
 impl SecurityLevel {
@@ -113,7 +115,35 @@ impl SecurityLevel {
             Self::EncMic32 | Self::Mic32 => 4,
             Self::EncMic64 | Self::Mic64 => 8,
             Self::EncMic128 | Self::Mic128 => 16,
-            Self::None | Self::Enc => 0,
+            Self::Reserved(_) | Self::None | Self::Enc => 0,
+        }
+    }
+
+    pub fn from_bits(bits: u8) -> Self {
+        match bits {
+            0b000 => Self::None,
+            0b001 => Self::Mic32,
+            0b010 => Self::Mic64,
+            0b011 => Self::Mic128,
+            0b100 => Self::Enc,
+            0b101 => Self::EncMic32,
+            0b110 => Self::EncMic64,
+            0b111 => Self::EncMic128,
+            _ => Self::Reserved(bits),
+        }
+    }
+
+    pub fn into_bits(&self) -> u8 {
+        match self {
+            Self::None => 0b000,
+            Self::Mic32 => 0b001,
+            Self::Mic64 => 0b010,
+            Self::Mic128 => 0b011,
+            Self::Enc => 0b100,
+            Self::EncMic32 => 0b101,
+            Self::EncMic64 => 0b110,
+            Self::EncMic128 => 0b111,
+            Self::Reserved(bits) => 0,
         }
     }
 }

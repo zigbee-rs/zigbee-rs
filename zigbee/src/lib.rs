@@ -38,7 +38,8 @@
     unused_macros,
     clippy::doc_markdown,
     clippy::cast_lossless,
-    private_interfaces
+    private_interfaces,
+    clippy::cognitive_complexity
 )]
 #![feature(macro_metavar_expr_concat)]
 

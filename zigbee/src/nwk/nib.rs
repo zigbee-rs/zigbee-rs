@@ -2,6 +2,8 @@
 //!
 //! See Section 3.5.
 use core::mem;
+use core::ops::Deref;
+use core::ops::DerefMut;
 
 use byte::BytesExt;
 use byte::TryRead;
@@ -10,12 +12,30 @@ use embedded_storage::ReadStorage;
 use embedded_storage::Storage;
 use heapless::FnvIndexMap;
 use heapless::Vec;
+use lazy_static::lazy_static;
 use spin::Mutex;
 
 use crate::impl_byte;
+use crate::internal::storage::InMemoryStorage;
+use crate::internal::types::ByteArray;
 use crate::internal::types::IeeeAddress;
 use crate::internal::types::ShortAddress;
 use crate::security::frame::SecurityLevel;
+
+pub type NibStorage = InMemoryStorage<NIB_BUFFER_SIZE>;
+
+lazy_static! {
+    static ref NIB: Nib<InMemoryStorage<NIB_BUFFER_SIZE>> = {
+        let nib = Nib::new(InMemoryStorage::<NIB_BUFFER_SIZE>::default());
+        nib.init();
+        nib
+    };
+}
+
+/// Returns a reference to the NIB.
+pub fn nib() -> &'static Nib<InMemoryStorage<NIB_BUFFER_SIZE>> {
+    &NIB
+}
 
 impl_byte! {
     #[tag(u8)]
@@ -60,6 +80,7 @@ const MAX_GROUP_ID_TABLE: usize = 4;
 const MAX_ROUTE_RECORD_TABLE: usize = 8;
 const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
+const MAX_SECURITY_KEYS: usize = 1;
 
 macro_rules! construct_nib {
     (
@@ -212,10 +233,14 @@ construct_nib! {
     is_concentrator: bool = false,
     concentrator_radius: u8 = 0x00,
     concentrator_discovery_time: u8 = 0x00,
-    security_level: u8,
-    security_material_set: u8,
-    active_key_seq_number: u8,
-    all_fresh: u8,
+    // nib security attributes
+    security_level: SecurityLevel = SecurityLevel::EncMic32,
+    security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
+    active_key_seq_number: u8 = 0x00,
+    #[ctx = ()]
+    #[ctx_write = ()]
+    all_fresh: bool = true,
+
     link_status_period: u8 = 0x0f,
     router_age_limit: u8 = 0x03,
     #[ctx = ()]
@@ -240,7 +265,7 @@ construct_nib! {
 }
 
 impl_byte! {
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, PartialEq, Eq)]
     pub struct CapabilityInformation(u8);
 }
 
@@ -358,8 +383,49 @@ impl_byte! {
 #[derive(Debug)]
 pub(crate) struct MacInterface {}
 
+impl_byte! {
+    /// See Table 4-3.
+    #[derive(Debug)]
+    pub struct NetworkSecurityMaterialDescriptor {
+        pub key_seq_number: u8,
+        pub outgoing_frame_counter: u32,
+        pub incoming_frame_counter_set: StorageVec<IncomingFrameCounterDescriptor, MAX_NEIGBOUR_TABLE>,
+        pub key: ByteArray<16>,
+        pub network_key_type: u8,
+    }
+}
+
+impl_byte! {
+    /// See Table 4-4.
+    #[derive(Debug)]
+    pub struct IncomingFrameCounterDescriptor {
+        pub sender_address: IeeeAddress,
+        pub incoming_frame_counter: u32,
+    }
+}
+
 #[derive(Debug)]
 pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
+
+impl<const N: usize, T> StorageVec<T, N> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<const N: usize, T> Deref for StorageVec<T, N> {
+    type Target = Vec<T, N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const N: usize, T> DerefMut for StorageVec<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl<'a, const N: usize, C, T> TryRead<'a, C> for StorageVec<T, N>
 where
@@ -389,9 +455,9 @@ where
     fn try_write(self, bytes: &mut [u8], ctx: C) -> Result<usize, byte::Error> {
         let offset = &mut 0;
         // first 2 bytes is the length
-        bytes.write_with(&mut 0, self.0.len() as u16, byte::LE)?;
+        bytes.write_with(offset, self.0.len() as u16, byte::LE)?;
         for entry in self.0 {
-            bytes.write_with(&mut 0, entry, ctx)?;
+            bytes.write_with(offset, entry, ctx)?;
         }
         Ok(*offset)
     }
@@ -403,11 +469,70 @@ mod tests {
     use crate::internal::storage::InMemoryStorage;
 
     #[test]
-    fn nib_init() {
+    fn nib_set_vec() {
         let nib = Nib::new(InMemoryStorage::<NIB_BUFFER_SIZE>::default());
         nib.init();
 
-        nib.set_max_broadcast_retries(0x03);
+        let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, 1>::new();
+        set.push(NetworkSecurityMaterialDescriptor {
+            key_seq_number: 0,
+            outgoing_frame_counter: 0,
+            incoming_frame_counter_set: StorageVec(Vec::new()),
+            key: ByteArray([0u8; 16]),
+            network_key_type: 0,
+        })
+        .unwrap();
+        nib.set_security_material_set(set);
+        assert_eq!(nib.security_material_set().len(), 1);
+    }
+
+    #[test]
+    fn nib_default() {
+        let nib = nib();
+
+        assert_eq!(nib.max_broadcast_retries(), 0x03);
+        assert_eq!(nib.report_constant_cost(), 0x00);
+        assert!(!nib.sym_link());
+        assert_eq!(nib.capability_information(), CapabilityInformation(0x00));
+        assert_eq!(nib.addr_alloc(), 0x0);
+        assert!(nib.use_tree_routing());
+        assert_eq!(nib.manager_addr(), 0x0000);
+        assert_eq!(nib.max_source_route(), 0x0c);
+        assert_eq!(nib.update_id(), 0x00);
         assert_eq!(nib.transaction_persistence_time(), 0x01f4);
+        assert_eq!(nib.network_address(), 0xffff);
+        assert_eq!(nib.extended_panid(), 0x0000_0000_0000_0000);
+        assert!(nib.use_multicast());
+        assert!(!nib.is_concentrator());
+        assert_eq!(nib.concentrator_radius(), 0x00);
+        assert_eq!(nib.concentrator_discovery_time(), 0x00);
+        assert_eq!(nib.link_status_period(), 0x0f);
+        assert_eq!(nib.router_age_limit(), 0x03);
+        assert!(nib.unique_addr());
+        assert!(!nib.time_stamp());
+        assert_eq!(nib.panid(), 0xffff);
+        assert_eq!(nib.tx_total(), 0x0000);
+        assert!(nib.leave_request_allowed());
+        assert_eq!(nib.parent_information(), 0x00);
+        assert_eq!(nib.end_device_timeout_default(), 0x08);
+        assert!(nib.leave_request_without_rejoin_allowed());
+    }
+
+    #[test]
+    fn storage_vec() {
+        let mut vec = StorageVec::<u8, 3>::new();
+        vec.push(1).unwrap();
+        vec.push(2).unwrap();
+        vec.push(3).unwrap();
+
+        let mut buf = [0u8; 5];
+        vec.try_write(&mut buf, byte::LE).unwrap();
+        assert_eq!(buf, [0x03, 0x00, 0x01, 0x02, 0x03]);
+
+        let (vec2, _) = StorageVec::<u8, 3>::try_read(&buf, byte::LE).unwrap();
+        assert_eq!(vec2.len(), 3);
+        assert_eq!(vec2[0], 1);
+        assert_eq!(vec2[1], 2);
+        assert_eq!(vec2[2], 3);
     }
 }
