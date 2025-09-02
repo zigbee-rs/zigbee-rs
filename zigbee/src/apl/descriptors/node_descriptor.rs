@@ -75,12 +75,12 @@ impl NodeDescriptor<'_> {
     }
 }
 
-// 2.3.2.3.1 Logical Type Field
-// The logical type field of the node descriptor is three bits in length and
-// specifies the device type of the ZigBee node.
 impl_byte! {
     #[tag(u8)]
-    #[derive(Debug, PartialEq, Eq)]
+    // 2.3.2.3.1 Logical Type Field
+    // The logical type field of the node descriptor is three bits in length and
+    // specifies the device type of the ZigBee node.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum LogicalType {
         Coordinator = 0b000,
         Router = 0b001,

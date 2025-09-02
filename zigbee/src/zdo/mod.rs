@@ -1,7 +1,7 @@
 use config::Config;
 
 pub mod config;
-use crate::aps::apsme::Apsme;
+use crate::{apl::descriptors::node_descriptor::LogicalType, aps::apsme::Apsme};
 
 /// provides an interface between the appication object, the device profile and
 /// the APS
@@ -15,9 +15,9 @@ pub struct ZigBeeNetwork {}
 
 impl ZigbeeDevice {
     /// creates a new instance
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
-            config: Config::default(),
+            config,
             apsme: Apsme::new(),
         }
     }
@@ -30,8 +30,12 @@ impl ZigbeeDevice {
         false // TODO: check connection state
     }
 
+    pub fn logical_type(&self) -> LogicalType {
+        self.config.device_type
+    }
+
     /// scans for nearby reachable networks by sending a beacon request
-    pub fn scan_for_available_networks(&self) {
+    pub fn scan_for_available_networks(&mut self) {
         self.apsme.start_network_discovery();
         // TODO: send beacon requests to actively scan for networks
         // TODO: Beacon response (signal strenght - RSSI, network PAN ID, permit
@@ -82,6 +86,6 @@ impl ZigbeeDevice {
 
 impl Default for ZigbeeDevice {
     fn default() -> Self {
-        Self::new()
+        Self::new(Config::default())
     }
 }

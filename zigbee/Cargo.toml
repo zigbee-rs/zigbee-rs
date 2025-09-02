@@ -14,6 +14,7 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
+mock = ["dep:mockall"]
 
 [dependencies]
 byte.workspace = true
@@ -24,4 +25,5 @@ spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 lazy_static = "1.5.0"
+mockall = { workspace = true, optional = true }
 

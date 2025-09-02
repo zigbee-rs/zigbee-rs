@@ -70,6 +70,7 @@ macro_rules! impl_byte {
             }
         }
 
+        #[allow(single_use_lifetimes)]
         impl<'a, C: ::core::default::Default> ::byte::TryWrite<C> for $name $(<$lifetime>)? {
             fn try_write(self, bytes: &mut [u8], _cx: C) -> ::byte::Result<usize> {
                 use ::byte::BytesExt;

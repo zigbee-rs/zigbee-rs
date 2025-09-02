@@ -83,14 +83,14 @@ impl Apsme {
             binding_table: ApsBindingTable::new(),
             joined_network: None,
             aib: ApsInformationBase::new(),
-            nwk: Nlme::new(),
+            nwk: Nlme {},
         }
     }
     fn is_joined(&self) -> bool {
         self.joined_network.is_some()
     }
 
-    pub(crate) fn start_network_discovery(&self) {
+    pub(crate) fn start_network_discovery(&mut self) {
         let request = NlmeNetworkDiscoveryRequest {
             scan_channels_list_structure: [0, 0, 0, 0, 0, 0, 0, 0],
             scan_duration: 10u8,
