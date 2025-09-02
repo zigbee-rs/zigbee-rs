@@ -1,9 +1,11 @@
 use crate::internal::macros::impl_byte;
 
-/// Leave Command Frame
-#[derive(Debug)]
-pub struct Leave {
-    pub command_options: CommandOptions,
+impl_byte! {
+    /// Leave Command Frame
+    #[derive(Debug, Clone)]
+    pub struct Leave {
+        pub command_options: CommandOptions,
+    }
 }
 
 impl_byte! {

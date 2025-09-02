@@ -1,9 +1,13 @@
 use crate::internal::macros::impl_byte;
 use crate::internal::types::ShortAddress;
 
-pub struct NetworkStatus {
-    pub status_code: NetworkStatusCode,
-    pub destination_address: ShortAddress,
+impl_byte! {
+    /// Network Status Command Frame
+    #[derive(Debug, Clone)]
+    pub struct NetworkStatus {
+        pub status_code: NetworkStatusCode,
+        pub destination_address: ShortAddress,
+    }
 }
 
 impl_byte! {

@@ -25,7 +25,7 @@ macro_rules! impl_byte {
     (
         #[tag($tag_type:ty)]
         $(#[$m:meta])*
-        $v:vis enum $name:ident {
+        $v:vis enum $name:ident $(<$lifetime:lifetime>)? {
             $(
                 $(#[doc = $doc:literal])*
                 $(#[fallback = $fallback:literal])?
@@ -37,15 +37,15 @@ macro_rules! impl_byte {
     ) => {
         #[repr($tag_type)]
         $(#[$m])*
-        $v enum $name {
+        $v enum $name $(<$lifetime>)? {
             $(
                 $(#[doc = $doc])*
                 $variant $(($field_ty))? $(= $value)?
             ),+
         }
 
-        impl<C: ::core::default::Default> ::byte::TryRead<'_, C> for $name {
-            fn try_read(bytes: &'_ [u8], _cx: C) -> ::byte::Result<(Self, usize)> {
+        impl<'a, C: ::core::default::Default> ::byte::TryRead<'a, C> for $name $(<$lifetime>)? {
+            fn try_read(bytes: &'a [u8], _cx: C) -> ::byte::Result<(Self, usize)> {
                 use ::byte::BytesExt;
                 let offset = &mut 0;
                 let id: $tag_type = bytes.read(offset)?;
@@ -70,7 +70,7 @@ macro_rules! impl_byte {
             }
         }
 
-        impl<C: ::core::default::Default> ::byte::TryWrite<C> for $name {
+        impl<'a, C: ::core::default::Default> ::byte::TryWrite<C> for $name $(<$lifetime>)? {
             fn try_write(self, bytes: &mut [u8], _cx: C) -> ::byte::Result<usize> {
                 use ::byte::BytesExt;
                 let offset = &mut 0;

@@ -1,3 +1,9 @@
-pub struct EndDeviceTimeoutResponse {
-    pub timeout: u8,
+use crate::internal::macros::impl_byte;
+
+impl_byte! {
+    /// End Device Timeout Response Command Frame
+    #[derive(Debug, Clone)]
+    pub struct EndDeviceTimeoutResponse {
+        pub timeout: u8,
+    }
 }
