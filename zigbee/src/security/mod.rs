@@ -43,14 +43,9 @@ use crate::security::primitives::HmacAes128Mmo;
 pub mod frame;
 pub mod primitives;
 
-// Default ZigbeeAlliance09 key
-// centralized security global trust center link key
+/// Default ZigbeeAlliance09 centralized security global trust center link key
 const TRUST_CENTER_LINK_KEY: [u8; 16] = [
     0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
-];
-
-const NETWORK_KEY: [u8; 16] = [
-    0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 // AES-128 CCM with MIC32
@@ -116,7 +111,6 @@ impl<'a> SecurityContext<'a> {
         frame_buffer: &mut [u8],
     ) -> Result<usize, SecurityError> {
         let sec_level = self.nib.security_level();
-        assert_eq!(sec_level, SecurityLevel::EncMic32);
         let mic_len = sec_level.mic_length();
 
         let key_sequence_number = self.nib.active_key_seq_number();
@@ -141,7 +135,6 @@ impl<'a> SecurityContext<'a> {
             source_address: Some(local_addr),
         };
 
-        assert_eq!(key.0, NETWORK_KEY);
         match nwk_frame {
             NwkFrame::Data(data_frame) => Self::write_and_encrypt_in_place(
                 frame_buffer,
@@ -469,6 +462,11 @@ mod tests {
     use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
     use crate::nwk::nib::StorageVec;
     use crate::nwk::nib::NIB_BUFFER_SIZE;
+
+    const NETWORK_KEY: [u8; 16] = [
+        0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
 
     fn setup_nib() -> Nib<NibStorage> {
         let nib = Nib::new(InMemoryStorage::<NIB_BUFFER_SIZE>::default());

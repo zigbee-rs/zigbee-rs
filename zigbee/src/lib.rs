@@ -39,7 +39,9 @@
     clippy::doc_markdown,
     clippy::cast_lossless,
     private_interfaces,
-    clippy::cognitive_complexity
+    clippy::cognitive_complexity,
+    clippy::new_without_default,
+    clippy::non_std_lazy_statics
 )]
 #![feature(macro_metavar_expr_concat)]
 

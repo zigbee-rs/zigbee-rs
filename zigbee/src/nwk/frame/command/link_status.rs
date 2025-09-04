@@ -27,6 +27,7 @@ impl CommandOptions {
     }
 
     /// Sets the Entry count
+    #[must_use]
     pub fn set_entry_count(mut self, value: u8) -> Self {
         self.0 = (self.0 & !mask::ENTRY_COUNT) | (value << offset::ENTRY_COUNT);
         self
@@ -38,6 +39,7 @@ impl CommandOptions {
     }
 
     /// Sets the First frame
+    #[must_use]
     pub fn set_first_frame(mut self, value: bool) -> Self {
         self.0 = (self.0 & !mask::FIRST_FRAME) | (u8::from(value) << offset::FIRST_FRAME);
         self
@@ -49,6 +51,7 @@ impl CommandOptions {
     }
 
     /// Sets the Last frame
+    #[must_use]
     pub fn set_last_frame(mut self, value: bool) -> Self {
         self.0 = (self.0 & !mask::LAST_FRAME) | (u8::from(value) << offset::LAST_FRAME);
         self
