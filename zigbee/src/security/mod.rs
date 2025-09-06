@@ -24,6 +24,9 @@ use frame::SecurityControl;
 use frame::SecurityLevel;
 use thiserror::Error;
 
+use crate::aps::aib;
+use crate::aps::aib::Aib;
+use crate::aps::aib::AibStorage;
 use crate::aps::apdu::frame::command::Command as ApsCommand;
 use crate::aps::apdu::frame::command::TransportKey;
 use crate::aps::apdu::frame::frame_control::FrameType as ApsFrameType;
@@ -33,7 +36,7 @@ use crate::internal::types::ByteArrayRef;
 use crate::internal::types::IeeeAddress;
 use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::frame::Frame as NwkFrame;
-use crate::nwk::nib::nib;
+use crate::nwk::nib;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
 use crate::security::frame::KeyIdentifier;
@@ -93,15 +96,19 @@ impl From<SecurityError> for byte::Error {
 
 pub struct SecurityContext<'a> {
     nib: &'a Nib<NibStorage>,
+    aib: &'a Aib<AibStorage>,
 }
 
 impl<'a> SecurityContext<'a> {
-    pub fn new(nib: &'a Nib<NibStorage>) -> Self {
-        Self { nib }
+    pub fn new(nib: &'a Nib<NibStorage>, aib: &'a Aib<AibStorage>) -> Self {
+        Self { nib, aib }
     }
 
     pub fn no_security() -> Self {
-        Self { nib: nib() }
+        Self {
+            nib: nib::get_ref(),
+            aib: aib::get_ref(),
+        }
     }
 
     // section 4.3.1.1
@@ -457,11 +464,9 @@ mod tests {
     use heapless::Vec;
 
     use super::*;
-    use crate::internal::storage::InMemoryStorage;
     use crate::internal::types::ByteArray;
+    use crate::internal::types::StorageVec;
     use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
-    use crate::nwk::nib::StorageVec;
-    use crate::nwk::nib::NIB_BUFFER_SIZE;
 
     const NETWORK_KEY: [u8; 16] = [
         0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -469,7 +474,7 @@ mod tests {
     ];
 
     fn setup_nib() -> Nib<NibStorage> {
-        let nib = Nib::new(InMemoryStorage::<NIB_BUFFER_SIZE>::default());
+        let nib = Nib::new(NibStorage::default());
         nib.init();
 
         let mut set = Vec::new();
@@ -488,6 +493,12 @@ mod tests {
         assert_eq!(nib.security_material_set()[0].key, ByteArray(NETWORK_KEY));
 
         nib
+    }
+
+    fn setup_aib() -> Aib<AibStorage> {
+        let aib = Aib::new(AibStorage::default());
+        aib.init();
+        aib
     }
 
     #[test]
@@ -511,6 +522,7 @@ mod tests {
     #[test]
     fn decrypt_aps_frame_data() {
         let nib = setup_nib();
+        let aib = setup_aib();
 
         let frame_buffer = &mut [
             0x21, 0x66, // aps header
@@ -520,7 +532,7 @@ mod tests {
             0xa4, 0xd7, 0xf4, 0xd7, //mic
         ];
 
-        let security_context = SecurityContext::new(&nib);
+        let security_context = SecurityContext::new(&nib, &aib);
 
         security_context
             .decrypt_aps_frame_in_place(frame_buffer)
@@ -530,6 +542,7 @@ mod tests {
     #[test]
     fn decrypt_aps_frame_key_transport() {
         let nib = setup_nib();
+        let aib = setup_aib();
 
         let frame_buffer = &mut [
             0x21, 0x95, // aps hdr
@@ -540,7 +553,7 @@ mod tests {
             0x47, 0x60, 0xf2, 0x5d, // mic
         ];
 
-        let security_context = SecurityContext::new(&nib);
+        let security_context = SecurityContext::new(&nib, &aib);
 
         security_context
             .decrypt_aps_frame_in_place(frame_buffer)
@@ -550,6 +563,7 @@ mod tests {
     #[test]
     fn decrypt_aps_frame_key_load() {
         let nib = setup_nib();
+        let aib = setup_aib();
 
         let frame_buffer = &mut [
             0x21, 0x97, // aps hdr
@@ -560,7 +574,7 @@ mod tests {
             0xb7, 0xc9, 0x4, 0x3e, // mic
         ];
 
-        let security_context = SecurityContext::new(&nib);
+        let security_context = SecurityContext::new(&nib, &aib);
 
         security_context
             .decrypt_aps_frame_in_place(frame_buffer)
@@ -581,7 +595,9 @@ mod tests {
     #[test]
     fn decrypt_nwk_frame() {
         let nib = setup_nib();
-        let security_context = SecurityContext::new(&nib);
+        let aib = setup_aib();
+
+        let security_context = SecurityContext::new(&nib, &aib);
         let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
 
         let frame = security_context
@@ -594,7 +610,8 @@ mod tests {
     #[test]
     fn encrypt_nwk_frame() {
         let nib = setup_nib();
-        let security_context = SecurityContext::new(&nib);
+        let aib = setup_aib();
+        let security_context = SecurityContext::new(&nib, &aib);
         let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
         let frame = security_context
             .decrypt_nwk_frame_in_place(&mut frame_buffer)

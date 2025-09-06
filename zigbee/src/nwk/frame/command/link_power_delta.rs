@@ -31,7 +31,7 @@ impl_byte! {
 impl_byte! {
     /// Delta Entry
     #[derive(Debug, Clone)]
-    #[repr(packed)]
+    #[repr(packed, Rust)]
     pub struct DeltaEntry {
         pub device_address: ShortAddress,
         pub delta: u8,

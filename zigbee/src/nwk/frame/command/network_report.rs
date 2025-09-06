@@ -17,7 +17,7 @@ impl_byte! {
 impl_byte! {
     /// Device List Entry
     #[derive(Debug, Clone)]
-    #[repr(packed)]
+    #[repr(packed, Rust)]
     pub struct DeviceListEntry {
         pub device_address: u16,
         pub device_type: u8,

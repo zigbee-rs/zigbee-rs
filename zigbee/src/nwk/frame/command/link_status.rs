@@ -73,7 +73,7 @@ mod mask {
 impl_byte! {
     /// Neighbor Table Entry
     #[derive(Debug, Clone)]
-    #[repr(packed)]
+    #[repr(packed, Rust)]
     pub struct LinkStatusEntry {
         pub neighbor_address: ShortAddress,
         pub link_status: u8,

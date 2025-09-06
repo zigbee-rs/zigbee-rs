@@ -4,6 +4,7 @@ use core::fmt;
 use core::mem::size_of_val;
 use core::mem::{self};
 use core::ops::Deref;
+use core::ops::DerefMut;
 use core::slice;
 
 use byte::ctx;
@@ -109,6 +110,65 @@ impl<'a, T> TryRead<'a, TypeArrayCtx> for TypeArrayRef<'a, T> {
         // SAFETY: T needs to be packed
         let data: &[T] = unsafe { slice::from_raw_parts(data.as_ptr().cast::<T>(), ctx) };
         Ok((Self(data), *offset))
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
+
+impl<const N: usize, T> StorageVec<T, N> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<const N: usize, T> Deref for StorageVec<T, N> {
+    type Target = Vec<T, N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const N: usize, T> DerefMut for StorageVec<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a, const N: usize, C, T> TryRead<'a, C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryRead<'a, C>,
+{
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length, should be enough
+        let len: u16 = bytes.read_with(offset, byte::LE)?;
+
+        let mut data: Vec<T, N> = Vec::new();
+        for _i in 0..len {
+            let entry: T = bytes.read_with(offset, ctx)?;
+            let _ = data.push(entry);
+        }
+        Ok((Self(data), *offset))
+    }
+}
+
+impl<const N: usize, C, T> TryWrite<C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryWrite<C>,
+{
+    #[allow(clippy::cast_possible_truncation)]
+    fn try_write(self, bytes: &mut [u8], ctx: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length
+        bytes.write_with(offset, self.0.len() as u16, byte::LE)?;
+        for entry in self.0 {
+            bytes.write_with(offset, entry, ctx)?;
+        }
+        Ok(*offset)
     }
 }
 

@@ -41,7 +41,8 @@
     private_interfaces,
     clippy::cognitive_complexity,
     clippy::new_without_default,
-    clippy::non_std_lazy_statics
+    clippy::non_std_lazy_statics,
+    static_mut_refs
 )]
 #![feature(macro_metavar_expr_concat)]
 

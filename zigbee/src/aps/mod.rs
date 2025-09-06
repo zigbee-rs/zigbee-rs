@@ -12,7 +12,7 @@ pub(crate) mod types;
 /// more application entities located on the same network.
 pub mod apsde;
 
-mod aib;
+pub mod aib;
 pub mod apdu;
 /// The APS management entity provides a variety of services to application
 /// objects including security services and binding of devices.

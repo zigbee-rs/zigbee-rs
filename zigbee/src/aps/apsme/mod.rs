@@ -28,8 +28,6 @@ use basemgt::ApsmeUnbindConfirm;
 use basemgt::ApsmeUnbindRequest;
 use basemgt::ApsmeUnbindRequestStatus;
 
-use super::aib::AIBAttribute;
-use super::aib::ApsInformationBase;
 use super::binding::ApsBindingTable;
 use super::types::Address;
 use crate::nwk::nlme::management::NlmeJoinRequest;
@@ -53,10 +51,6 @@ pub trait ApsmeSap {
     /// 2.2.4.3.3 - request to unbind two devices, or to unbind a device from a
     /// group
     fn unbind_request(&mut self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm;
-    /// 2.2.4.4.1 - APSME-GET.request
-    fn get(&self, attribute: u8) -> ApsmeGetConfirm;
-    /// 2.2.4.4.3 - APSME-SET.request
-    fn set(&mut self, attribute: AIBAttribute) -> ApsmeSetConfirm;
     /// 2.2.4.5.1 - APSME-ADD-GROUP.request
     fn add_group(&self, request: ApsmeAddGroupRequest) -> ApsmeAddGroupConfirm;
     /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
@@ -72,7 +66,6 @@ pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
-    pub(crate) aib: ApsInformationBase,
     pub(crate) nwk: Nlme,
 }
 
@@ -82,7 +75,6 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
-            aib: ApsInformationBase::new(),
             nwk: Nlme {},
         }
     }
@@ -186,37 +178,6 @@ impl ApsmeSap for Apsme {
             dst_addr_mode: request.dst_addr_mode,
             dst_address: request.dst_address,
             dst_endpoint: request.dst_endpoint,
-        }
-    }
-
-    // 2.2.4.4.1 APSME-GET.request
-    fn get(&self, identifier: u8) -> ApsmeGetConfirm {
-        let attr = self.aib.get_attribute(identifier);
-        attr.map_or(
-            ApsmeGetConfirm {
-                status: ApsmeGetConfirmStatus::UnsupportedAttribute,
-                attribute: identifier,
-                attribute_length: 0,
-                attribute_value: None,
-            },
-            |attr| ApsmeGetConfirm {
-                status: ApsmeGetConfirmStatus::Success,
-                attribute: attr.id(),
-                attribute_length: attr.length(),
-                attribute_value: Some(attr.value()),
-            },
-        )
-    }
-
-    // 2.2.4.4.3 APSME-SET.request
-    fn set(&mut self, attribute: AIBAttribute) -> ApsmeSetConfirm {
-        let id = attribute.id();
-        match self.aib.write_attribute_value(id, attribute) {
-            Ok(_) => ApsmeSetConfirm {
-                status: basemgt::ApsmeSetConfirmStatus::Success,
-                identifier: id,
-            },
-            Err(_) => todo!(),
         }
     }
 
