@@ -1,0 +1,59 @@
+name: Examples
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_TERM_VERBOSE: 'true'
+  RUSTDOCFLAGS: -Cpanic=abort
+
+permissions:
+  contents: write
+  pull-requests: write 
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          # - stable
+          # - beta
+          - nightly
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }} 
+          override: true
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-dependencies
+        with:
+          path: |
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build esp-sensor
+        working-directory: ./examples/esp-sensor
+        env:
+          CARGO_INCREMENTAL: 0
+        run: cargo build
+
