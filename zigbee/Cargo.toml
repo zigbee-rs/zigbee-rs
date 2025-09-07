@@ -20,10 +20,11 @@ mock = ["dep:mockall"]
 byte.workspace = true
 ccm.workspace = true
 aes.workspace = true
+aead.workspace = true
+itertools.workspace = true
 embedded-storage.workspace = true
 spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
-lazy_static = "1.5.0"
 mockall = { workspace = true, optional = true }
 

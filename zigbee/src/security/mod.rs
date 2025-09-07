@@ -5,6 +5,8 @@
 use core::convert::TryInto;
 use core::slice;
 
+use aead::generic_array::GenericArray;
+use aead::AeadMutInPlace;
 use aes::cipher::generic_array::GenericArray as AesGenericArray;
 use aes::cipher::BlockEncrypt;
 use aes::cipher::KeyInit as AesKeyInit;
@@ -12,9 +14,6 @@ use aes::Aes128;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
-use ccm::aead::generic_array::GenericArray;
-use ccm::aead::Aead;
-use ccm::aead::AeadMutInPlace;
 use ccm::consts::U13;
 use ccm::consts::U4;
 use ccm::Ccm;
@@ -118,7 +117,7 @@ impl<'a> SecurityContext<'a> {
         frame_buffer: &mut [u8],
     ) -> Result<usize, SecurityError> {
         let sec_level = self.nib.security_level();
-        let mic_len = sec_level.mic_length();
+        let _mic_len = sec_level.mic_length();
 
         let key_sequence_number = self.nib.active_key_seq_number();
         let sec_material = self.nib.security_material_set();
@@ -250,7 +249,7 @@ impl<'a> SecurityContext<'a> {
         // Step 1: Obtain security material and key identifier
         let (key, key_id) = match &aps_frame {
             // APSDE-DATA frame
-            ApsFrame::Data(data_frame) => {
+            ApsFrame::Data(_data_frame) => {
                 // TODO: get link key associated with destination from AIB
                 // For now, use a default key
                 let key = TRUST_CENTER_LINK_KEY;
@@ -285,7 +284,7 @@ impl<'a> SecurityContext<'a> {
 
         // Step 3: Obtain security level from NIB
         let sec_level = self.nib.security_level();
-        let mic_length = sec_level.mic_length();
+        //let mic_length = sec_level.mic_length();
 
         // Set key identifier
         let mut security_control = SecurityControl::default();
@@ -311,7 +310,7 @@ impl<'a> SecurityContext<'a> {
             key_sequence_number: None, /* this is should be never set because key_id = 0x01
                                         * (NetworkKey) is invalid */
         };
-        let nonce = create_nonce(&aux_hdr)?;
+        let _nonce = create_nonce(&aux_hdr)?;
 
         // Write APS header
         match aps_frame {
@@ -418,7 +417,7 @@ impl<'a> SecurityContext<'a> {
         let tag = GenericArray::from_slice(tag);
 
         // TODO:verify the source address
-        let Some(source_address) = aux_hdr.source_address else {
+        let Some(_source_address) = aux_hdr.source_address else {
             return Err(SecurityError::InvalidData);
         };
 

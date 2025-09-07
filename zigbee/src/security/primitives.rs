@@ -1,16 +1,18 @@
+#![warn(dead_code)]
 use core::cmp::min;
+use core::ops::Deref;
 
 use aes::cipher::generic_array::GenericArray as AesGenericArray;
 use aes::cipher::BlockEncrypt;
 use aes::cipher::KeyInit as AesKeyInit;
 use aes::Aes128;
 use ccm::aead::generic_array::GenericArray;
-use ccm::aead::Aead;
 use ccm::aead::AeadMutInPlace;
 use ccm::consts::U13;
 use ccm::consts::U4;
 use ccm::Ccm;
 use ccm::KeyInit;
+use itertools::Itertools;
 
 use crate::security::SecurityError;
 
@@ -46,7 +48,15 @@ impl Aes128Mmo {
 
     /// Update the hash with a single 128-bit block
     pub fn update(&mut self, data: &[u8]) -> Result<(), SecurityError> {
-        let length = data.len();
+        self.update_impl(data.iter().copied())
+    }
+
+    /// Update the hash with a single 128-bit block
+    fn update_impl(&mut self, data: impl Iterator<Item = u8>) -> Result<(), SecurityError> {
+        let data = data.into_iter();
+        let (_, Some(length)) = data.size_hint() else {
+            unreachable!("invalid unbounded data");
+        };
 
         let (padded_data, pad_len) = if length < Self::PADDING_THRESHOLD {
             // l+1+k = 7n (mod 8n)
@@ -61,13 +71,23 @@ impl Aes128Mmo {
             return Err(SecurityError::InvalidData);
         };
 
-        let data = [data, &padded_data[..pad_len]].concat();
-        for block in data.chunks(Self::BLOCK_SIZE) {
-            let block_len = block.len();
+        let pad = &padded_data[..pad_len];
+        let mut iter = data.chain(pad.iter().copied());
+        let len = length + pad_len;
+        let mut i = 0;
+        while i < len {
+            let mut block = [0u8; Self::BLOCK_SIZE];
+            for b_i in 0..Self::BLOCK_SIZE {
+                let b = iter.next();
+                if let Some(b) = b {
+                    i += 1;
+                    block[b_i] = b;
+                }
+            }
 
             // E_i = E(H_{i-1}, X_i)
             let cipher = Aes128::new(&AesGenericArray::from(self.state));
-            let mut encrypted_block = *AesGenericArray::from_slice(block);
+            let mut encrypted_block = AesGenericArray::from(block);
             cipher.encrypt_block(&mut encrypted_block);
 
             // H_i = E_i ⊕ X_i (Matyas-Meyer-Oseas)
@@ -84,8 +104,14 @@ impl Aes128Mmo {
     }
 
     pub fn digest(data: &[u8]) -> Result<[u8; Self::BLOCK_SIZE], SecurityError> {
+        Self::digest_impl(data.iter().copied())
+    }
+
+    pub fn digest_impl(
+        data: impl Iterator<Item = u8>,
+    ) -> Result<[u8; Self::BLOCK_SIZE], SecurityError> {
         let mut hasher = Self::new();
-        hasher.update(data)?;
+        hasher.update_impl(data)?;
         Ok(hasher.finalize())
     }
 
@@ -131,11 +157,11 @@ impl HmacAes128Mmo {
             opad[i] ^= key[i];
         }
 
-        let data = [&ipad[..], data].concat();
-        let inner_hash = Aes128Mmo::digest(&data)?;
+        let inner = ipad.iter().chain(data.iter());
+        let inner_hash = Aes128Mmo::digest_impl(inner.copied())?;
 
-        let data = [&opad[..], &inner_hash[..]].concat();
-        Aes128Mmo::digest(&data)
+        let outer = opad.iter().chain(inner_hash.iter());
+        Aes128Mmo::digest_impl(outer.copied())
     }
 }
 

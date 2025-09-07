@@ -23,14 +23,16 @@ macro_rules! construct_ib {
                 if IB.is_some() {
                     panic!(concat!(stringify!($ib_name), " already initialized"));
                 }
-                IB = Some($ib_name::new(storage));
+                let ib = $ib_name::new(storage);
+                ib.init();
+                IB = Some(ib);
             }
         }
 
         /// Returns a reference to the NIB.
         pub fn get_ref() -> &'static $ib_name<${ concat($ib_name, Storage) }> {
             // SAFETY: NIB is mutated only in init once
-            unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " already initialized")) }
+            unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " not initialized")) }
         }
 
         #[repr(usize)]

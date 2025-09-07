@@ -34,7 +34,6 @@
     clippy::struct_excessive_bools,
     dead_code,
     unused_imports,
-    unused_variables,
     unused_macros,
     clippy::doc_markdown,
     clippy::cast_lossless,
@@ -42,7 +41,8 @@
     clippy::cognitive_complexity,
     clippy::new_without_default,
     clippy::non_std_lazy_statics,
-    static_mut_refs
+    static_mut_refs,
+    clippy::needless_range_loop
 )]
 #![feature(macro_metavar_expr_concat)]
 

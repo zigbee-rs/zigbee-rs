@@ -143,7 +143,7 @@ impl SecurityLevel {
             Self::EncMic32 => 0b101,
             Self::EncMic64 => 0b110,
             Self::EncMic128 => 0b111,
-            Self::Reserved(bits) => 0,
+            Self::Reserved(_bits) => 0,
         }
     }
 }

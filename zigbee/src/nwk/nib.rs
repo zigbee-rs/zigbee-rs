@@ -12,7 +12,6 @@ use embedded_storage::ReadStorage;
 use embedded_storage::Storage;
 use heapless::FnvIndexMap;
 use heapless::Vec;
-use lazy_static::lazy_static;
 use spin::Mutex;
 
 use crate::construct_ib;
@@ -307,6 +306,7 @@ mod tests {
 
     #[test]
     fn nib_default() {
+        init(NibStorage::default());
         let nib = get_ref();
 
         assert_eq!(nib.max_broadcast_retries(), 0x03);
