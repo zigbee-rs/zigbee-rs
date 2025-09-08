@@ -23,49 +23,79 @@ macro_rules! impl_byte {
         }
     };
     (
+        #[tag($tag_type:ty)]
         $(#[$m:meta])*
-        $v:vis enum $name:ident {
+        $v:vis enum $name:ident $(<$lifetime:lifetime>)? {
             $(
                 $(#[doc = $doc:literal])*
                 $(#[fallback = $fallback:literal])?
-                $variant:ident $(= $value:expr)?
+                $(#[tag_value = $tag_value:literal])?
+                $variant:ident $(($field_ty:ty))? $(= $value:expr)?
             ),+
             $(,)?
          }
     ) => {
+        #[repr($tag_type)]
         $(#[$m])*
-        $v enum $name {
+        $v enum $name $(<$lifetime>)? {
             $(
                 $(#[doc = $doc])*
-                $variant $(= $value)?
+                $variant $(($field_ty))? $(= $value)?
             ),+
         }
 
-        impl<C: ::core::default::Default> ::byte::TryRead<'_, C> for $name {
-            fn try_read(bytes: &'_ [u8], _: C) -> ::byte::Result<(Self, usize)> {
+        impl<'a, C: ::core::default::Default> ::byte::TryRead<'a, C> for $name $(<$lifetime>)? {
+            fn try_read(bytes: &'a [u8], _cx: C) -> ::byte::Result<(Self, usize)> {
                 use ::byte::BytesExt;
                 let offset = &mut 0;
-                let id: u8 = bytes.read(offset)?;
+                let id: $tag_type = bytes.read(offset)?;
                 let variant = match id {
                     $(
-                        $($value => Self::$variant)?
+                        $($value => Self::$variant,)?
                         $(
-                            _ => {
-                                let _ = $fallback;
-                                Self::$variant
+                            $tag_value => {
+                                let value = bytes.read_with(offset, _cx)?;
+                                Self::$variant(value)
                             },
                         )?
-                    ),+
+                        $(
+                            fallback_value => {
+                                let _ = $fallback;
+                                Self::$variant(fallback_value)
+                            },
+                        )?
+                    )+
                 };
                 Ok((variant, *offset))
             }
         }
 
-        impl<C: ::core::default::Default> ::byte::TryWrite<C> for $name {
-            fn try_write(self, bytes: &mut [u8], _: C) -> ::byte::Result<usize> {
+        #[allow(single_use_lifetimes)]
+        impl<'a, C: ::core::default::Default> ::byte::TryWrite<C> for $name $(<$lifetime>)? {
+            fn try_write(self, bytes: &mut [u8], _cx: C) -> ::byte::Result<usize> {
                 use ::byte::BytesExt;
                 let offset = &mut 0;
-                bytes.write_with(offset, self as u8, ::byte::LE)?;
+                match self {
+                    $(
+                        $(
+                            Self::$variant => {
+                                bytes.write_with(offset, $value as $tag_type, ::byte::LE)?;
+                            },
+                        )?
+                        $(
+                            Self::$variant(value) => {
+                                bytes.write_with(offset, $tag_value as $tag_type, ::byte::LE)?;
+                                bytes.write_with(offset, value, _cx)?;
+                            },
+                        )?
+                        $(
+                            Self::$variant(fallback_value) => {
+                                let _ = $fallback;
+                                bytes.write_with(offset, fallback_value, ::byte::LE)?;
+                            },
+                        )?
+                    )+
+                }
                 Ok(*offset)
             }
         }
@@ -205,13 +235,13 @@ mod tests {
     }
 
     impl_byte! {
+        #[tag(u8)]
         #[derive(Debug,PartialEq, Eq)]
-        #[repr(u8)]
         enum Command {
             Data = 0x01,
             Payload = 0x02,
             #[fallback = true]
-            Reserved,
+            Reserved(u8),
         }
     }
 

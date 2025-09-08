@@ -1,10 +1,176 @@
 pub type NwkAddress = u16;
 
 use core::fmt;
+use core::mem::size_of_val;
+use core::mem::{self};
+use core::ops::Deref;
+use core::ops::DerefMut;
+use core::slice;
 
+use byte::ctx;
+use byte::BytesExt;
+use byte::TryRead;
+use byte::TryWrite;
 use heapless::FnvIndexSet;
+use heapless::Vec;
 
 use crate::internal::macros::impl_byte;
+
+/// A fixed-size byte array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteArray<const N: usize>(pub [u8; N]);
+
+impl<const N: usize> Deref for ByteArray<N> {
+    type Target = [u8; N];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, const N: usize, C: Default> TryRead<'a, C> for ByteArray<N> {
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        let mut buf = [0u8; N];
+        let data = bytes.read_with(offset, ctx::Bytes::Len(N))?;
+        buf.copy_from_slice(data);
+        Ok((Self(buf), *offset))
+    }
+}
+
+impl<const N: usize, C: Default> TryWrite<C> for ByteArray<N> {
+    fn try_write(self, bytes: &mut [u8], _: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        bytes.write_with(offset, &self.0[..], ())?;
+        Ok(*offset)
+    }
+}
+
+pub struct ByteArrayRef<'a>(pub &'a [u8]);
+
+impl<'a> Deref for ByteArrayRef<'a> {
+    type Target = &'a [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, C: Default> TryRead<'a, C> for ByteArrayRef<'a> {
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        let data = bytes.read_with(offset, ctx::Bytes::Len(bytes.len()))?;
+        Ok((Self(data), *offset))
+    }
+}
+
+impl<C: Default> TryWrite<C> for ByteArrayRef<'_> {
+    fn try_write(self, bytes: &mut [u8], _: C) -> Result<usize, byte::Error> {
+        bytes.copy_from_slice(self.0);
+        Ok(self.0.len())
+    }
+}
+
+pub enum TypeArrayCtx {
+    Len(usize),
+}
+
+/// A reference to a typed array.
+///
+/// **SAFETY**: T must be unaligned, i.e. for structs, have `#[repr(packed)]`
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TypeArrayRef<'a, T>(pub &'a [T]);
+
+impl<'a, T> Deref for TypeArrayRef<'a, T> {
+    type Target = &'a [T];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, C: Default> TryWrite<C> for TypeArrayRef<'_, T> {
+    fn try_write(self, bytes: &mut [u8], _: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        let len = size_of_val(self.0);
+        // SAFETY: T needs to be packed
+        let buf = unsafe { slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) };
+        bytes.write_with(offset, buf, ())?;
+        Ok(*offset)
+    }
+}
+
+impl<'a, T> TryRead<'a, TypeArrayCtx> for TypeArrayRef<'a, T> {
+    fn try_read(
+        bytes: &'a [u8],
+        TypeArrayCtx::Len(ctx): TypeArrayCtx,
+    ) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        let len = size_of::<T>() * ctx;
+        let data: &[u8] = bytes.read_with(offset, ctx::Bytes::Len(len))?;
+        // SAFETY: T needs to be packed
+        let data: &[T] = unsafe { slice::from_raw_parts(data.as_ptr().cast::<T>(), ctx) };
+        Ok((Self(data), *offset))
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
+
+impl<const N: usize, T> StorageVec<T, N> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<const N: usize, T> Deref for StorageVec<T, N> {
+    type Target = Vec<T, N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<const N: usize, T> DerefMut for StorageVec<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a, const N: usize, C, T> TryRead<'a, C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryRead<'a, C>,
+{
+    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length, should be enough
+        let len: u16 = bytes.read_with(offset, byte::LE)?;
+
+        let mut data: Vec<T, N> = Vec::new();
+        for _i in 0..len {
+            let entry: T = bytes.read_with(offset, ctx)?;
+            let _ = data.push(entry);
+        }
+        Ok((Self(data), *offset))
+    }
+}
+
+impl<const N: usize, C, T> TryWrite<C> for StorageVec<T, N>
+where
+    C: Default + Copy + Clone,
+    T: TryWrite<C>,
+{
+    #[allow(clippy::cast_possible_truncation)]
+    fn try_write(self, bytes: &mut [u8], ctx: C) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        // first 2 bytes is the length
+        bytes.write_with(offset, self.0.len() as u16, byte::LE)?;
+        for entry in self.0 {
+            bytes.write_with(offset, entry, ctx)?;
+        }
+        Ok(*offset)
+    }
+}
 
 impl_byte! {
     /// 16-bit network address
@@ -73,17 +239,17 @@ pub enum MacCapability {
 
 impl MacCapabilityFlagsField {
     // Note: Capacity of IndexSet must be a power of 2.
-    fn new(capabilities: FnvIndexSet<MacCapability, 8>) -> Self {
+    fn new(capabilities: &FnvIndexSet<MacCapability, 8>) -> Self {
         let mut value: u8 = 0;
         for capa in capabilities.iter() {
-            value |= 1 << *capa as u8
+            value |= 1 << *capa as u8;
         }
 
         Self(value)
     }
 
     fn is_set(&self, capability: MacCapability) -> bool {
-        return (self.0 & (1 << capability as u8)) != 0;
+        (self.0 & (1 << capability as u8)) != 0
     }
 }
 
@@ -104,12 +270,12 @@ pub enum ServerMaskBit {
 
 impl ServerMaskField {
     fn new(
-        server_mask_bits: FnvIndexSet<ServerMaskBit, 16>,
+        server_mask_bits: &FnvIndexSet<ServerMaskBit, 16>,
         stack_compliance_revision: u8,
     ) -> Self {
         let mut value: u16 = 0;
         for bit in server_mask_bits.iter() {
-            value |= 1 << *bit as u16
+            value |= 1 << *bit as u16;
         }
 
         value |= (stack_compliance_revision as u16) << 9;
@@ -118,11 +284,11 @@ impl ServerMaskField {
     }
 
     fn is_set(&self, server_mask_bit: ServerMaskBit) -> bool {
-        return self.0 & (1 << server_mask_bit as u16) != 0;
+        self.0 & (1 << server_mask_bit as u16) != 0
     }
 
     fn get_stack_compliance_revision(&self) -> u8 {
-        return (self.0 >> 9) as u8;
+        (self.0 >> 9) as u8
     }
 }
 
@@ -145,6 +311,9 @@ pub mod macros {
 
 #[cfg(test)]
 mod tests {
+    use byte::TryRead;
+    use byte::TryWrite;
+
     use super::*;
 
     #[test]
@@ -156,7 +325,7 @@ mod tests {
         let mut capas = FnvIndexSet::<MacCapability, 8>::new();
         let _ = capas.insert(MacCapability::AlternatePanCoordinator);
         let _ = capas.insert(MacCapability::AllocateAddress);
-        let flagsfield = MacCapabilityFlagsField::new(capas);
+        let flagsfield = MacCapabilityFlagsField::new(&capas);
 
         // then
         assert_eq!(expected, flagsfield.0);
@@ -170,7 +339,7 @@ mod tests {
         let _ = capas.insert(MacCapability::AllocateAddress);
 
         // when
-        let flagsfield = MacCapabilityFlagsField::new(capas);
+        let flagsfield = MacCapabilityFlagsField::new(&capas);
 
         // then
         assert!(flagsfield.is_set(MacCapability::AlternatePanCoordinator));
@@ -187,7 +356,7 @@ mod tests {
         let mut bits = FnvIndexSet::<ServerMaskBit, 16>::new();
         let _ = bits.insert(ServerMaskBit::PrimaryTrustCenter);
         let _ = bits.insert(ServerMaskBit::NetworkManager);
-        let server_mask_field = ServerMaskField::new(bits, 22);
+        let server_mask_field = ServerMaskField::new(&bits, 22);
 
         // then
         assert_eq!(expected, server_mask_field.0);
@@ -201,12 +370,134 @@ mod tests {
         let _ = bits.insert(ServerMaskBit::NetworkManager);
 
         // when
-        let server_mask_field = ServerMaskField::new(bits, 22);
+        let server_mask_field = ServerMaskField::new(&bits, 22);
 
         // then
         assert!(server_mask_field.is_set(ServerMaskBit::PrimaryTrustCenter));
         assert!(server_mask_field.is_set(ServerMaskBit::NetworkManager));
         assert!(!server_mask_field.is_set(ServerMaskBit::PrimaryDiscoveryCache));
         assert_eq!(22, server_mask_field.get_stack_compliance_revision());
+    }
+
+    #[test]
+    fn bytearray_try_read_should_succeed() {
+        // given
+        let input_data = [0x01, 0x02, 0x03, 0x04, 0x05];
+
+        // when
+        let (result, bytes_read) = ByteArray::<5>::try_read(&input_data, ()).unwrap();
+
+        // then
+        assert_eq!(result, ByteArray(input_data));
+        assert_eq!(bytes_read, 5);
+    }
+
+    #[test]
+    fn bytearray_try_write_should_succeed() {
+        // given
+        let byte_array = ByteArray([0xaa, 0xbb, 0xcc, 0xdd]);
+        let mut output_buffer = [0u8; 4];
+
+        // when
+        let bytes_written = byte_array.try_write(&mut output_buffer, ()).unwrap();
+
+        // then
+        assert_eq!(bytes_written, 4);
+        assert_eq!(output_buffer, byte_array.0);
+    }
+
+    #[test]
+    fn bytearrayref_try_read_should_succeed() {
+        // given
+        let input_data = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+
+        // when
+        let (result, bytes_read) = ByteArrayRef::try_read(&input_data, ()).unwrap();
+
+        // then
+        assert_eq!(bytes_read, 6);
+        assert_eq!(result.0, input_data);
+    }
+
+    #[test]
+    fn bytearrayref_try_write_should_succeed() {
+        // given
+        let input_data = [0x77, 0x88, 0x99];
+        let byte_array_ref = ByteArrayRef(&input_data);
+        let mut output_buffer = [0u8; 3];
+
+        // when
+        let bytes_written = byte_array_ref.try_write(&mut output_buffer, ()).unwrap();
+
+        // then
+        assert_eq!(bytes_written, 3);
+        assert_eq!(&output_buffer[..], input_data);
+    }
+
+    #[repr(C, packed)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct TestPackedStruct {
+        field1: u8,
+        field2: u16,
+        field3: u8,
+    }
+
+    #[test]
+    fn typearrayref_try_read_should_succeed() {
+        // given
+        // Packed struct layout: field1(1) + field2(2) + field3(1) = 4 bytes
+        let input_data = [
+            0x12, 0x34, 0x56, 0x78, // field1=0x12, field2=0x5634, field3=0x78
+            0xaa, 0xbb, 0xcc, 0xdd, // field1=0xaa, field2=0xccbb, field3=0xdd
+        ];
+        let expected_structs = [
+            TestPackedStruct {
+                field1: 0x12,
+                field2: 0x5634,
+                field3: 0x78,
+            },
+            TestPackedStruct {
+                field1: 0xaa,
+                field2: 0xccbb,
+                field3: 0xdd,
+            },
+        ];
+
+        // when
+        let (result, bytes_read) =
+            TypeArrayRef::<TestPackedStruct>::try_read(&input_data, TypeArrayCtx::Len(2)).unwrap();
+
+        // then
+        assert_eq!(bytes_read, 8);
+        assert_eq!(result.0, &expected_structs);
+    }
+
+    #[test]
+    fn typearrayref_try_write_should_succeed() {
+        // given
+        let test_structs = [
+            TestPackedStruct {
+                field1: 0xab,
+                field2: 0xcdef,
+                field3: 0x12,
+            },
+            TestPackedStruct {
+                field1: 0x34,
+                field2: 0x5678,
+                field3: 0x9a,
+            },
+        ];
+        let type_array_ref = TypeArrayRef(&test_structs);
+        let mut output_buffer = [0u8; 8];
+
+        // when
+        let bytes_written = type_array_ref.try_write(&mut output_buffer, ()).unwrap();
+
+        // then
+        assert_eq!(bytes_written, 8);
+        assert_eq!(
+            output_buffer,
+            [0xab, 0xef, 0xcd, 0x12, 0x34, 0x78, 0x56, 0x9a]
+        );
     }
 }

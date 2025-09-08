@@ -6,8 +6,6 @@
 //! read and write attributes in the AIB
 #![allow(dead_code)]
 #![allow(missing_docs)]
-use crate::aps::aib::AIBAttribute;
-use crate::aps::aib::AIBAttributeValue;
 use crate::aps::types::Address;
 use crate::aps::types::{self};
 
@@ -74,19 +72,12 @@ pub struct ApsmeUnbindConfirm {
     pub(crate) dst_endpoint: u8,
 }
 
-/// 2.2.4.4.1 - APSME-GET.request
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ApsmeGetRequest {
-    attribute: AIBAttribute,
-}
-
 /// 2.2.4.4.2 - APSME-GET.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeGetConfirm {
     pub(crate) status: ApsmeGetConfirmStatus,
     pub(crate) attribute: u8,
     pub(crate) attribute_length: u8,
-    pub(crate) attribute_value: Option<AIBAttributeValue>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -94,14 +85,6 @@ pub enum ApsmeGetConfirmStatus {
     #[default]
     Success,
     UnsupportedAttribute,
-}
-
-/// 2.2.4.4.3 - APSME-SET.request
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ApsmeSetRequest {
-    attribute: AIBAttribute,
-    attribute_length: u8,
-    attribute_value: AIBAttributeValue,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

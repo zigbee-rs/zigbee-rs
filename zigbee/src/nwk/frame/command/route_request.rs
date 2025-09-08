@@ -2,12 +2,16 @@ use crate::internal::macros::impl_byte;
 use crate::internal::types::IeeeAddress;
 use crate::internal::types::ShortAddress;
 
-pub struct RouteRequest {
-    pub command_options: CommandOptions,
-    pub route_request_id: u8,
-    pub destination_address: ShortAddress,
-    pub path_cost: u8,
-    pub destination_ieee_address: Option<IeeeAddress>,
+impl_byte! {
+    #[derive(Debug, Clone)]
+    pub struct RouteRequest {
+        pub command_options: CommandOptions,
+        pub route_request_id: u8,
+        pub destination_address: ShortAddress,
+        pub path_cost: u8,
+        #[parse_if = command_options.destination_ieee()]
+        pub destination_ieee_address: Option<IeeeAddress>,
+    }
 }
 
 impl_byte! {

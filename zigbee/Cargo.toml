@@ -18,8 +18,13 @@ mock = ["dep:mockall"]
 
 [dependencies]
 byte.workspace = true
-heapless.workspace = true
+ccm.workspace = true
+aes.workspace = true
+aead.workspace = true
+itertools.workspace = true
 embedded-storage.workspace = true
+spin.workspace = true
+heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 mockall = { workspace = true, optional = true }
 

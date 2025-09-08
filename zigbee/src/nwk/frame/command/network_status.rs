@@ -1,17 +1,21 @@
 use crate::internal::macros::impl_byte;
 use crate::internal::types::ShortAddress;
 
-pub struct NetworkStatus {
-    pub status_code: NetworkStatusCode,
-    pub destination_address: ShortAddress,
+impl_byte! {
+    /// Network Status Command Frame
+    #[derive(Debug, Clone)]
+    pub struct NetworkStatus {
+        pub status_code: NetworkStatusCode,
+        pub destination_address: ShortAddress,
+    }
 }
 
 impl_byte! {
+    #[tag(u8)]
     /// Network Status Codes
     ///
     /// See Section 3.4.3.3.1.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    #[repr(u8)]
     pub enum NetworkStatusCode {
         /// No route available
         NoRouteAvailable = 0x00,
@@ -53,6 +57,6 @@ impl_byte! {
         BadKeySequenceNumber = 0x12,
         /// Reserved
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }

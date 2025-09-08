@@ -1,84 +1,93 @@
-use heapless::LinearMap;
-use heapless::Vec;
+use crate::construct_ib;
+use crate::impl_byte;
+use crate::internal::types::ByteArray;
+use crate::internal::types::IeeeAddress;
+use crate::internal::types::StorageVec;
 
-/// 2.2.7.2 - AIB (APS Information Base Attributes)
-#[derive(Default)]
-pub struct ApsInformationBase {
-    attributes: LinearMap<u8, AIBAttribute, 265>,
+const MAX_APS_BINDING_TABLE: usize = 2; // TODO
+const MAX_APS_CHANNEL_MASK_LIST: usize = 2; // TODO
+const MAX_APS_GROUP_TABLE: usize = 2; // TODO
+const MAX_APS_MAX_WINDOW_SIZE: usize = 2; // TODO
+const MAX_APS_DEVICE_KEY_PAIR_SET: usize = 2; // TODO
+
+construct_ib! {
+    /// 2.2.7.2 - AIB (APS Information Base Attributes)
+    pub struct Aib {
+        //apsBindingTable
+        binding_table: StorageVec<ApsBinding, MAX_APS_BINDING_TABLE>,
+        #[ctx = ()]
+        #[ctx_write = ()]
+        designated_coordinator: bool = false,
+        channel_mask_list: StorageVec<IeeeAddress, MAX_APS_CHANNEL_MASK_LIST>,
+        use_extended_pan_id: IeeeAddress,
+        group_table: StorageVec<ApsGroup, MAX_APS_GROUP_TABLE>,
+        non_member_radius: u8 = 0x02,
+        #[ctx = ()]
+        #[ctx_write = ()]
+        use_insecure_join: bool = false,
+        interframe_delay: u8,
+        last_channel_energy: u8 = 0x00,
+        last_channel_failure_rate: u8 = 0x00,
+        channel_timer: u8 = 0x00,
+        max_window_size: StorageVec<ApsWindowSize, MAX_APS_MAX_WINDOW_SIZE>,
+        parent_announce_timer: u8 = 0x00,
+        // security attributes
+        device_key_pair_set: StorageVec<DeviceKeyPairDescriptor, MAX_APS_DEVICE_KEY_PAIR_SET>,
+        trust_center_address: IeeeAddress = IeeeAddress(0xffff_ffff_ffff_ffff),
+        security_timeout_period: u16 = 0x00,
+        //trust_center_policues: u8, // not implemented
+    }
 }
 
-impl ApsInformationBase {
-    pub fn new() -> Self {
-        Self {
-            attributes: LinearMap::new(),
-        }
-    }
-    pub fn get_attribute(&self, id: u8) -> Option<&AIBAttribute> {
-        self.attributes.get(&id)
-    }
+// TODO
+impl_byte! {
+    #[derive(Debug, Clone)]
+    pub struct ApsBinding(u8);
+}
 
-    pub fn write_attribute_value(
-        &mut self,
-        _id: u8,
-        _value: AIBAttribute,
-    ) -> Result<(), &'static str> {
-        // self.attributes.insert(id, value).map_err(|_| "could not insert");
+// TODO
+impl_byte! {
+    #[derive(Debug, Clone)]
+    pub struct ApsGroup(u8);
+}
 
-        Ok(())
+// TODO
+impl_byte! {
+    #[derive(Debug, Clone)]
+    pub struct ApsWindowSize(u8);
+}
+
+impl_byte! {
+    #[derive(Debug, Clone)]
+    pub struct DeviceKeyPairDescriptor {
+        pub device_address: IeeeAddress,
+        pub key_attributes: KeyAttribute,
+        pub link_key: ByteArray<16>,
+        pub outgoing_frame_counter: u32,
+        pub incoming_frame_counter: u32,
+        pub link_key_type: LinkKeyType,
     }
 }
 
-pub type AIBAttributeValue = [u8; 8];
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum AIBAttribute {
-    #[default]
-    ApsBindingTable,
-    ApsDesignatedCoordinator(bool),
-    ApsChannelMaskList(Vec<u8, 265>),
-    ApsUseExtendedPanId(u64),
-    ApsGroupTable(u8),
-    ApsNonmemberRadius(u8),
-    ApsUseInsecureJoin(bool),
-    ApsInterframeDelay(u8),
-    ApsLastChannelEnergy(u8),
-    ApsLastChannelFailureRate(u8),
-    ApsChannelTimer(u8),
-    ApsMaxWindowSize(u8),
-    ApsParentAnnounceTimer(u8),
+impl_byte! {
+    #[tag(u8)]
+    #[derive(Debug, Clone)]
+    pub enum KeyAttribute {
+        ProvisionalKey = 0x00,
+        UnverifiedKey = 0x01,
+        VerifiedKey = 0x02,
+        #[fallback = true]
+        Reserved(u8),
+    }
 }
 
-impl AIBAttribute {
-    pub fn id(&self) -> u8 {
-        match self {
-            // 0xc0 removed in 2007
-            AIBAttribute::ApsBindingTable => 0xc1,
-            AIBAttribute::ApsDesignatedCoordinator(_) => 0xc2,
-            AIBAttribute::ApsChannelMaskList(_) => 0xc3,
-            AIBAttribute::ApsUseExtendedPanId(_) => 0xc4,
-            AIBAttribute::ApsGroupTable(_) => 0xc5,
-            AIBAttribute::ApsNonmemberRadius(_) => 0xc6,
-            // 0xc7 removed (ApsIpIdPermissionsConfig)
-            AIBAttribute::ApsUseInsecureJoin(_) => 0xc8,
-            AIBAttribute::ApsInterframeDelay(_) => 0xc9,
-            AIBAttribute::ApsLastChannelEnergy(_) => 0xca,
-            AIBAttribute::ApsLastChannelFailureRate(_) => 0xcb,
-            AIBAttribute::ApsChannelTimer(_) => 0xcc,
-            AIBAttribute::ApsMaxWindowSize(_) => 0xcd,
-            AIBAttribute::ApsParentAnnounceTimer(_) => 0xce,
-            // 0x0500 to 0x05ff reserved for custom AIBs
-        }
-    }
-    pub fn length(&self) -> u8 {
-        match self {
-            AIBAttribute::ApsBindingTable => 0u8,
-            _ => 0u8,
-        }
-    }
-    pub fn value(&self) -> [u8; 8] {
-        match self {
-            AIBAttribute::ApsUseExtendedPanId(id) => id.to_le_bytes(),
-            _ => [0u8; 8],
-        }
+impl_byte! {
+    #[tag(u8)]
+    #[derive(Debug, Clone)]
+    pub enum LinkKeyType {
+        UniqueLinkKey = 0x00,
+        GlobalLinkKey = 0x01,
+        #[fallback = true]
+        Reserved(u8),
     }
 }

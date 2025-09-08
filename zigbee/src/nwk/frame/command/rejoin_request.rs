@@ -1,7 +1,11 @@
 use crate::internal::macros::impl_byte;
 
-pub struct RejoinRequest {
-    pub capability_information: CapabilityInformation,
+impl_byte! {
+    /// Rejoin Request Command Frame
+    #[derive(Debug, Clone)]
+    pub struct RejoinRequest {
+        pub capability_information: CapabilityInformation,
+    }
 }
 
 impl_byte! {

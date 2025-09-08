@@ -36,7 +36,7 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
                 AvailablePowerSourcesFlag::RechargeableBattery
             }
             CurrentPowerSource::DisposableBattery => AvailablePowerSourcesFlag::DisposableBattery,
-            CurrentPowerSource::Reserved => {
+            CurrentPowerSource::Reserved(_) => {
                 return Err(byte::Error::BadInput {
                     err: "CurrentPowerSourceNotAvailable: No curent power source set",
                 })
@@ -79,7 +79,7 @@ impl NodePowerDescriptor<'_> {
 
 // 2.3.2.4.1 Current Power Mode Field
 impl_byte! {
-    #[repr(u8)]
+    #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerMode {
         // Receiver synchronized with the receiver on when  idle subfield of the node descriptor.
@@ -90,7 +90,7 @@ impl_byte! {
         Stimulated = 0b0010,
         // 0011 - 1111 reserved
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }
 
@@ -113,20 +113,20 @@ impl AvailablePowerSources {
 
 // 2.3.2.4.3 Current Power Source Field
 impl_byte! {
-    #[repr(u8)]
+    #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerSource {
         ConstantMainPower = 0b000,
         RechargeableBattery = 0b010,
         DisposableBattery = 0b100,
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }
 
 // 2.3.2.4.4 Current Power Source Level Field
 impl_byte! {
-    #[repr(u8)]
+    #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
     pub enum CurrentPowerSourceLevel {
         Critical = 0b0000,
@@ -134,7 +134,7 @@ impl_byte! {
         TwoThirds = 0b1000,
         Full = 0b1100,
         #[fallback = true]
-        Reserved,
+        Reserved(u8),
     }
 }
 
