@@ -75,7 +75,7 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
-            nwk: Nlme {},
+            nwk: Nlme::default()
         }
     }
     fn is_joined(&self) -> bool {

@@ -43,12 +43,20 @@ fn main() -> ! {
     log::error!("application start!");
 
     let mut storage = FlashStorage::new();
-    let offset = 0;
-    // bdbIsNodeOnANetwork = true
-    let data: &[u8] = &[1];
-    storage.write(offset, data).expect("Failed to write to storage");
+    ////////////// DEBUG ////////////
+    let is_node_on_network: &[u8] = &[1];
+    storage.write(0, is_node_on_network).expect("Failed to write node_on_network flag to storage");
+    // network key
+    let network_key: &[u8] = &[
+        0xab, 0xcd, 0xef, 0x01,
+        0x23, 0x45, 0x67, 0x89,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ];
+    storage.write(1, network_key).expect("Failed to write network_key to storage");
+    ////////////// DEBUG ////////////
 
-    let nlme = Nlme {};
+    let nlme = Nlme::default();
 
     let config = zigbee::Config {
         device_type: LogicalType::EndDevice,

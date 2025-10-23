@@ -93,6 +93,7 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
 
             return match self.device.logical_type() {
                 LogicalType::EndDevice => {
+                    log::debug!("EndDevice");
                     let result = self.attempt_to_rejoin();
                     if result.is_ok() {
                         self.broadcast_annce()
@@ -102,7 +103,10 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
                         Ok(())
                     }
                 },
-                LogicalType::Router => Ok(()),
+                LogicalType::Router => {
+                    log::debug!("Router");
+                    Ok(())
+                },
                 _ => Ok(())
             }
         } else if self.is_router() && self.is_touchlink_supported() {
@@ -169,6 +173,7 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
     }
 
     fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
+        log::debug!("attempt_to_rejoin..");
         let confirm = self.nlme.rejoin();
 
         if confirm.status == NlmeJoinStatus::Success {
