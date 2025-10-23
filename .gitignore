@@ -3,6 +3,7 @@
 **/target
 docs/spec
 .idea
+Cargo.lock
 
 
 # Debug and profiling cruft
