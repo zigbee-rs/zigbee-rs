@@ -1,4 +1,7 @@
+use byte::BytesExt;
+
 use crate::aps::apdu::frame::command::Command;
+use crate::aps::apdu::frame::frame_control::FrameType;
 use crate::aps::apdu::frame::header::Header;
 
 pub mod command;
@@ -16,7 +19,19 @@ pub enum Frame<'a> {
     Acknowledgement(Header),
 }
 
-impl Frame<'_> {
+impl<'a> Frame<'a> {
+    pub fn from_payload(header: Header, payload: &'a [u8]) -> byte::Result<Self> {
+        match header.frame_control.frame_type() {
+            FrameType::Data => Ok(Self::Data(DataFrame { header, payload })),
+            FrameType::Command => Ok(Self::ApsCommand(CommandFrame {
+                header,
+                command: payload.read_with(&mut 0, ())?,
+            })),
+            FrameType::Acknowledgement => Ok(Self::Acknowledgement(header)),
+            FrameType::InterPan => unimplemented!("InterPan frames not supported"),
+        }
+    }
+
     pub fn header(&self) -> &Header {
         match self {
             Frame::Data(data_frame) => &data_frame.header,

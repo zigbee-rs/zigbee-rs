@@ -13,6 +13,7 @@ use byte::TryRead;
 use byte::TryWrite;
 use heapless::FnvIndexSet;
 use heapless::Vec;
+use itertools::Itertools;
 
 use crate::internal::macros::impl_byte;
 
@@ -115,6 +116,19 @@ impl<'a, T> TryRead<'a, TypeArrayCtx> for TypeArrayRef<'a, T> {
 
 #[derive(Debug)]
 pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
+
+impl<const N: usize, T: fmt::Debug> StorageVec<T, N> {
+    pub fn find_or_insert_with_mut(&mut self, f: impl Fn(&T) -> bool, i: impl Fn() -> T) -> &mut T {
+        let index = if let Some((i, _)) = self.iter().find_position(|v| f(v)) {
+            i
+        } else {
+            self.push(i()).unwrap();
+            self.len() - 1
+        };
+
+        self.0.get_mut(index).unwrap()
+    }
+}
 
 impl<const N: usize, T> StorageVec<T, N> {
     pub fn new() -> Self {

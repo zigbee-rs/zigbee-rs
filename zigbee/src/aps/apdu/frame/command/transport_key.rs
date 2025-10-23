@@ -51,3 +51,27 @@ impl_byte! {
         pub initiator_flag: bool,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use byte::TryRead;
+    use byte::TryWrite;
+
+    use crate::aps::apdu::frame::command::Command;
+
+    #[test]
+    fn parse_transport_key() {
+        let frame_buf = [
+            0x5, 0x1, 0xab, 0xcd, 0xef, 0x1, 0x23, 0x45, 0x67, 0x89, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+            0x0, 0x0, 0x0, 0xe5, 0x1, 0x30, 0x38, 0x9c, 0x38, 0xc1, 0xa4, 0xe1, 0x52, 0x38, 0x7d,
+            0xc1, 0x36, 0xce, 0xf4,
+        ];
+
+        let (frame, _) = Command::try_read(&frame_buf, ()).unwrap();
+
+        let mut got_buf = [0u8; _];
+        frame.try_write(&mut got_buf, ()).unwrap();
+
+        assert_eq!(frame_buf, got_buf);
+    }
+}
