@@ -2,7 +2,7 @@
 
 use super::error::ApsError;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SrcAddrMode {
     Reserved = 0x00,
     #[default]
@@ -10,7 +10,7 @@ pub enum SrcAddrMode {
     Extended = 0x02,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DstAddrMode {
     #[default]
     None,
@@ -19,7 +19,7 @@ pub enum DstAddrMode {
     Extended = 0x03,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Address {
     #[default]
     None,
@@ -28,7 +28,7 @@ pub enum Address {
     Extended(u64),
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TxOptions {
     SecurityEnabled = 0x01,
     UseNetworkKey = 0x02,
@@ -38,7 +38,7 @@ pub enum TxOptions {
     IncludeExtendedNonce = 0x10,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SrcEndpoint {
     pub(crate) value: u8,
 }
@@ -46,7 +46,7 @@ pub struct SrcEndpoint {
 impl SrcEndpoint {
     pub fn new(value: u8) -> Result<Self, ApsError> {
         if value <= 254 {
-            Ok(SrcEndpoint { value })
+            Ok(Self { value })
         } else {
             Err(ApsError::InvalidValue)
         }

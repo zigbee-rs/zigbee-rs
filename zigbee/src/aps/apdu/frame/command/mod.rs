@@ -18,16 +18,23 @@
 //}
 use crate::impl_byte;
 
+mod request_key;
 mod transport_key;
+
+pub use request_key::*;
 pub use transport_key::*;
 
 impl_byte! {
-   #[tag(u8)]
-   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-   pub enum Command {
-       #[tag_value = 0x05]
-       TransportKey(TransportKey),
-       #[fallback = true]
-       Reserved(u8),
-   }
+    // 4.4.10
+    // Table 4-27
+    #[tag(u8)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Command {
+        #[tag_value = 0x05]
+        TransportKey(TransportKey),
+        #[tag_value = 0x08]
+        RequestKey(RequestKey),
+        #[fallback = true]
+        Reserved(u8),
+    }
 }
