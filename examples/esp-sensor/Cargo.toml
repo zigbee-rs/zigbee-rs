@@ -36,10 +36,10 @@ esp-storage = { version = "0.7.0", features = ["esp32c6"] }
 # use PAC for Timer interrupts
 esp32c6 = { version = "0.21.0", features = ["rt"] }
 riscv-rt = "0.15.0"
+esp-ieee802154 = { version = "0.8.0", features = ["esp32c6"] }
 
 
 critical-section = "1.2.0"
-# esp-storage = "0.7.0"
 log = { version = "0.4.21" }
 zigbee = { path = "../../zigbee" }
 zigbee-base-device-behavior = { path = "../../zigbee-base-device-behavior" }
