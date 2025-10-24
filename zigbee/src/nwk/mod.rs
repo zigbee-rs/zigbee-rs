@@ -4,4 +4,5 @@
 //! sub-layer and to provide a suitable service interface to the application layer. 
 pub mod frame;
 pub mod nib;
+pub mod mlme;
 pub mod nlme;

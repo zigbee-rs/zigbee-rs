@@ -5,15 +5,15 @@ use crate::{apl::descriptors::node_descriptor::LogicalType, aps::apsme::Apsme};
 
 /// provides an interface between the appication object, the device profile and
 /// the APS
-pub struct ZigbeeDevice {
+pub struct ZigbeeDevice<'a> {
     config: Config,
-    apsme: Apsme,
+    apsme: Apsme<'a>,
 }
 
 /// zigbee network
 pub struct ZigBeeNetwork {}
 
-impl ZigbeeDevice {
+impl ZigbeeDevice<'_> {
     /// creates a new instance
     pub fn new(config: Config) -> Self {
         Self {
@@ -84,7 +84,7 @@ impl ZigbeeDevice {
     pub fn start_service_discovery(&self) {}
 }
 
-impl Default for ZigbeeDevice {
+impl Default for ZigbeeDevice<'_> {
     fn default() -> Self {
         Self::new(Config::default())
     }

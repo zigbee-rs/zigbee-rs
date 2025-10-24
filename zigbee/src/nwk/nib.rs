@@ -10,7 +10,7 @@ use byte::TryRead;
 use byte::TryWrite;
 use embedded_storage::ReadStorage;
 use embedded_storage::Storage;
-use heapless::FnvIndexMap;
+use heapless::index_map::FnvIndexMap;
 use heapless::Vec;
 use spin::Mutex;
 

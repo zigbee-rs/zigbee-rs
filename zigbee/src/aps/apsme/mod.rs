@@ -62,14 +62,14 @@ pub trait ApsmeSap {
     ) -> ApsmeRemoveAllGroupsConfirm;
 }
 
-pub(crate) struct Apsme {
+pub(crate) struct Apsme<'a> {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
-    pub(crate) nwk: Nlme,
+    pub(crate) nwk: Nlme<'a>,
 }
 
-impl Apsme {
+impl Apsme<'_> {
     pub(crate) fn new() -> Self {
         Self {
             supports_binding_table: true,
@@ -123,7 +123,7 @@ impl Apsme {
     // }
 }
 
-impl ApsmeSap for Apsme {
+impl ApsmeSap for Apsme<'_> {
     /// 2.2.4.3.1 - APSME-BIND.request
     /// request to bind two devices together, or to bind a device to a group
     fn bind_request(&mut self, request: ApsmeBindRequest) -> ApsmeBindConfirm {

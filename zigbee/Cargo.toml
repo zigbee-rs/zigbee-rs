@@ -27,4 +27,5 @@ spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 mockall = { workspace = true, optional = true }
+esp-ieee802154 = { version = "0.8.0", features = ["esp32c6"] }
 

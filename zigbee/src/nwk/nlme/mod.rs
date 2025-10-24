@@ -16,6 +16,7 @@
 
 use core::default;
 
+use esp_ieee802154::Ieee802154;
 use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
@@ -71,36 +72,40 @@ pub trait NlmeSap {
     fn rejoin(&self) -> NlmeJoinConfirm;
 }
 
-pub struct Nlme {
+pub struct Nlme<'a> {
     pub nib: Nib<NibStorage>,
     pub aib: Aib<AibStorage>,
+    pub ieee802154: Ieee802154<'a>,
 }
 
-impl Default for Nlme {
-    fn default() -> Self {
+impl Default for Nlme<'_> {
+    fn default(ieee802154: Ieee802154) -> Self {
         let nib_storage = NibStorage::default();
         let aib_storage = AibStorage::default();
 
-        Self::new(nib_storage, aib_storage)
+        Self::new(nib_storage, aib_storage, ieee802154)
     }
 }
 
-impl Nlme {
-    pub fn new(nib_storage: NibStorage, aib_storage: AibStorage) -> Self {
+impl Nlme<'_> {
+    pub fn new(nib_storage: NibStorage, aib_storage: AibStorage, radio: Ieee802154) -> Self {
         let nib = Nib::new(nib_storage);
         nib.init();
 
         let aib = Aib::new(aib_storage);
         aib.init();
 
+        let ieee802154 = Ieee802154::new(radio);
+
         Self {
             nib,
             aib,
+            ieee802154,
         }
     }
 }
 
-impl NlmeSap for Nlme {
+impl NlmeSap for Nlme<'_> {
     fn network_discovery(
         &mut self,
         _request: NlmeNetworkDiscoveryRequest,
@@ -146,7 +151,6 @@ impl NlmeSap for Nlme {
         }
     }
 
-    //
     fn rejoin(&self) -> NlmeJoinConfirm {
         // TODO: read extended_pan_id from NIB
         let _extended_pan_id = self.nib.extended_panid();

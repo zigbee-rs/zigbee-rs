@@ -24,6 +24,7 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hal::timer::PeriodicTimer;
 use esp_hal::timer::Timer;
 use esp_hal::Blocking;
+use esp_ieee802154::Ieee802154;
 use esp_println::logger::init_logger;
 use esp_println::println;
 use esp_storage::FlashStorage;
@@ -46,6 +47,15 @@ fn main() -> ! {
     ////////////// DEBUG ////////////
     let is_node_on_network: &[u8] = &[1];
     storage.write(0, is_node_on_network).expect("Failed to write node_on_network flag to storage");
+    // Extended PAN ID:
+    // PAN ID:
+    // Channel: 16
+    // Network Address: 0xFFFF (dynamically assigned)
+    // Network Key: (128-bit AES key for NWK encryption)
+    // Network Key sequence number: 0
+    // Device type — end device
+    // Parent IEEE and NWK address (optional, can be discovered via scan)
+
     // network key
     let network_key: &[u8] = &[
         0xab, 0xcd, 0xef, 0x01,
@@ -56,7 +66,10 @@ fn main() -> ! {
     storage.write(1, network_key).expect("Failed to write network_key to storage");
     ////////////// DEBUG ////////////
 
-    let nlme = Nlme::default();
+    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154);
+
+    let nlme = Nlme::default(ieee802154);
 
     let config = zigbee::Config {
         device_type: LogicalType::EndDevice,
@@ -68,7 +81,7 @@ fn main() -> ! {
     let mut bdb = BaseDeviceBehavior::new(storage, &nlme, config, bdb_commisioning_capability);
     let _ = bdb.start_initialization_procedure();
 
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+
     let mut button = Input::new(peripherals.GPIO9, InputConfig::default());
 
     // setup button interrupt for pairing and force update
