@@ -4,7 +4,7 @@ pub(crate) type NwkAddress = u16;
 
 use core::fmt;
 
-use heapless::FnvIndexSet;
+use heapless::index_set::FnvIndexSet;
 use zigbee::internal::macros::impl_byte;
 
 impl_byte! {

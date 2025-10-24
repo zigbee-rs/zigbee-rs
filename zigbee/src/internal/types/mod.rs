@@ -11,7 +11,7 @@ use byte::ctx;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
-use heapless::FnvIndexSet;
+use heapless::index_set::FnvIndexSet;
 use heapless::Vec;
 use itertools::Itertools;
 
