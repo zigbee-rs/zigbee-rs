@@ -1,0 +1,32 @@
+[workspace]
+
+[package]
+name = "esp-discovery"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+esp-alloc = { version = "0.9.0" }
+esp-backtrace = { version = "0.18.0", features = [
+    "panic-handler",
+    "println",
+	"esp32c6",
+] }
+esp-bootloader-esp-idf = { version = "0.3.0", features = ["esp32c6"] }
+esp-hal = { version = "=1.0.0-rc.1", features = ["log-04", "unstable", "esp32c6"] }
+esp-println = { version = "0.16.0", features = ["log-04"] }
+esp-radio = { version = "0.16.0", features = [
+    "ieee802154",
+    "unstable",
+	"esp32c6",
+] }
+embedded-storage = "0.3.1"
+esp-storage = { version = "0.8.0", features = ["esp32c6"] }
+
+zigbee = { path = "../../zigbee" }
+
+[profile.release]
+debug            = true
+debug-assertions = true
+lto              = "fat"
+codegen-units    = 1
