@@ -1,0 +1,18 @@
+[package]
+name = "zigbee-mac"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ieee802154 = "0.6.1"
+
+esp-hal = { version = "=1.0.0-rc.1", features = ["unstable"], default-features = false, optional = true }
+esp-radio = { version = "0.16.0", features = ["ieee802154", "unstable"], default-features = false, optional = true }
+
+[features]
+default = []
+esp32c6 = ["dep:esp-radio", "dep:esp-hal", "esp-radio/esp32c6", "esp-hal/esp32c6"]

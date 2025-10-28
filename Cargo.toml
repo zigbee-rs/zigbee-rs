@@ -10,6 +10,7 @@ members = [
     "zigbee",
     "zigbee-base-device-behavior",
     "zigbee-cluster-library",
+    "zigbee-mac",
 ]
 resolver = "3"
 
