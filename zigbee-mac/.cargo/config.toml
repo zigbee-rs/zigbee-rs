@@ -9,8 +9,5 @@ rustflags = [
 
 target = "riscv32imac-unknown-none-elf"
 
-[env]
-ESP_LOG = "info"
-
 [unstable]
 build-std = ["core", "alloc"]

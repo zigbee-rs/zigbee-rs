@@ -10,7 +10,9 @@ members = [
     "zigbee",
     "zigbee-base-device-behavior",
     "zigbee-cluster-library",
-    "zigbee-mac",
+]
+exclude = [
+	"zigbee-mac"
 ]
 resolver = "3"
 
