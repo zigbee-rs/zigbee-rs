@@ -14,6 +14,7 @@
 //! * routing
 #![allow(dead_code)]
 
+use embedded_storage::Storage;
 use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
@@ -27,9 +28,15 @@ use management::NlmePermitJoiningConfirm;
 use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
-
 #[cfg(feature = "mock")]
-use mockall::{automock, mock};
+use mockall::automock;
+#[cfg(feature = "mock")]
+use mockall::mock;
+
+use crate::nwk::nib;
+use crate::nwk::nib::Nib;
+use crate::nwk::nib::NibStorage;
+use crate::InMemoryStorage;
 
 /// Network management entity
 pub mod management;
@@ -64,10 +71,21 @@ pub trait NlmeSap {
     fn rejoin(&self) -> NlmeJoinConfirm;
 }
 
-#[derive(Clone, Copy)]
-pub struct Nlme {}
+pub struct Nlme<S> {
+    nib: Nib<S>,
+}
 
-impl NlmeSap for Nlme {
+impl<S> Nlme<S>
+where
+    S: Storage,
+{
+    pub fn new(storage: S) -> Self {
+        let nib = Nib::new(storage);
+        Self { nib }
+    }
+}
+
+impl<S> NlmeSap for Nlme<S> {
     fn network_discovery(
         &mut self,
         _request: NlmeNetworkDiscoveryRequest,
@@ -86,7 +104,9 @@ impl NlmeSap for Nlme {
     // Permitting Devices to Join a Network
     // Figure 3-39
     fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
-        NlmePermitJoiningConfirm { status: NlmeJoinStatus::InvalidRequest }
+        NlmePermitJoiningConfirm {
+            status: NlmeJoinStatus::InvalidRequest,
+        }
     }
 
     fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
@@ -124,4 +144,3 @@ impl NlmeSap for Nlme {
         self.join(request)
     }
 }
-

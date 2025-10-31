@@ -66,7 +66,7 @@ pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
-    pub(crate) nwk: Nlme,
+    //pub(crate) nwk: Nlme,
 }
 
 impl Apsme {
@@ -75,7 +75,7 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
-            nwk: Nlme {},
+            //nwk: Nlme {},
         }
     }
     fn is_joined(&self) -> bool {
@@ -87,13 +87,13 @@ impl Apsme {
             scan_channels_list_structure: [0, 0, 0, 0, 0, 0, 0, 0],
             scan_duration: 10u8,
         };
-        let confirm = self.nwk.network_discovery(request);
+        //let confirm = self.nwk.network_discovery(request);
 
-        match confirm.status {
-            crate::nwk::nlme::management::NlmeNetworkDiscoveryStatus::Successful => {
-                // TODO: return list of available networks
-            }
-        }
+        //match confirm.status {
+        //    crate::nwk::nlme::management::NlmeNetworkDiscoveryStatus::Successful => {
+        //        // TODO: return list of available networks
+        //    }
+        //}
     }
 
     pub(crate) fn join_network(&self) {
@@ -103,12 +103,12 @@ impl Apsme {
             scan_duration: 10u8,
             security_enabled: false,
         };
-        let confirm = self.nwk.join(request);
-        if let NlmeJoinStatus::Success = confirm.status {
-            // confirm.extended_pan_id
-        } else {
-            // TODO: handle errors
-        }
+        //let confirm = self.nwk.join(request);
+        //if let NlmeJoinStatus::Success = confirm.status {
+        //    // confirm.extended_pan_id
+        //} else {
+        //    // TODO: handle errors
+        //}
     }
 
     // 2.2.8.2.2 Binding

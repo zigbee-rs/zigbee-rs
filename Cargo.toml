@@ -11,6 +11,9 @@ members = [
     "zigbee-base-device-behavior",
     "zigbee-cluster-library",
 ]
+exclude = [
+	"zigbee-mac"
+]
 resolver = "3"
 
 [workspace.dependencies]
