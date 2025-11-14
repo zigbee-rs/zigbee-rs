@@ -10,6 +10,8 @@ members = [
     "zigbee",
     "zigbee-base-device-behavior",
     "zigbee-cluster-library",
+    "zigbee-macros",
+    "zigbee-types",
 ]
 exclude = [
 	"zigbee-mac"

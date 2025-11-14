@@ -1,16 +1,23 @@
 use core::mem;
 
+use byte::BytesExt;
 use esp_hal::delay::Delay;
 use esp_radio::ieee802154::Config;
+use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
+use esp_radio::ieee802154::ReceivedFrame;
 use esp_sync::NonReentrantMutex;
-use ieee802154::mac::FrameType;
+use ieee802154::mac::Address;
+use ieee802154::mac::FrameContent;
+use ieee802154::mac::Header;
 
-use crate::MacError;
-use crate::Mlme;
-use crate::ScanResult;
-use crate::A_BASE_SUPER_FRAME_DURATION;
-use crate::MAX_IEEE802154_CHANNELS;
+use crate::mlme::MacError;
+use crate::mlme::Mlme;
+use crate::mlme::PanDescriptor;
+use crate::mlme::ScanResult;
+use crate::mlme::ScanType;
+use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
+use crate::mlme::MAX_IEEE802154_CHANNELS;
 
 pub struct EspMlme<'a> {
     ieee802154: Ieee802154<'a>,
@@ -26,19 +33,21 @@ impl<'a> EspMlme<'a> {
         }
     }
 
+    const fn beacon_request_frame(&self) -> [u8; 10] {
+        let seq_number = self.seq_number;
+        [0x3, 0x8, seq_number, 0xff, 0xff, 0xff, 0xff, 0x7, 0x0, 0x0]
+    }
+
     fn scan_channel_active(
         &mut self,
         channel: u8,
         duration: u8,
-    ) -> Result<Option<ScanResult>, MacError> {
+    ) -> Result<Option<PanDescriptor>, MacError> {
         let delay = Delay::new();
         let config = Config {
             channel,
             txpower: 20,
             promiscuous: false,
-            //auto_ack_tx: true,
-            //auto_ack_rx: true,
-            //rx_when_idle: true,
             short_addr: Some(0xdead),
             pan_id: Some(6754),
             ..Default::default()
@@ -47,7 +56,7 @@ impl<'a> EspMlme<'a> {
         let tx_done = NonReentrantMutex::new(false);
         let f: &mut (dyn FnMut() + Send) = &mut || {
             tx_done.with(|t| *t = true);
-            log::info!(
+            log::debug!(
                 "[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages..."
             );
             self.ieee802154.start_receive();
@@ -55,18 +64,7 @@ impl<'a> EspMlme<'a> {
         let f: &'static mut (dyn FnMut() + Send) = unsafe { mem::transmute(f) };
         self.ieee802154.set_tx_done_callback(f);
 
-        if let Err(e) = self.ieee802154.transmit_raw(&[
-            0x3,
-            0x8,
-            self.seq_number,
-            0xff,
-            0xff,
-            0xff,
-            0xff,
-            0x7,
-            0x0,
-            0x0,
-        ]) {
+        if let Err(e) = self.ieee802154.transmit_raw(&self.beacon_request_frame()) {
             log::error!("[MLME-SCAN]: error transmitting beacon: {e}");
         }
 
@@ -79,31 +77,62 @@ impl<'a> EspMlme<'a> {
 
         // TODO: we should return before the delay is elapsed if a frame is received
         let delay_us = calculate_scan_duration_max_us(duration);
-        log::info!("[MLME-SCAN] waiting for response for {delay_us}us");
+        log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
 
         delay.delay_micros(delay_us);
 
         // check the rx queue
         let mut scan_result = None;
         while let Some(res) = self.ieee802154.received() {
+            log::debug!("ieee802154 receive");
             match res {
-                Ok(frame) if frame.frame.header.frame_type == FrameType::Beacon => {
-                    log::info!(
-                        "[MLME-SCAN] receive frame on channel {channel}: {frame:#?}",
-                        frame = frame.frame,
-                    );
+                Ok(ReceivedFrame {
+                    frame:
+                        Frame {
+                            header:
+                                hdr @ Header {
+                                    source: Some(source),
+                                    ..
+                                },
+                            content: FrameContent::Beacon(beacon_content),
+                            payload,
+                            ..
+                        },
+                    channel,
+                    lqi,
+                    ..
+                }) => {
+                    log::debug!("[MLME-SCAN] received beacon frame on channel {channel}");
 
-                    scan_result = Some(ScanResult { channel });
+                    let zigbee_beacon =
+                        payload.read_with(&mut 0, ()).map_err(MacError::ReadError)?;
+
+                    scan_result = Some(PanDescriptor {
+                        channel,
+                        coord_addr_mode: match source {
+                            Address::Short(_, _) => 0x2,
+                            Address::Extended(_, _) => 0x3,
+                        },
+                        coord_pan_id: source.pan_id().0.into(),
+                        coord_address: source,
+                        superframe_spec: beacon_content.superframe_spec,
+                        link_quality: lqi,
+                        security_use: hdr.has_security(),
+                        zigbee_beacon,
+                    });
                 }
-                Ok(_) => {}
+                Ok(f) => {
+                    log::debug!("[MLME-SCAN] received other frame on channel {channel}: {f:?}");
+                }
                 Err(e) => {
                     log::error!("[MLME-SCAN] receive error: {e}");
+                    return Err(MacError::RadioError);
                 }
             }
         }
 
         if scan_result.is_none() {
-            log::info!("[MLME-SCAN] no response on channel {channel}");
+            log::debug!("[MLME-SCAN] no response on channel {channel}");
         }
 
         Ok(scan_result)
@@ -118,16 +147,31 @@ fn calculate_scan_duration_max_us(duration: u8) -> u32 {
 impl Mlme for EspMlme<'_> {
     fn scan_network(
         &mut self,
-        _ty: crate::ScanType,
-        channels: u32,
+        scan_type: ScanType,
+        channels: impl Iterator<Item = u8>,
         duration: u8,
-    ) -> Result<(), MacError> {
-        log::info!("[MLME-SCAN] start scan");
-
-        for channel in 11..MAX_IEEE802154_CHANNELS {
-            let _ = self.scan_channel_active(channel, duration);
+    ) -> Result<ScanResult, MacError> {
+        if !matches!(scan_type, ScanType::Active) {
+            return Err(MacError::InvalidScanParams);
         }
 
-        Ok(())
+        log::debug!("[MLME-SCAN] start scan");
+
+        let pan_descriptor = channels
+            .filter(|c| (*c as usize) < MAX_IEEE802154_CHANNELS)
+            .filter_map(|c| match self.scan_channel_active(c, duration) {
+                Ok(Some(pd)) => Some(pd),
+                Err(e) => {
+                    log::error!("[MLME-SCAN] error on channel {c}: {e}");
+                    None
+                }
+                _ => None,
+            })
+            .collect();
+
+        Ok(ScanResult {
+            scan_type,
+            pan_descriptor,
+        })
     }
 }
