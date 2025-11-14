@@ -32,7 +32,7 @@ use super::binding::ApsBindingTable;
 use super::types::Address;
 use crate::nwk::nlme::management::NlmeJoinRequest;
 use crate::nwk::nlme::management::NlmeJoinStatus;
-use crate::nwk::nlme::management::NlmeNetworkDiscoveryRequest;
+//use crate::nwk::nlme::management::NlmeNetworkDiscoveryRequest;
 use crate::nwk::nlme::Nlme;
 use crate::nwk::nlme::NlmeSap;
 
@@ -83,10 +83,10 @@ impl Apsme {
     }
 
     pub(crate) fn start_network_discovery(&mut self) {
-        let request = NlmeNetworkDiscoveryRequest {
-            scan_channels_list_structure: [0, 0, 0, 0, 0, 0, 0, 0],
-            scan_duration: 10u8,
-        };
+        //let request = NlmeNetworkDiscoveryRequest {
+        //    scan_channels_list_structure: [0, 0, 0, 0, 0, 0, 0, 0],
+        //    scan_duration: 10u8,
+        //};
         //let confirm = self.nwk.network_discovery(request);
 
         //match confirm.status {
@@ -97,7 +97,7 @@ impl Apsme {
     }
 
     pub(crate) fn join_network(&self) {
-        let request = NlmeJoinRequest {
+        let _request = NlmeJoinRequest {
             extended_pan_id: 0x0015_8D00_01AB_CD12,
             rejoin_network: 0u8,
             scan_duration: 10u8,

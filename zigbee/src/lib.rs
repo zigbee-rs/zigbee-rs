@@ -46,25 +46,20 @@
 )]
 #![feature(macro_metavar_expr_concat)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod apl;
 pub mod aps;
 pub mod nwk;
 pub mod security;
-pub mod zdp;
+//pub mod zdp;
 
 // ZDO is not directly called by the application — it is controlled by BDB or
 // used internally by the stack.
-#[doc(hidden)]
-pub mod zdo;
+//#[doc(hidden)]
+//pub mod zdo;
 
 // Device object config
 // Logical type
-pub use apl::descriptors::node_descriptor::LogicalType;
-pub use zdo::config::Config;
-
-// Exposes types and macros only to be within zigbee crates. Not public API.
-#[doc(hidden)]
-pub mod internal;
-
-#[doc(hidden)]
-pub use internal::storage::InMemoryStorage;
+//pub use zdo::config::Config;

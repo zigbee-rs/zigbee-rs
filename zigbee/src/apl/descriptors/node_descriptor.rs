@@ -7,8 +7,7 @@
 //! descriptor in a node.
 
 use byte::TryRead;
-
-use crate::impl_byte;
+use zigbee_macros::impl_byte;
 
 const NODE_DESCRIPTOR_SIZE: usize = 13;
 

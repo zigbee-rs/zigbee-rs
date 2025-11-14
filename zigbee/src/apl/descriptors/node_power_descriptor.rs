@@ -8,8 +8,7 @@
 
 use byte::BytesExt;
 use byte::TryRead;
-
-use crate::impl_byte;
+use zigbee_macros::impl_byte;
 
 const NODE_POWER_DESCRIPTOR_SIZE: usize = 2;
 

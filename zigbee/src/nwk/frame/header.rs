@@ -1,8 +1,9 @@
 //! NWK Frame Header
+use zigbee_macros::impl_byte;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
+
 use super::frame_control::FrameControl;
-use crate::internal::macros::impl_byte;
-use crate::internal::types::IeeeAddress;
-use crate::internal::types::ShortAddress;
 
 impl_byte! {
     /// 3.3.1 General NPDU Frame Format

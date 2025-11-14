@@ -12,7 +12,7 @@ macro_rules! construct_ib {
             )+
         }
     ) => {
-        pub type ${ concat($ib_name, Storage) } = $crate::internal::storage::InMemoryStorage<{ ${ concat($ib_name, Id) }::BUFFER_SIZE }>;
+        pub type ${ concat($ib_name, Storage) } = ::zigbee_types::storage::InMemoryStorage<{ ${ concat($ib_name, Id) }::BUFFER_SIZE }>;
 
         static mut IB: Option<$ib_name<${ concat($ib_name, Storage) }>> = None;
 

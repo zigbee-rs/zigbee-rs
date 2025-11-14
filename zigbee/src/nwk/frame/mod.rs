@@ -12,8 +12,8 @@ use byte::TryRead;
 use byte::TryWrite;
 use frame_control::FrameType;
 use header::Header;
+use zigbee_macros::impl_byte;
 
-use crate::internal::macros::impl_byte;
 use crate::nwk::frame::command::Command;
 use crate::security::frame::AuxFrameHeader;
 use crate::security::SecurityContext;

@@ -3,7 +3,7 @@
 //! See Section 2.2.5.1
 use core::mem;
 
-use crate::internal::macros::impl_byte;
+use zigbee_macros::impl_byte;
 
 impl_byte! {
     /// Frame Control field

@@ -21,7 +21,6 @@ use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
 use management::NlmeJoinStatus;
 use management::NlmeNetworkDiscoveryConfirm;
-use management::NlmeNetworkDiscoveryRequest;
 use management::NlmeNetworkFormationConfirm;
 use management::NlmeNetworkFormationRequest;
 use management::NlmePermitJoiningConfirm;
@@ -32,14 +31,24 @@ use management::NlmeStartRouterRequest;
 use mockall::automock;
 #[cfg(feature = "mock")]
 use mockall::mock;
+use thiserror::Error;
+use zigbee_mac::mlme::MacError;
+use zigbee_mac::mlme::Mlme;
+use zigbee_mac::mlme::ScanType;
 
 use crate::nwk::nib;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
-use crate::InMemoryStorage;
+use crate::nwk::nlme::management::NetworkDescriptor;
 
 /// Network management entity
 pub mod management;
+
+#[derive(Debug, Error)]
+pub enum NetworkError {
+    #[error("mac error")]
+    MacError(#[from] MacError),
+}
 
 /// Network management service - service access point
 ///
@@ -50,10 +59,11 @@ pub mod management;
 #[cfg_attr(feature = "mock", automock)]
 pub trait NlmeSap {
     /// 3.2.2.3
-    fn network_discovery(
+    fn network_discovery<C: Iterator<Item = u8> + 'static>(
         &mut self,
-        request: NlmeNetworkDiscoveryRequest,
-    ) -> NlmeNetworkDiscoveryConfirm;
+        channels: C,
+        duration: u8,
+    ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError>;
     /// 3.2.2.5
     fn network_formation(
         &self,
@@ -71,27 +81,42 @@ pub trait NlmeSap {
     fn rejoin(&self) -> NlmeJoinConfirm;
 }
 
-pub struct Nlme<S> {
+pub struct Nlme<S, M> {
     nib: Nib<S>,
+    mac: M,
 }
 
-impl<S> Nlme<S>
+impl<S, M> Nlme<S, M>
 where
     S: Storage,
+    M: Mlme,
 {
-    pub fn new(storage: S) -> Self {
+    pub fn new(storage: S, mac: M) -> Self {
         let nib = Nib::new(storage);
-        Self { nib }
+        Self { nib, mac }
     }
 }
 
-impl<S> NlmeSap for Nlme<S> {
-    fn network_discovery(
+impl<S, M> NlmeSap for Nlme<S, M>
+where
+    M: Mlme,
+{
+    fn network_discovery<C: Iterator<Item = u8>>(
         &mut self,
-        _request: NlmeNetworkDiscoveryRequest,
-    ) -> NlmeNetworkDiscoveryConfirm {
-        // TODO: perform an active network scan
-        todo!()
+        channels: C,
+        duration: u8,
+    ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError> {
+        let scan_result = self
+            .mac
+            .scan_network(ScanType::Active, channels, duration)?;
+
+        let network_descriptor = scan_result
+            .pan_descriptor
+            .into_iter()
+            .map(From::from)
+            .collect();
+
+        Ok(NlmeNetworkDiscoveryConfirm { network_descriptor })
     }
 
     fn network_formation(

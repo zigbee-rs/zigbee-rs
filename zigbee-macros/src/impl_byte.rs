@@ -194,19 +194,16 @@ macro_rules! impl_byte {
         }
     }
 }
-pub use impl_byte;
 
 #[cfg(test)]
 mod tests {
     use byte::TryRead;
     use byte::TryWrite;
 
-    use crate::internal::types::ShortAddress;
-
     impl_byte! {
         struct DataFrame<'a> {
             flag: u8,
-            address: ShortAddress,
+            address: u16,
             #[parse_if = flag > 0]
             opt: Option<u16>,
             length: u8,
@@ -224,7 +221,7 @@ mod tests {
 
         assert_eq!(len, 10);
         assert_eq!(frame.flag, 0x01);
-        assert_eq!(frame.address, ShortAddress(0xff12));
+        assert_eq!(frame.address, 0xff12);
         assert_eq!(frame.opt, Some(0x2211));
         assert_eq!(frame.length, 0x04);
         assert_eq!(frame.data, &[0xaa, 0xaa, 0xaa, 0xaa]);

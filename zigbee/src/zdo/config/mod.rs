@@ -5,8 +5,8 @@ pub struct Config {
     pub radio_channel: u8,
     /// Discovery type
     pub device_discovery_type: DiscoveryType,
-    /// This indicates the device class
-    pub device_type: crate::apl::descriptors::node_descriptor::LogicalType,
+    ///// This indicates the device class
+    //pub device_type: crate::apl::descriptors::node_descriptor::LogicalType,
 }
 
 /// Discovery Type

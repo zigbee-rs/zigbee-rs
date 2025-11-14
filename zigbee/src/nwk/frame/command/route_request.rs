@@ -1,6 +1,6 @@
-use crate::internal::macros::impl_byte;
-use crate::internal::types::IeeeAddress;
-use crate::internal::types::ShortAddress;
+use zigbee_macros::impl_byte;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 impl_byte! {
     #[derive(Debug, Clone)]

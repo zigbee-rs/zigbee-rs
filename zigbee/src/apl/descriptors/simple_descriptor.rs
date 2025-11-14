@@ -6,7 +6,7 @@
 //! contained in this node. The simple descriptor is  mandatory for each
 //! endpoint present in the node.
 
-use crate::impl_byte;
+use zigbee_macros::impl_byte;
 
 type ApplicationClusterList<'a> = &'a [u8];
 
