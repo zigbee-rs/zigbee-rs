@@ -12,10 +12,10 @@ esp-backtrace = { version = "0.18.0", features = [
     "println",
 	"esp32c6",
 ] }
-esp-bootloader-esp-idf = { version = "0.3.0", features = ["esp32c6"] }
-esp-hal = { version = "=1.0.0-rc.1", features = ["log-04", "unstable", "esp32c6"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32c6"] }
+esp-hal = { version = "1.0.0", features = ["log-04", "unstable", "esp32c6"] }
 esp-println = { version = "0.16.0", features = ["log-04"] }
-esp-radio = { version = "0.16.0", features = [
+esp-radio = { version = "0.17.0", features = [
     "ieee802154",
     "unstable",
 	"esp32c6",

@@ -49,6 +49,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
+use alloc as _;
+
 pub mod apl;
 pub mod aps;
 pub mod nwk;

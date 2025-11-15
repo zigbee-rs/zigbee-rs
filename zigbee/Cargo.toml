@@ -32,4 +32,3 @@ mockall = { workspace = true, optional = true }
 zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
-allocator-api2 = { version = "0.3.0", default-features = false, features = ["alloc"] }
