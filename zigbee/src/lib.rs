@@ -60,9 +60,10 @@ pub mod security;
 
 // ZDO is not directly called by the application — it is controlled by BDB or
 // used internally by the stack.
-//#[doc(hidden)]
-//pub mod zdo;
+#[doc(hidden)]
+pub mod zdo;
 
-// Device object config
 // Logical type
-//pub use zdo::config::Config;
+pub use apl::descriptors::node_descriptor::LogicalType;
+// Device object config
+pub use zdo::config::Config;

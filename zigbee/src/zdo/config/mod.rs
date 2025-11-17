@@ -6,7 +6,7 @@ pub struct Config {
     /// Discovery type
     pub device_discovery_type: DiscoveryType,
     ///// This indicates the device class
-    //pub device_type: crate::apl::descriptors::node_descriptor::LogicalType,
+    pub device_type: crate::apl::descriptors::node_descriptor::LogicalType,
 }
 
 /// Discovery Type

@@ -1,7 +1,8 @@
 use config::Config;
 
 pub mod config;
-use crate::{apl::descriptors::node_descriptor::LogicalType, aps::apsme::Apsme};
+use crate::apl::descriptors::node_descriptor::LogicalType;
+use crate::aps::apsme::Apsme;
 
 /// provides an interface between the appication object, the device profile and
 /// the APS

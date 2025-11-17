@@ -28,4 +28,4 @@ log = "0.4.27"
 
 [dev-dependencies]
 zigbee-base-device-behavior = { path = ".", features = ["mock"] }
-
+zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
