@@ -1,5 +1,5 @@
-use ieee802154::mac::beacon::SuperframeSpecification;
 use ieee802154::mac::Address;
+use ieee802154::mac::beacon::SuperframeSpecification;
 use thiserror::Error;
 use zigbee_macros::impl_byte;
 use zigbee_types::ByteArray;
@@ -13,7 +13,7 @@ pub const A_NUM_SUPER_FRAME_SLOTS: u32 = 16;
 pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_FRAME_SLOTS;
 
 pub trait Mlme {
-    fn scan_network(
+    async fn scan_network(
         &mut self,
         ty: ScanType,
         channels: impl Iterator<Item = u8>,

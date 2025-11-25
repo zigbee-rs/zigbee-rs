@@ -1,34 +1,36 @@
-use core::mem;
+use alloc::vec::Vec;
 
 use byte::BytesExt;
-use esp_hal::delay::Delay;
+use embassy_futures::select::Either;
+use embassy_time::Timer;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
-use esp_sync::NonReentrantMutex;
 use ieee802154::mac::Address;
 use ieee802154::mac::FrameContent;
 use ieee802154::mac::Header;
 
+use crate::esp::driver::Ieee802154Driver;
+use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
+use crate::mlme::MAX_IEEE802154_CHANNELS;
 use crate::mlme::MacError;
 use crate::mlme::Mlme;
 use crate::mlme::PanDescriptor;
 use crate::mlme::ScanResult;
 use crate::mlme::ScanType;
-use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
-use crate::mlme::MAX_IEEE802154_CHANNELS;
+
+mod driver;
 
 pub struct EspMlme<'a> {
-    ieee802154: Ieee802154<'a>,
+    driver: Ieee802154Driver<'a>,
     seq_number: u8,
 }
 
 impl<'a> EspMlme<'a> {
-    pub fn new(ieee802154: Ieee802154<'a>) -> Self {
+    pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
         Self {
-            //ieee802154: NonReentrantMutex::new(ieee802154),
-            ieee802154,
+            driver: Ieee802154Driver::new(ieee802154, config),
             seq_number: 0,
         }
     }
@@ -38,54 +40,44 @@ impl<'a> EspMlme<'a> {
         [0x3, 0x8, seq_number, 0xff, 0xff, 0xff, 0xff, 0x7, 0x0, 0x0]
     }
 
-    fn scan_channel_active(
+    async fn scan_channel_active(
         &mut self,
         channel: u8,
         duration: u8,
     ) -> Result<Option<PanDescriptor>, MacError> {
-        let delay = Delay::new();
-        let config = Config {
-            channel,
-            txpower: 20,
-            promiscuous: false,
-            short_addr: Some(0xdead),
-            pan_id: Some(6754),
-            ..Default::default()
-        };
-        self.ieee802154.set_config(config);
-        let tx_done = NonReentrantMutex::new(false);
-        let f: &mut (dyn FnMut() + Send) = &mut || {
-            tx_done.with(|t| *t = true);
-            log::debug!(
-                "[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages..."
-            );
-            self.ieee802154.start_receive();
-        };
-        let f: &'static mut (dyn FnMut() + Send) = unsafe { mem::transmute(f) };
-        self.ieee802154.set_tx_done_callback(f);
+        self.driver.update_driver_config(|config| {
+            config.promiscuous = false;
+            config.channel = channel;
+        });
 
-        if let Err(e) = self.ieee802154.transmit_raw(&self.beacon_request_frame()) {
+        if let Err(e) = self.driver.transmit(&self.beacon_request_frame()).await {
             log::error!("[MLME-SCAN]: error transmitting beacon: {e}");
         }
 
+        log::debug!("[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages...");
+
         self.seq_number = self.seq_number.wrapping_add(1);
 
-        let mut is_sending = true;
-        while is_sending {
-            tx_done.with(|t| is_sending = !*t);
-        }
-
-        // TODO: we should return before the delay is elapsed if a frame is received
         let delay_us = calculate_scan_duration_max_us(duration);
         log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
 
-        delay.delay_micros(delay_us);
+        let timer_fut = Timer::after_micros(delay_us.into());
+        let receive_fut = self.receive_beacon(channel);
+        let sel = embassy_futures::select::select(timer_fut, receive_fut).await;
+        match sel {
+            Either::First(_) => {
+                log::debug!("[MLME-SCAN] did not receive beacon frame in time");
+                Ok(None)
+            }
+            Either::Second(Ok(pd)) => Ok(Some(pd)),
+            Either::Second(Err(e)) => Err(e),
+        }
+    }
 
-        // check the rx queue
-        let mut scan_result = None;
-        while let Some(res) = self.ieee802154.received() {
-            log::debug!("ieee802154 receive");
-            match res {
+    async fn receive_beacon(&mut self, channel: u8) -> Result<PanDescriptor, MacError> {
+        loop {
+            let frame = self.driver.receive().await;
+            match frame {
                 Ok(ReceivedFrame {
                     frame:
                         Frame {
@@ -107,7 +99,7 @@ impl<'a> EspMlme<'a> {
                     let zigbee_beacon =
                         payload.read_with(&mut 0, ()).map_err(MacError::ReadError)?;
 
-                    scan_result = Some(PanDescriptor {
+                    return Ok(PanDescriptor {
                         channel,
                         coord_addr_mode: match source {
                             Address::Short(_, _) => 0x2,
@@ -130,12 +122,6 @@ impl<'a> EspMlme<'a> {
                 }
             }
         }
-
-        if scan_result.is_none() {
-            log::debug!("[MLME-SCAN] no response on channel {channel}");
-        }
-
-        Ok(scan_result)
     }
 }
 
@@ -145,7 +131,7 @@ fn calculate_scan_duration_max_us(duration: u8) -> u32 {
 }
 
 impl Mlme for EspMlme<'_> {
-    fn scan_network(
+    async fn scan_network(
         &mut self,
         scan_type: ScanType,
         channels: impl Iterator<Item = u8>,
@@ -157,17 +143,22 @@ impl Mlme for EspMlme<'_> {
 
         log::debug!("[MLME-SCAN] start scan");
 
-        let pan_descriptor = channels
-            .filter(|c| (*c as usize) < MAX_IEEE802154_CHANNELS)
-            .filter_map(|c| match self.scan_channel_active(c, duration) {
-                Ok(Some(pd)) => Some(pd),
+        let mut pan_descriptor = Vec::new();
+        for c in channels {
+            if (c as usize) >= MAX_IEEE802154_CHANNELS {
+                continue;
+            }
+
+            match self.scan_channel_active(c, duration).await {
+                Ok(Some(pd)) => {
+                    pan_descriptor.push(pd);
+                }
                 Err(e) => {
                     log::error!("[MLME-SCAN] error on channel {c}: {e}");
-                    None
                 }
-                _ => None,
-            })
-            .collect();
+                _ => (),
+            }
+        }
 
         Ok(ScanResult {
             scan_type,

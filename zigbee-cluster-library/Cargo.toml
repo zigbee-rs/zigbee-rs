@@ -10,7 +10,7 @@ categories = ["network-programming", "no-std", "embedded"]
 license = "MIT OR Apache-2.0"
 
 authors.workspace = true
-edition = "2018"
+edition = "2024"
 
 [features]
 

@@ -42,7 +42,8 @@
     clippy::new_without_default,
     clippy::non_std_lazy_statics,
     static_mut_refs,
-    clippy::needless_range_loop
+    clippy::needless_range_loop,
+    async_fn_in_trait
 )]
 #![feature(macro_metavar_expr_concat)]
 
