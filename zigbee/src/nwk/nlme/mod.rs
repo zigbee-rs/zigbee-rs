@@ -32,13 +32,19 @@ use mockall::automock;
 #[cfg(feature = "mock")]
 use mockall::mock;
 use thiserror::Error;
+use zigbee_mac::Address;
 use zigbee_mac::mlme::MacError;
 use zigbee_mac::mlme::Mlme;
 use zigbee_mac::mlme::ScanType;
+use zigbee_types::ShortAddress;
+use zigbee_types::StorageVec;
 
 use crate::nwk::nib;
+use crate::nwk::nib::DeviceType;
+use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
+use crate::nwk::nib::NwkNeighbor;
 use crate::nwk::nlme::management::NetworkDescriptor;
 
 /// Network management entity
@@ -82,7 +88,7 @@ pub trait NlmeSap {
 }
 
 pub struct Nlme<S, M> {
-    nib: Nib<S>,
+    pub nib: Nib<S>,
     mac: M,
 }
 
@@ -100,6 +106,7 @@ where
 impl<S, M> NlmeSap for Nlme<S, M>
 where
     M: Mlme,
+    S: Storage,
 {
     async fn network_discovery<C: Iterator<Item = u8>>(
         &mut self,
@@ -110,6 +117,32 @@ where
             .mac
             .scan_network(ScanType::Active, channels, duration)
             .await?;
+
+        let neighbor_table = scan_result
+            .pan_descriptor
+            .iter()
+            .filter_map(|pd| match pd.coord_address {
+                Address::Short(_, short_address) => Some(NwkNeighbor {
+                    network_address: ShortAddress(short_address.0),
+                    device_type: if short_address.0 == NWK_COORDINATOR_ADDRESS {
+                        DeviceType::Coordinator
+                    } else {
+                        DeviceType::Router
+                    },
+                    rx_on_when_idle: false,
+                    end_device_configuration: 0,
+                    relationship: 0x00, // beacon from parent
+                    transmit_failure: 0,
+                    lqi: pd.link_quality,
+                    outgoing_cost: 0,
+                    age: 0,
+                    keepalive_received: false,
+                }),
+                Address::Extended(_, _) => None,
+            })
+            .collect();
+
+        self.nib.set_neighbor_table(StorageVec(neighbor_table));
 
         let network_descriptor = scan_result
             .pan_descriptor

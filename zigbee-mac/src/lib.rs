@@ -9,5 +9,6 @@ pub mod esp;
 
 pub mod mlme;
 
+pub use ieee802154::mac::Address;
 pub use ieee802154::mac::beacon::BeaconOrder;
 pub use ieee802154::mac::beacon::SuperframeOrder;

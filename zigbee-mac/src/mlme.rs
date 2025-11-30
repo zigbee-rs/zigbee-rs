@@ -8,6 +8,8 @@ use zigbee_types::ShortAddress;
 
 pub const MAX_IEEE802154_CHANNELS: usize = 27;
 
+pub const MAX_PAN_DESCRIPTOR_SIZE: usize = 27;
+
 pub const A_BASE_SLOT_DURATION: u32 = 60;
 pub const A_NUM_SUPER_FRAME_SLOTS: u32 = 16;
 pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_FRAME_SLOTS;
@@ -42,13 +44,15 @@ pub enum MacError {
     RadioError,
 }
 
+#[cfg(feature = "alloc")]
+pub type PanDescriptorList = alloc::vec::Vec<PanDescriptor>;
+#[cfg(not(feature = "alloc"))]
+pub type PanDescriptorList = heapless::Vec<PanDescriptor, MAX_PAN_DESCRIPTOR_SIZE>;
+
 #[derive(Debug)]
 pub struct ScanResult {
     pub scan_type: ScanType,
-    #[cfg(feature = "alloc")]
-    pub pan_descriptor: alloc::vec::Vec<PanDescriptor>,
-    #[cfg(not(feature = "alloc"))]
-    pub pan_descriptor: heapless::Vec<PanDescriptor, MAX_IEEE802154_CHANNELS>,
+    pub pan_descriptor: PanDescriptorList,
 }
 
 #[non_exhaustive]

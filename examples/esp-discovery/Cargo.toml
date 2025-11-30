@@ -25,8 +25,10 @@ embedded-storage = "0.3.1"
 esp-storage = { version = "0.8.0", features = ["esp32c6"] }
 embassy-executor = "0.9.0"
 embassy-time = "0.5.0"
+heapless = "0.9.1"
 
 zigbee = { path = "../../zigbee" }
+zigbee-types = { version = "0.1.0", path = "../../zigbee-types" }
 zigbee-mac = { path = "../../zigbee-mac", features = ["esp32c6"] }
 
 [profile.release]

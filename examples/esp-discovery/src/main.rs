@@ -10,13 +10,15 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use esp_storage::FlashStorage;
+use heapless::Vec;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::NlmeSap;
+use zigbee::nwk::nlme::management::NetworkDescriptor;
 use zigbee_mac::esp::EspMlme;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const SCAN_DURATION: u8 = 4u8;
+const SCAN_DURATION: u8 = 10u8;
 const CHANNELS: core::ops::Range<u8> = 11..27;
 
 #[esp_rtos::main]
@@ -42,8 +44,26 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         println!("Start network discovery, channels: {CHANNELS:?}, duration: {SCAN_DURATION}");
         match nwk.network_discovery(CHANNELS, SCAN_DURATION).await {
             Ok(nd) => {
+                let mut visited: Vec<zigbee_types::ShortAddress, 10> = heapless::Vec::new();
+                let nd: Vec<NetworkDescriptor, 10> = nd
+                    .network_descriptor
+                    .into_iter()
+                    .filter(|nd| {
+                        if visited.contains(&nd.pan_id) {
+                            false
+                        } else {
+                            let _ = visited.push(nd.pan_id);
+                            true
+                        }
+                    })
+                    .collect();
+
                 println!("Found following Zigbee networks in proximity:");
                 println!("{nd:#?}");
+
+                println!("Neighbor Table:");
+                let nt = nwk.nib.neighbor_table();
+                println!("{nt:#?}");
             }
             Err(e) => {
                 println!("Failed to discovery networks: {e}");
