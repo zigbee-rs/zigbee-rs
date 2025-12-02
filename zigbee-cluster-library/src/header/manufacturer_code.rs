@@ -1,5 +1,5 @@
 //! Manufacturer Code
-use zigbee::internal::macros::impl_byte;
+use zigbee_macros::impl_byte;
 
 impl_byte! {
     /// See Section 2.4.1.2

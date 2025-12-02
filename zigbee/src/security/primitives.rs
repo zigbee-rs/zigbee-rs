@@ -1,4 +1,3 @@
-#![warn(dead_code)]
 use core::cmp::min;
 use core::ops::Deref;
 

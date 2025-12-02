@@ -10,7 +10,7 @@ use core::fmt::Debug;
 use command_identifier::CommandIdentifier;
 use frame_control::FrameControl;
 use manufacturer_code::ManufacturerCode;
-use zigbee::internal::macros::impl_byte;
+use zigbee_macros::impl_byte;
 
 impl_byte! {
     /// 2.4.1 ZCL Header

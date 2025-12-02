@@ -6,7 +6,7 @@ use byte::ctx;
 use byte::BytesExt;
 use byte::TryRead;
 use heapless::Vec;
-use zigbee::internal::macros::impl_byte;
+use zigbee_macros::impl_byte;
 
 use crate::common::data_types::ZclDataType;
 use crate::header::ZclHeader;

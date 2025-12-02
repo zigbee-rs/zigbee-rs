@@ -1,0 +1,16 @@
+[target.riscv32imac-unknown-none-elf]
+runner    = "espflash flash --monitor --chip esp32c6"
+
+[build]
+rustflags = [
+  "-C", "link-arg=-Tlinkall.x",
+  "-C", "force-frame-pointers",
+]
+
+target = "riscv32imac-unknown-none-elf"
+
+[env]
+ESP_LOG = "info"
+
+[unstable]
+build-std = ["core", "alloc"]

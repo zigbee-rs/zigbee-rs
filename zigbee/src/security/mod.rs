@@ -2,6 +2,7 @@
 //!
 //! Security services provided for ZigBee include methods for key establishment,
 //! key transport, frame protection, and device management.
+#![allow(deprecated)]
 use core::convert::TryInto;
 use core::slice;
 
@@ -22,6 +23,9 @@ use frame::AuxFrameHeader;
 use frame::SecurityControl;
 use frame::SecurityLevel;
 use thiserror::Error;
+use zigbee_types::ByteArray;
+use zigbee_types::ByteArrayRef;
+use zigbee_types::IeeeAddress;
 
 use crate::aps::aib;
 use crate::aps::aib::Aib;
@@ -36,9 +40,6 @@ use crate::aps::apdu::frame::header::Header as ApsHeader;
 use crate::aps::apdu::frame::CommandFrame as ApsCommandFrame;
 use crate::aps::apdu::frame::Frame as ApsFrame;
 use crate::aps::types::TxOptions;
-use crate::internal::types::ByteArray;
-use crate::internal::types::ByteArrayRef;
-use crate::internal::types::IeeeAddress;
 use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::frame::Frame as NwkFrame;
 use crate::nwk::nib;
@@ -523,10 +524,10 @@ fn create_nonce(aux_header: &AuxFrameHeader) -> Result<[u8; 13], SecurityError> 
 mod tests {
 
     use heapless::Vec;
+    use zigbee_types::ByteArray;
+    use zigbee_types::StorageVec;
 
     use super::*;
-    use crate::internal::types::ByteArray;
-    use crate::internal::types::StorageVec;
     use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 
     const NETWORK_KEY: [u8; 16] = [

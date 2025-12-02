@@ -1,0 +1,16 @@
+[package]
+name = "zigbee-types"
+version = "0.1.0"
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+byte.workspace = true
+itertools.workspace = true
+heapless.workspace = true
+embedded-storage.workspace = true
+
+zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }

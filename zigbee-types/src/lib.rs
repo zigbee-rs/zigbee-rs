@@ -1,8 +1,7 @@
-pub type NwkAddress = u16;
+#![no_std]
 
 use core::fmt;
 use core::mem::size_of_val;
-use core::mem::{self};
 use core::ops::Deref;
 use core::ops::DerefMut;
 use core::slice;
@@ -14,8 +13,11 @@ use byte::TryWrite;
 use heapless::index_set::FnvIndexSet;
 use heapless::Vec;
 use itertools::Itertools;
+use zigbee_macros::impl_byte;
 
-use crate::internal::macros::impl_byte;
+pub mod storage;
+
+pub type NwkAddress = u16;
 
 /// A fixed-size byte array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +32,7 @@ impl<const N: usize> Deref for ByteArray<N> {
 }
 
 impl<'a, const N: usize, C: Default> TryRead<'a, C> for ByteArray<N> {
-    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+    fn try_read(bytes: &'a [u8], _: C) -> Result<(Self, usize), byte::Error> {
         let offset = &mut 0;
         let mut buf = [0u8; N];
         let data = bytes.read_with(offset, ctx::Bytes::Len(N))?;
@@ -58,7 +60,7 @@ impl<'a> Deref for ByteArrayRef<'a> {
 }
 
 impl<'a, C: Default> TryRead<'a, C> for ByteArrayRef<'a> {
-    fn try_read(bytes: &'a [u8], ctx: C) -> Result<(Self, usize), byte::Error> {
+    fn try_read(bytes: &'a [u8], _: C) -> Result<(Self, usize), byte::Error> {
         let offset = &mut 0;
         let data = bytes.read_with(offset, ctx::Bytes::Len(bytes.len()))?;
         Ok((Self(data), *offset))
@@ -80,7 +82,7 @@ pub enum TypeArrayCtx {
 ///
 /// **SAFETY**: T must be unaligned, i.e. for structs, have `#[repr(packed)]`
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TypeArrayRef<'a, T>(pub &'a [T]);
+pub struct TypeArrayRef<'a, T>(pub &'a [T]);
 
 impl<'a, T> Deref for TypeArrayRef<'a, T> {
     type Target = &'a [T];
@@ -127,6 +129,12 @@ impl<const N: usize, T: fmt::Debug> StorageVec<T, N> {
         };
 
         self.0.get_mut(index).unwrap()
+    }
+}
+
+impl<const N: usize, T> Default for StorageVec<T, N> {
+    fn default() -> Self {
+        Self(Default::default())
     }
 }
 
@@ -192,6 +200,12 @@ impl_byte! {
     pub struct ShortAddress(pub u16);
 }
 
+impl From<u16> for ShortAddress {
+    fn from(value: u16) -> Self {
+        Self(value)
+    }
+}
+
 impl fmt::Debug for ShortAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ShortAddress(0x{:04x})", self.0)
@@ -208,6 +222,12 @@ impl_byte! {
     /// 64-bit network address
     #[derive(Clone, Default, Copy, PartialEq, Eq)]
     pub struct IeeeAddress(pub u64);
+}
+
+impl From<u64> for IeeeAddress {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 impl fmt::Debug for IeeeAddress {
@@ -253,7 +273,7 @@ pub enum MacCapability {
 
 impl MacCapabilityFlagsField {
     // Note: Capacity of IndexSet must be a power of 2.
-    fn new(capabilities: &FnvIndexSet<MacCapability, 8>) -> Self {
+    pub fn new(capabilities: &FnvIndexSet<MacCapability, 8>) -> Self {
         let mut value: u8 = 0;
         for capa in capabilities.iter() {
             value |= 1 << *capa as u8;
@@ -262,13 +282,13 @@ impl MacCapabilityFlagsField {
         Self(value)
     }
 
-    fn is_set(&self, capability: MacCapability) -> bool {
+    pub fn is_set(&self, capability: MacCapability) -> bool {
         (self.0 & (1 << capability as u8)) != 0
     }
 }
 
 /// 2.3.2.3.10 - Server Mask Field
-pub struct ServerMaskField(u16);
+pub struct ServerMaskField(pub u16);
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -283,7 +303,7 @@ pub enum ServerMaskBit {
 }
 
 impl ServerMaskField {
-    fn new(
+    pub fn new(
         server_mask_bits: &FnvIndexSet<ServerMaskBit, 16>,
         stack_compliance_revision: u8,
     ) -> Self {
@@ -297,30 +317,13 @@ impl ServerMaskField {
         Self(value)
     }
 
-    fn is_set(&self, server_mask_bit: ServerMaskBit) -> bool {
+    pub fn is_set(&self, server_mask_bit: ServerMaskBit) -> bool {
         self.0 & (1 << server_mask_bit as u16) != 0
     }
 
-    fn get_stack_compliance_revision(&self) -> u8 {
+    pub fn get_stack_compliance_revision(&self) -> u8 {
         (self.0 >> 9) as u8
     }
-}
-
-pub mod macros {
-    macro_rules! bitfield_bits {
-        () => {
-            heapless::FnvIndexSet::new()
-        };
-        ($ty: ty; $($x: expr),+ $(,)?) => {{
-            const CAPACITY: usize =<$ty>::COUNT.next_power_of_two();
-            let mut bits = heapless::FnvIndexSet::<$ty, CAPACITY>::new();
-            $(
-                let _ = bits.insert($x);
-            )+
-            bits
-        }};
-    }
-    pub(crate) use bitfield_bits;
 }
 
 #[cfg(test)]

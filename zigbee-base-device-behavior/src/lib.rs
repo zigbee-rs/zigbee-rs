@@ -17,9 +17,8 @@
 #![allow(unused)]
 
 use byte::BytesExt;
-use spin::Mutex;
-
 use embedded_storage::Storage;
+use spin::Mutex;
 use thiserror::Error;
 
 pub mod types;
@@ -30,18 +29,20 @@ const bdbcMaxSameNetworkRetryAttempts: u8 = 10;
 #[allow(non_upper_case_globals)]
 const bdbcMinCommissioningTime: u8 = 0xb4;
 #[allow(non_upper_case_globals)]
-const bdbcRecSameNetworkRetryAttempts: u8 = 3; 
+const bdbcRecSameNetworkRetryAttempts: u8 = 3;
 #[allow(non_upper_case_globals)]
 const bdbcTCLinkKeyExchangeTimeout: u8 = 5;
 
-use types::CommissioningMode;
 use types::BdbCommissioningStatus;
+use types::CommissioningMode;
+use zigbee::Config;
+use zigbee::LogicalType;
+use zigbee::nwk::nlme::NlmeSap;
 use zigbee::nwk::nlme::management::NlmeJoinRequest;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
-use zigbee::nwk::nlme::NlmeSap;
-use zigbee::{zdo::ZigbeeDevice, Config, LogicalType};
+use zigbee::zdo::ZigbeeDevice;
 
 pub struct BaseDeviceBehavior<'a, C, T: NlmeSap> {
     storage: Mutex<C>,
@@ -53,18 +54,14 @@ pub struct BaseDeviceBehavior<'a, C, T: NlmeSap> {
     bdb_commissioning_status: BdbCommissioningStatus,
 }
 
-impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where 
-    C: Storage, 
-    T: NlmeSap 
+impl<'a, C, T> BaseDeviceBehavior<'a, C, T>
+where
+    C: Storage,
+    T: NlmeSap,
 {
-    pub fn new(
-        storage: C,
-        nlme: &'a T,
-        config: Config,
-        bdb_commisioning_capability: u8,
-        ) -> Self {
+    pub fn new(storage: C, nlme: &'a T, config: Config, bdb_commisioning_capability: u8) -> Self {
         let device = ZigbeeDevice::new(config);
- 
+
         Self {
             storage: Mutex::new(storage),
             device,
@@ -78,11 +75,12 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
 
     /// Initialization procedure
     ///
-    /// A node performs initialization whenever it is supplied with power either the first time or 
-    /// subsequent times after some form of power outage or power-cycle.
+    /// A node performs initialization whenever it is supplied with power either
+    /// the first time or subsequent times after some form of power outage
+    /// or power-cycle.
     ///
-    /// See Section 7.1 - Figure 1 
-    pub fn start_initialization_procedure(&mut self) -> Result<(), ZigbeeError> {
+    /// See Section 7.1 - Figure 1
+    pub async fn start_initialization_procedure(&mut self) -> Result<(), ZigbeeError> {
         // restore persistent zigbee data
         let mut buf = [0u8; 1];
         let _ = self.storage.lock().read(0, &mut buf);
@@ -93,28 +91,26 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
 
             return match self.device.logical_type() {
                 LogicalType::EndDevice => {
-                    let result = self.attempt_to_rejoin();
+                    let result = self.attempt_to_rejoin().await;
                     if result.is_ok() {
                         self.broadcast_annce()
                     } else {
                         // TODO: retry the procedure at some application specific time or quit
-                        
+
                         Ok(())
                     }
-                },
+                }
                 LogicalType::Router => Ok(()),
-                _ => Ok(())
-            }
+                _ => Ok(()),
+            };
         } else if self.is_router() && self.is_touchlink_supported() {
             log::error!("is router and touchlink supported");
 
             // TODO: select a channel from bdbcTLPrimaryChannelSetNoYesStep
-
         } else {
             log::error!("not on a network");
 
-            let request = NlmeNetworkFormationRequest {
-            };
+            let request = NlmeNetworkFormationRequest {};
             self.nlme.network_formation(request);
         }
         Ok(())
@@ -131,16 +127,17 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
             // TODO: Mgmt_permit_join_request | zigbee 2.4.3.3.7
             // with PermitDuration set to at least bdbcMinCommissioningTime
             // with TC_Significance field set to 0x01
-            if self.device.logical_type() == LogicalType::Coordinator ||
-                self.device.logical_type() == LogicalType::Router {
-                    // TODO: enable permit join >= bdbcMinCommissioningTime seconds
-                    //
-                    let request = NlmePermitJoiningRequest {
-                        permit_duration: bdbcMinCommissioningTime
-                    };
+            if self.device.logical_type() == LogicalType::Coordinator
+                || self.device.logical_type() == LogicalType::Router
+            {
+                // TODO: enable permit join >= bdbcMinCommissioningTime seconds
+                //
+                let request = NlmePermitJoiningRequest {
+                    permit_duration: bdbcMinCommissioningTime,
+                };
 
-                    let confirm = self.nlme.permit_joining(request);
-                }
+                let confirm = self.nlme.permit_joining(request);
+            }
 
             self.bdb_commissioning_status = BdbCommissioningStatus::Success;
         } else {
@@ -168,8 +165,8 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
         self.bdb_commisioning_capability == 1
     }
 
-    fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
-        let confirm = self.nlme.rejoin();
+    async fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
+        let confirm = self.nlme.rejoin().await;
 
         if confirm.status == NlmeJoinStatus::Success {
             Ok(())
@@ -178,10 +175,10 @@ impl<'a, C, T> BaseDeviceBehavior<'a, C, T> where
         }
     }
 
-    /// Trigger Device_annce on ZDO command 
+    /// Trigger Device_annce on ZDO command
     fn broadcast_annce(&self) -> Result<(), ZigbeeError> {
         // TODO: Device_annce should be sent by NWK automatically after a device has
-        // joined/rejoined 
+        // joined/rejoined
         Ok(())
     }
 }
@@ -204,4 +201,3 @@ pub enum ZigbeeError {
     #[error("parse error")]
     Busy,
 }
-

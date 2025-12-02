@@ -42,29 +42,29 @@
     clippy::new_without_default,
     clippy::non_std_lazy_statics,
     static_mut_refs,
-    clippy::needless_range_loop
+    clippy::needless_range_loop,
+    async_fn_in_trait
 )]
 #![feature(macro_metavar_expr_concat)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+use alloc as _;
 
 pub mod apl;
 pub mod aps;
 pub mod nwk;
 pub mod security;
-pub mod zdp;
+//pub mod zdp;
 
 // ZDO is not directly called by the application — it is controlled by BDB or
 // used internally by the stack.
 #[doc(hidden)]
 pub mod zdo;
 
-// Device object config
 // Logical type
 pub use apl::descriptors::node_descriptor::LogicalType;
+// Device object config
 pub use zdo::config::Config;
-
-// Exposes types and macros only to be within zigbee crates. Not public API.
-#[doc(hidden)]
-pub mod internal;
-
-#[doc(hidden)]
-pub use internal::storage::InMemoryStorage;

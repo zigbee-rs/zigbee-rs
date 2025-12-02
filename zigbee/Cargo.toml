@@ -15,6 +15,7 @@ edition.workspace = true
 
 [features]
 mock = ["dep:mockall"]
+alloc = []
 
 [dependencies]
 byte.workspace = true
@@ -28,3 +29,6 @@ heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 mockall = { workspace = true, optional = true }
 
+zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
+zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
+zigbee-types = { version = "0.1.0", path = "../zigbee-types" }

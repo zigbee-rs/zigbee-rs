@@ -10,17 +10,17 @@ use byte::TryRead;
 use byte::TryWrite;
 use embedded_storage::ReadStorage;
 use embedded_storage::Storage;
-use heapless::index_map::FnvIndexMap;
 use heapless::Vec;
+use heapless::index_map::FnvIndexMap;
 use spin::Mutex;
+use zigbee_macros::construct_ib;
+use zigbee_macros::impl_byte;
+use zigbee_types::ByteArray;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
+use zigbee_types::StorageVec;
+use zigbee_types::storage::InMemoryStorage;
 
-use crate::construct_ib;
-use crate::impl_byte;
-use crate::internal::storage::InMemoryStorage;
-use crate::internal::types::ByteArray;
-use crate::internal::types::IeeeAddress;
-use crate::internal::types::ShortAddress;
-use crate::internal::types::StorageVec;
 use crate::security::frame::SecurityLevel;
 
 impl_byte! {
@@ -38,6 +38,8 @@ impl_byte! {
         Invalid(u8),
     }
 }
+
+pub const NWK_COORDINATOR_ADDRESS: u16 = 0x0000;
 
 /// See Section 3.5.1.
 const NWKC_COORDINATOR_CAPABLE: bool = true;
@@ -150,26 +152,30 @@ impl_byte! {
 impl_byte! {
     #[derive(Debug)]
     pub struct NwkNeighbor {
-        extended_address: IeeeAddress,
-        network_address: ShortAddress,
-        device_type: DeviceType,
+        //pub extended_address: IeeeAddress,
+        pub network_address: ShortAddress,
+        pub device_type: DeviceType,
         #[ctx = ()]
-        rx_on_when_idle: bool,
-        end_device_configuration: u16,
-        timeout_counter: u32,
-        device_timeout: u32,
-        relationship: u8,
-        transmit_failure: u8,
-        lqi: u8,
-        outgoing_cost: u8,
-        age: u8,
-        incoming_beacon_timestamp: u8,
-        beacon_transmission_time: u8,
+        pub rx_on_when_idle: bool,
+        pub end_device_configuration: u16,
+        // unused
+        //timeout_counter: u32,
+        //device_timeout: u32,
+        pub relationship: u8,
+        pub transmit_failure: u8,
+        pub lqi: u8,
+        pub outgoing_cost: u8,
+        pub age: u8,
+        // optional
+        //incoming_beacon_timestamp: u8,
+        //beacon_transmission_time: u8,
         #[ctx = ()]
-        keepalive_received: bool,
-        mac_interface_index: u8,
-        mac_unicast_bytes_transmitted: u32,
-        mac_unicast_bytes_received: u32,
+        pub keepalive_received: bool,
+        // we only support 1 mac interface currently
+        //mac_interface_index: u8,
+        // optional
+        //mac_unicast_bytes_transmitted: u32,
+        //mac_unicast_bytes_received: u32,
     }
 }
 

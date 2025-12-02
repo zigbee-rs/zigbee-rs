@@ -1,5 +1,5 @@
-use crate::internal::macros::impl_byte;
-use crate::internal::types::ShortAddress;
+use zigbee_macros::impl_byte;
+use zigbee_types::ShortAddress;
 
 impl_byte! {
     /// Rejoin Response Command Frame

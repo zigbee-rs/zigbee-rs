@@ -1,29 +1,26 @@
-#![allow(dead_code)]
-
-/// 3.2.2.3 NLME-NETWORK-DISCOVERY.request
-pub struct NlmeNetworkDiscoveryRequest {
-    pub(crate) scan_channels_list_structure: [u8; 8],
-    pub(crate) scan_duration: u8,
-}
+use zigbee_mac::mlme::PanDescriptor;
+use zigbee_mac::BeaconOrder;
+use zigbee_mac::SuperframeOrder;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
+#[derive(Debug)]
 pub struct NlmeNetworkDiscoveryConfirm {
-    pub status: NlmeNetworkDiscoveryStatus,
-    pub network_count: u8,
-    pub network_descriptor: NetworkDescriptor,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum NlmeNetworkDiscoveryStatus {
-    Successful,
+    #[cfg(feature = "alloc")]
+    pub network_descriptor: alloc::vec::Vec<NetworkDescriptor>,
+    #[cfg(not(feature = "alloc"))]
+    pub network_descriptor:
+        heapless::Vec<NetworkDescriptor, { zigbee_mac::mlme::MAX_IEEE802154_CHANNELS }>,
 }
 
 /// Network descriptor
+#[derive(Debug)]
 pub struct NetworkDescriptor {
     /// 64-bit PAN identifier
-    pub extended_pan_id: u64,
+    pub extended_pan_id: IeeeAddress,
     /// 16-bit PAN identifier
-    pub pan_id: u16,
+    pub pan_id: ShortAddress,
     /// update ID from the NIB
     pub update_id: u8,
     /// current logical channel
@@ -33,9 +30,9 @@ pub struct NetworkDescriptor {
     /// version of the ZigBee protocol in use
     pub zigbee_version: u8,
     /// specifies how often the MAC sub-layer beacon is to be transmitted
-    pub beacon_order: u8,
+    pub beacon_order: BeaconOrder,
     /// for beacon oriented networks
-    pub superframe_order: u8,
+    pub superframe_order: SuperframeOrder,
     /// indicates that at least one ZigBee router or network currently permits
     /// joineng
     pub permit_joining: bool,
@@ -47,6 +44,24 @@ pub struct NetworkDescriptor {
     pub end_device_capacity: bool,
 }
 
+impl From<PanDescriptor> for NetworkDescriptor {
+    fn from(pd: PanDescriptor) -> Self {
+        Self {
+            extended_pan_id: pd.zigbee_beacon.extended_pan_id,
+            pan_id: pd.coord_pan_id,
+            update_id: pd.zigbee_beacon.update_id,
+            logical_channel: pd.channel,
+            stack_profile: pd.zigbee_beacon.stack_profile.stack_profile(),
+            zigbee_version: pd.zigbee_beacon.stack_profile.protocol_version(),
+            beacon_order: pd.superframe_spec.beacon_order,
+            superframe_order: pd.superframe_spec.superframe_order,
+            permit_joining: pd.superframe_spec.association_permit,
+            router_capacity: pd.zigbee_beacon.stack_profile.router_capacity(),
+            end_device_capacity: pd.zigbee_beacon.stack_profile.end_device_capacity(),
+        }
+    }
+}
+
 /// 3.2.2.5 - NLME-NETWORK-FORMATION.request
 pub struct NlmeNetworkFormationRequest {}
 /// 3.2.2.6 - NLME-NETWORK-FORMATION.confirm
@@ -54,12 +69,12 @@ pub struct NlmeNetworkFormationConfirm {}
 
 /// 3.2.2.7 - NLME-PERMIT-JOINING.request
 pub struct NlmePermitJoiningRequest {
-    pub permit_duration: u8
+    pub permit_duration: u8,
 }
 /// 3.2.2.8 - NLME-PERMIT-JOINING.confirm
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NlmePermitJoiningConfirm {
-    pub status: NlmeJoinStatus
+    pub status: NlmeJoinStatus,
 }
 /// 3.2.2.9 - NLME-START-ROUTER.request
 pub struct NlmeStartRouterRequest {}

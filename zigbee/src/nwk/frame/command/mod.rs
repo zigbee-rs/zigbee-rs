@@ -14,7 +14,8 @@ pub mod route_record;
 pub mod route_reply;
 pub mod route_request;
 
-use crate::impl_byte;
+use zigbee_macros::impl_byte;
+
 use crate::nwk::frame::command::end_device_timeout_request::EndDeviceTimeoutRequest;
 use crate::nwk::frame::command::end_device_timeout_response::EndDeviceTimeoutResponse;
 use crate::nwk::frame::command::leave::Leave;

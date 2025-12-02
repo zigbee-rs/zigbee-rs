@@ -3,7 +3,6 @@
 use heapless::Vec;
 
 use crate::apl::descriptors::node_descriptor::MacCapabilities;
-use crate::apl::descriptors::node_descriptor::NodeDescriptor;
 use crate::apl::descriptors::node_descriptor::ServerMask;
 use crate::apl::descriptors::user_descriptor::UserDescriptor;
 use crate::internal::types::IeeeAddress;
@@ -163,11 +162,11 @@ pub struct DiscoveryStoreReq {
 }
 
 /// 2.4.3.1.16 Node_Desc_store_req
-pub struct NodeDescStoreReq<'a> {
+pub struct NodeDescStoreReq {
     /// NWK Address for the Local Device
     nwk_addr: NwkAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
     // Node Descriptor
-    node_descriptor: NodeDescriptor<'a>,
+    //node_descriptor: NodeDescriptor<'a>,
 }

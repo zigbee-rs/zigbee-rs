@@ -1,4 +1,4 @@
-use crate::internal::macros::impl_byte;
+use zigbee_macros::impl_byte;
 
 impl_byte! {
     /// Rejoin Request Command Frame

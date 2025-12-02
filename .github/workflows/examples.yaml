@@ -10,7 +10,6 @@ on:
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
-  CARGO_TERM_VERBOSE: 'true'
   RUSTDOCFLAGS: -Cpanic=abort
 
 permissions:
@@ -52,8 +51,8 @@ jobs:
             target
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Build esp-sensor
-        working-directory: ./examples/esp-sensor
+      - name: Build esp-discovery
+        working-directory: ./examples/esp-discovery
         env:
           CARGO_INCREMENTAL: 0
         run: cargo build

@@ -1,6 +1,6 @@
-use crate::internal::macros::impl_byte;
-use crate::internal::types::TypeArrayCtx;
-use crate::internal::types::TypeArrayRef;
+use zigbee_macros::impl_byte;
+use zigbee_types::TypeArrayCtx;
+use zigbee_types::TypeArrayRef;
 
 impl_byte! {
     /// Network Report Command Frame

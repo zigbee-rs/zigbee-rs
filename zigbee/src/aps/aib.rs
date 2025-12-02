@@ -1,8 +1,8 @@
-use crate::construct_ib;
-use crate::impl_byte;
-use crate::internal::types::ByteArray;
-use crate::internal::types::IeeeAddress;
-use crate::internal::types::StorageVec;
+use zigbee_macros::construct_ib;
+use zigbee_macros::impl_byte;
+use zigbee_types::ByteArray;
+use zigbee_types::IeeeAddress;
+use zigbee_types::StorageVec;
 
 const MAX_APS_BINDING_TABLE: usize = 2; // TODO
 const MAX_APS_CHANNEL_MASK_LIST: usize = 2; // TODO

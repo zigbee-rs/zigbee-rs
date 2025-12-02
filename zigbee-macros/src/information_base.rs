@@ -12,7 +12,7 @@ macro_rules! construct_ib {
             )+
         }
     ) => {
-        pub type ${ concat($ib_name, Storage) } = $crate::internal::storage::InMemoryStorage<{ ${ concat($ib_name, Id) }::BUFFER_SIZE }>;
+        pub type ${ concat($ib_name, Storage) } = ::zigbee_types::storage::InMemoryStorage<{ ${ concat($ib_name, Id) }::BUFFER_SIZE }>;
 
         static mut IB: Option<$ib_name<${ concat($ib_name, Storage) }>> = None;
 
@@ -96,14 +96,14 @@ macro_rules! construct_ib {
                 use byte::TryRead;
                 use byte::TryWrite;
                 $(
-                    let cx = ::byte::LE;
+                    let _cx = ::byte::LE;
                     $(
-                        let cx = $ctx_write;
+                        let _cx = $ctx_write;
                     )?
                     $(
                         let mut buf = [0u8; ${ concat($ib_name, Id) }::$field.size()];
                         let value: $field_ty = $default;
-                        buf.write_with(&mut 0, value, cx).unwrap();
+                        buf.write_with(&mut 0, value, _cx).unwrap();
                         let _ = self.storage.lock().write(${ concat($ib_name, Id) }::$field.offset() as u32, &buf);
                     )?
                 )+
@@ -117,13 +117,13 @@ macro_rules! construct_ib {
                     use byte::TryWrite;
                     const SIZE: usize = ${ concat($ib_name, Id) }::$field.size();
                     let mut buf = [0u8; SIZE];
-                    let cx = ::byte::LE;
+                    let _cx = ::byte::LE;
                     $(
-                        let cx = $ctx_hdr;
+                        let _cx = $ctx_hdr;
                     )?
 
                     let _ = self.storage.lock().read(${ concat($ib_name, Id) }::$field.offset() as u32, &mut buf);
-                    buf.read_with(&mut 0, cx).unwrap()
+                    buf.read_with(&mut 0, _cx).unwrap()
                 }
 
                 pub fn ${ concat(set_, $field) }(&self, value: $field_ty) {
@@ -133,11 +133,11 @@ macro_rules! construct_ib {
                     const SIZE: usize = ${ concat($ib_name, Id) }::$field.size();
                     let mut buf = [0u8; SIZE];
 
-                    let cx = ::byte::LE;
+                    let _cx = ::byte::LE;
                     $(
-                        let cx = $ctx_write;
+                        let _cx = $ctx_write;
                     )?
-                    buf.write_with(&mut 0, value, cx).unwrap();
+                    buf.write_with(&mut 0, value, _cx).unwrap();
 
                     let _ = self.storage.lock().write(${ concat($ib_name, Id) }::$field.offset() as u32, &buf);
                 }

@@ -16,7 +16,7 @@
 //        Reserved,
 //    }
 //}
-use crate::impl_byte;
+use zigbee_macros::impl_byte;
 
 mod request_key;
 mod transport_key;

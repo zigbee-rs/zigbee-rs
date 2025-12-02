@@ -14,25 +14,47 @@
 //! * routing
 #![allow(dead_code)]
 
+use embedded_storage::Storage;
 use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
 use management::NlmeJoinStatus;
 use management::NlmeNetworkDiscoveryConfirm;
-use management::NlmeNetworkDiscoveryRequest;
 use management::NlmeNetworkFormationConfirm;
 use management::NlmeNetworkFormationRequest;
 use management::NlmePermitJoiningConfirm;
 use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
-
 #[cfg(feature = "mock")]
-use mockall::{automock, mock};
+use mockall::automock;
+#[cfg(feature = "mock")]
+use mockall::mock;
+use thiserror::Error;
+use zigbee_mac::Address;
+use zigbee_mac::mlme::MacError;
+use zigbee_mac::mlme::Mlme;
+use zigbee_mac::mlme::ScanType;
+use zigbee_types::ShortAddress;
+use zigbee_types::StorageVec;
+
+use crate::nwk::nib;
+use crate::nwk::nib::DeviceType;
+use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
+use crate::nwk::nib::Nib;
+use crate::nwk::nib::NibStorage;
+use crate::nwk::nib::NwkNeighbor;
+use crate::nwk::nlme::management::NetworkDescriptor;
 
 /// Network management entity
 pub mod management;
+
+#[derive(Debug, Error)]
+pub enum NetworkError {
+    #[error("mac error")]
+    MacError(#[from] MacError),
+}
 
 /// Network management service - service access point
 ///
@@ -43,40 +65,95 @@ pub mod management;
 #[cfg_attr(feature = "mock", automock)]
 pub trait NlmeSap {
     /// 3.2.2.3
-    fn network_discovery(
+    async fn network_discovery<C: Iterator<Item = u8> + 'static>(
         &mut self,
-        request: NlmeNetworkDiscoveryRequest,
-    ) -> NlmeNetworkDiscoveryConfirm;
+        channels: C,
+        duration: u8,
+    ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError>;
     /// 3.2.2.5
-    fn network_formation(
+    async fn network_formation(
         &self,
         request: NlmeNetworkFormationRequest,
     ) -> NlmeNetworkFormationConfirm;
     /// 3.2.2.7
-    fn permit_joining(&self, request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm;
+    async fn permit_joining(&self, request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm;
     /// 3.2.2.9
-    fn start_router(&self, request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm;
+    async fn start_router(&self, request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm;
     /// 3.2.2.11
-    fn ed_scan(&self, request: NlmeEdScanRequest) -> NlmeEdScanConfirm;
+    async fn ed_scan(&self, request: NlmeEdScanRequest) -> NlmeEdScanConfirm;
     // 3.2.2.13
-    fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
+    async fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
 
-    fn rejoin(&self) -> NlmeJoinConfirm;
+    async fn rejoin(&self) -> NlmeJoinConfirm;
 }
 
-#[derive(Clone, Copy)]
-pub struct Nlme {}
+pub struct Nlme<S, M> {
+    pub nib: Nib<S>,
+    mac: M,
+}
 
-impl NlmeSap for Nlme {
-    fn network_discovery(
+impl<S, M> Nlme<S, M>
+where
+    S: Storage,
+    M: Mlme,
+{
+    pub fn new(storage: S, mac: M) -> Self {
+        let nib = Nib::new(storage);
+        Self { nib, mac }
+    }
+}
+
+impl<S, M> NlmeSap for Nlme<S, M>
+where
+    M: Mlme,
+    S: Storage,
+{
+    async fn network_discovery<C: Iterator<Item = u8>>(
         &mut self,
-        _request: NlmeNetworkDiscoveryRequest,
-    ) -> NlmeNetworkDiscoveryConfirm {
-        // TODO: perform an active network scan
-        todo!()
+        channels: C,
+        duration: u8,
+    ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError> {
+        let scan_result = self
+            .mac
+            .scan_network(ScanType::Active, channels, duration)
+            .await?;
+
+        let neighbor_table = scan_result
+            .pan_descriptor
+            .iter()
+            .filter_map(|pd| match pd.coord_address {
+                Address::Short(_, short_address) => Some(NwkNeighbor {
+                    network_address: ShortAddress(short_address.0),
+                    device_type: if short_address.0 == NWK_COORDINATOR_ADDRESS {
+                        DeviceType::Coordinator
+                    } else {
+                        DeviceType::Router
+                    },
+                    rx_on_when_idle: false,
+                    end_device_configuration: 0,
+                    relationship: 0x00, // beacon from parent
+                    transmit_failure: 0,
+                    lqi: pd.link_quality,
+                    outgoing_cost: 0,
+                    age: 0,
+                    keepalive_received: false,
+                }),
+                Address::Extended(_, _) => None,
+            })
+            .collect();
+
+        self.nib.set_neighbor_table(StorageVec(neighbor_table));
+
+        let network_descriptor = scan_result
+            .pan_descriptor
+            .into_iter()
+            .map(From::from)
+            .collect();
+
+        Ok(NlmeNetworkDiscoveryConfirm { network_descriptor })
     }
 
-    fn network_formation(
+    async fn network_formation(
         &self,
         _request: NlmeNetworkFormationRequest,
     ) -> NlmeNetworkFormationConfirm {
@@ -85,19 +162,21 @@ impl NlmeSap for Nlme {
 
     // Permitting Devices to Join a Network
     // Figure 3-39
-    fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
-        NlmePermitJoiningConfirm { status: NlmeJoinStatus::InvalidRequest }
+    async fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
+        NlmePermitJoiningConfirm {
+            status: NlmeJoinStatus::InvalidRequest,
+        }
     }
 
-    fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
+    async fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
         todo!()
     }
 
-    fn ed_scan(&self, _request: NlmeEdScanRequest) -> NlmeEdScanConfirm {
+    async fn ed_scan(&self, _request: NlmeEdScanRequest) -> NlmeEdScanConfirm {
         todo!()
     }
 
-    fn join(&self, _request: NlmeJoinRequest) -> NlmeJoinConfirm {
+    async fn join(&self, _request: NlmeJoinRequest) -> NlmeJoinConfirm {
         // TODO: update neighbor table if join is successful
         // TODO: start routing (3.6.4.1)
         NlmeJoinConfirm {
@@ -109,7 +188,7 @@ impl NlmeSap for Nlme {
         }
     }
 
-    fn rejoin(&self) -> NlmeJoinConfirm {
+    async fn rejoin(&self) -> NlmeJoinConfirm {
         // TODO: read extended_pan_id from NIB
         let request = NlmeJoinRequest {
             // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
@@ -121,7 +200,6 @@ impl NlmeSap for Nlme {
             security_enabled: true,
         };
 
-        self.join(request)
+        self.join(request).await
     }
 }
-
