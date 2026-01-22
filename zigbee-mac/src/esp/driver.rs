@@ -1,12 +1,19 @@
+use core::task::Poll;
+use core::task::Waker;
+
+use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Error as Ieee802154Error;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
+use futures_util::Stream;
 
 static TX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+static RX_WAKER: CriticalSectionMutex<Option<Waker>> = CriticalSectionMutex::new(None);
 
 pub struct Ieee802154Driver<'a> {
     driver: Ieee802154<'a>,
@@ -37,6 +44,11 @@ impl<'a> Ieee802154Driver<'a> {
 
     fn rx_callback() {
         RX_SIGNAL.signal(());
+        RX_WAKER.lock(|w| {
+            if let Some(w) = w {
+                w.wake_by_ref();
+            }
+        })
     }
 
     fn tx_callback() {
@@ -50,7 +62,8 @@ impl<'a> Ieee802154Driver<'a> {
         Ok(())
     }
 
-    pub async fn receive(&mut self) -> Result<ReceivedFrame, Ieee802154Error> {
+    #[allow(unused)]
+    pub async fn receive_one(&mut self) -> Result<ReceivedFrame, Ieee802154Error> {
         RX_SIGNAL.reset();
         self.driver.start_receive();
 
@@ -62,5 +75,38 @@ impl<'a> Ieee802154Driver<'a> {
         };
 
         frame
+    }
+
+    pub fn stream<'b>(&'b mut self) -> ReceiverStream<'a, 'b> {
+        self.driver.start_receive();
+        ReceiverStream { driver: self }
+    }
+}
+
+pub struct ReceiverStream<'a, 'b> {
+    driver: &'b mut Ieee802154Driver<'a>,
+}
+
+impl Stream for ReceiverStream<'_, '_> {
+    type Item = Result<ReceivedFrame, Ieee802154Error>;
+
+    fn poll_next(
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let received = self.driver.driver.received();
+        match received {
+            Some(frame) => Poll::Ready(Some(frame)),
+            None => {
+                // SAFETY: lock is called non-reentrantly
+                unsafe {
+                    RX_WAKER.lock_mut(|w| {
+                        *w = Some(cx.waker().clone());
+                    });
+                }
+
+                Poll::Pending
+            }
+        }
     }
 }

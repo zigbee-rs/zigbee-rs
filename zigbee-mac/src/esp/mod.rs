@@ -14,7 +14,6 @@ use ieee802154::mac::Header;
 use crate::esp::driver::Ieee802154Driver;
 use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
 use crate::mlme::MAX_IEEE802154_CHANNELS;
-use crate::mlme::MAX_PAN_DESCRIPTOR_SIZE;
 use crate::mlme::MacError;
 use crate::mlme::Mlme;
 use crate::mlme::PanDescriptor;
@@ -36,7 +35,9 @@ impl<'a> EspMlme<'a> {
             seq_number: 0,
         }
     }
+}
 
+impl EspMlme<'_> {
     const fn beacon_request_frame(&self) -> [u8; 10] {
         let seq_number = self.seq_number;
         [0x3, 0x8, seq_number, 0xff, 0xff, 0xff, 0xff, 0x7, 0x0, 0x0]
@@ -80,8 +81,9 @@ impl<'a> EspMlme<'a> {
         channel: u8,
         pds: &mut PanDescriptorList,
     ) -> Result<(), MacError> {
-        for _ in 0..MAX_PAN_DESCRIPTOR_SIZE {
-            let frame = self.driver.receive().await;
+        use futures_util::StreamExt;
+        let mut receiver_stream = self.driver.stream();
+        while let Some(frame) = receiver_stream.next().await {
             match frame {
                 Ok(ReceivedFrame {
                     frame:
