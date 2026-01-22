@@ -1,5 +1,8 @@
 use ieee802154::mac::Address;
+use ieee802154::mac::ExtendedAddress;
 use ieee802154::mac::beacon::SuperframeSpecification;
+use ieee802154::mac::command::AssociationStatus;
+use ieee802154::mac::command::CapabilityInformation;
 use thiserror::Error;
 use zigbee_macros::impl_byte;
 use zigbee_types::ByteArray;
@@ -21,6 +24,20 @@ pub trait Mlme {
         channels: impl Iterator<Item = u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError>;
+
+    async fn associate(
+        &mut self,
+        channel: u8,
+        dest: Address,
+        capabilities: CapabilityInformation,
+    ) -> Result<AssociationResponse, MacError>;
+}
+
+#[derive(Debug)]
+pub struct AssociationResponse {
+    pub device_address: ExtendedAddress,
+    pub association_address: ShortAddress,
+    pub status: AssociationStatus,
 }
 
 #[repr(u8)]
@@ -40,8 +57,17 @@ pub enum MacError {
     InvalidScanParams,
     #[error("read error")]
     ReadError(byte::Error),
+    #[error("invalid frame")]
+    InvalidFrame(byte::Error),
+    #[cfg(feature = "esp32c6")]
     #[error("radio error")]
-    RadioError,
+    RadioError(#[from] esp_radio::ieee802154::Error),
+}
+
+impl From<byte::Error> for MacError {
+    fn from(e: byte::Error) -> Self {
+        Self::InvalidFrame(e)
+    }
 }
 
 #[cfg(feature = "alloc")]

@@ -16,6 +16,7 @@ edition.workspace = true
 [features]
 mock = ["dep:mockall"]
 alloc = []
+in-memory-nib = ["alloc"]
 
 [dependencies]
 byte.workspace = true

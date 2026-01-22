@@ -7,12 +7,19 @@ use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
+use futures_util::StreamExt;
 use ieee802154::mac::Address;
 use ieee802154::mac::FrameContent;
+use ieee802154::mac::FrameType;
+use ieee802154::mac::FrameVersion;
 use ieee802154::mac::Header;
+use ieee802154::mac::command::CapabilityInformation;
+use ieee802154::mac::command::Command;
+use ieee802154::mac::security::SecurityContext;
 
 use crate::esp::driver::Ieee802154Driver;
 use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
+use crate::mlme::AssociationResponse;
 use crate::mlme::MAX_IEEE802154_CHANNELS;
 use crate::mlme::MacError;
 use crate::mlme::Mlme;
@@ -38,8 +45,13 @@ impl<'a> EspMlme<'a> {
 }
 
 impl EspMlme<'_> {
-    const fn beacon_request_frame(&self) -> [u8; 10] {
-        let seq_number = self.seq_number;
+    fn sequence_number(&mut self) -> u8 {
+        self.seq_number = self.seq_number.wrapping_add(1);
+        self.seq_number
+    }
+
+    fn beacon_request_frame(&mut self) -> [u8; 10] {
+        let seq_number = self.sequence_number();
         [0x3, 0x8, seq_number, 0xff, 0xff, 0xff, 0xff, 0x7, 0x0, 0x0]
     }
 
@@ -53,13 +65,12 @@ impl EspMlme<'_> {
             config.channel = channel;
         });
 
-        if let Err(e) = self.driver.transmit(&self.beacon_request_frame()).await {
+        let frame = self.beacon_request_frame();
+        if let Err(e) = self.driver.transmit(&frame).await {
             log::error!("[MLME-SCAN]: error transmitting beacon: {e}");
         }
 
         log::debug!("[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages...");
-
-        self.seq_number = self.seq_number.wrapping_add(1);
 
         let delay_us = calculate_scan_duration_max_us(duration);
         log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
@@ -81,7 +92,6 @@ impl EspMlme<'_> {
         channel: u8,
         pds: &mut PanDescriptorList,
     ) -> Result<(), MacError> {
-        use futures_util::StreamExt;
         let mut receiver_stream = self.driver.stream();
         while let Some(frame) = receiver_stream.next().await {
             match frame {
@@ -126,12 +136,69 @@ impl EspMlme<'_> {
                 }
                 Err(e) => {
                     log::error!("[MLME-SCAN] receive error: {e}");
-                    return Err(MacError::RadioError);
+                    return Err(MacError::RadioError(e));
                 }
             }
         }
 
         Ok(())
+    }
+
+    async fn wait_for_ack(&mut self) -> Result<(), MacError> {
+        let mut receiver_stream = self.driver.stream();
+        while let Some(frame) = receiver_stream.next().await {
+            match frame {
+                Ok(ReceivedFrame {
+                    frame:
+                        Frame {
+                            header: Header { seq, .. },
+
+                            content: FrameContent::Acknowledgement,
+                            ..
+                        },
+                    ..
+                }) if seq == self.seq_number => {
+                    break;
+                }
+                Ok(_) => continue,
+                Err(e) => return Err(MacError::RadioError(e)),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn association_request_frame(
+        &self,
+        dest: Address,
+        src: Option<Address>,
+        capabilities: CapabilityInformation,
+    ) -> Result<[u8; 20], MacError> {
+        let frame_header = Header {
+            frame_type: FrameType::MacCommand,
+            frame_pending: false,
+            ack_request: true,
+            pan_id_compress: false,
+            seq_no_suppress: false,
+            ie_present: false,
+            version: FrameVersion::Ieee802154_2003,
+            seq: self.seq_number,
+            destination: Some(dest),
+            source: src,
+            auxiliary_security_header: None,
+        };
+        let frame_content = FrameContent::Command(Command::AssociationRequest(capabilities));
+
+        let mut buf = [0u8; 20];
+        let offset = &mut 0;
+        buf.write_with(
+            offset,
+            frame_header,
+            &Some(&mut SecurityContext::no_security()),
+        )?;
+        buf.write_with(offset, frame_content, ())?;
+
+        Ok(buf)
     }
 }
 
@@ -174,5 +241,29 @@ impl Mlme for EspMlme<'_> {
             scan_type,
             pan_descriptor,
         })
+    }
+
+    async fn associate(
+        &mut self,
+        channel: u8,
+        dest: Address,
+        capabilities: CapabilityInformation,
+    ) -> Result<AssociationResponse, MacError> {
+        self.driver.update_driver_config(|config| {
+            *config = Default::default();
+            config.channel = channel;
+            config.pan_id = Some(dest.pan_id().0);
+        });
+
+        let frame = self.association_request_frame(dest, None, capabilities)?;
+        self.driver.transmit(&frame).await?;
+
+        // wait for ACK (within macResponseWaitTime)
+        self.wait_for_ack().await?;
+
+        // wait for response
+        // generate MLME-ASSOCIATE.response
+
+        unimplemented!()
     }
 }
