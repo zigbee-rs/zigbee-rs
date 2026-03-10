@@ -27,6 +27,7 @@ fn enddevice_on_network_should_trigger_rejoin() {
         status: NlmeJoinStatus::Success,
         network_address: 1337u16,
         extended_pan_id: 12345u64,
+        channel: 11,
         enhanced_beacon_type: false,
         mac_interface_index: 0u8,
     };
@@ -40,7 +41,7 @@ fn enddevice_on_network_should_trigger_rejoin() {
     };
 
     let bdb_commisioning_capability = 0u8;
-    let mut bdb = BaseDeviceBehavior::new(storage, &nlme, config, bdb_commisioning_capability);
+    let mut bdb = BaseDeviceBehavior::new(storage, &mut nlme, config, bdb_commisioning_capability);
 
     // when
     let result = bdb.start_initialization_procedure();

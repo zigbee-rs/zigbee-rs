@@ -47,7 +47,7 @@ use zigbee::zdo::ZigbeeDevice;
 pub struct BaseDeviceBehavior<'a, C, T: NlmeSap> {
     storage: Mutex<C>,
     device: ZigbeeDevice,
-    nlme: &'a T,
+    nlme: &'a mut T,
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commisioning_capability: u8,
@@ -59,7 +59,12 @@ where
     C: Storage,
     T: NlmeSap,
 {
-    pub fn new(storage: C, nlme: &'a T, config: Config, bdb_commisioning_capability: u8) -> Self {
+    pub fn new(
+        storage: C,
+        nlme: &'a mut T,
+        config: Config,
+        bdb_commisioning_capability: u8,
+    ) -> Self {
         let device = ZigbeeDevice::new(config);
 
         Self {
@@ -165,7 +170,7 @@ where
         self.bdb_commisioning_capability == 1
     }
 
-    async fn attempt_to_rejoin(&self) -> Result<(), ZigbeeError> {
+    async fn attempt_to_rejoin(&mut self) -> Result<(), ZigbeeError> {
         let confirm = self.nlme.rejoin().await;
 
         if confirm.status == NlmeJoinStatus::Success {

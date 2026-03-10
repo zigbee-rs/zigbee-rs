@@ -17,6 +17,11 @@ pub const A_BASE_SLOT_DURATION: u32 = 60;
 pub const A_NUM_SUPER_FRAME_SLOTS: u32 = 16;
 pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_FRAME_SLOTS;
 
+/// The maximum time, in symbols, a device shall wait for a response command
+/// to be available following a request command. See IEEE 802.15.4-2003 §7.4.2.
+/// aResponseWaitTime = 32 * aBaseSuperframeDuration = 32 * 960 = 30720 symbols.
+pub const A_RESPONSE_WAIT_TIME: u32 = 32 * A_BASE_SUPER_FRAME_DURATION;
+
 pub trait Mlme {
     async fn scan_network(
         &mut self,
@@ -31,6 +36,14 @@ pub trait Mlme {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError>;
+
+    /// MLME-POLL.request (IEEE 802.15.4 §7.1.16.1).
+    ///
+    /// Sends a data request command to `coord_address` to poll the
+    /// coordinator for pending data. Returns `Ok(true)` when the ACK has
+    /// its frame-pending subfield set (data available) or `Err(NoData)`
+    /// when the subfield is clear.
+    async fn poll(&mut self, coord_address: Address) -> Result<bool, MacError>;
 }
 
 #[derive(Debug)]
@@ -59,6 +72,10 @@ pub enum MacError {
     ReadError(byte::Error),
     #[error("invalid frame")]
     InvalidFrame(byte::Error),
+    #[error("no data available from coordinator")]
+    NoData,
+    #[error("no acknowledgment received")]
+    NoAck,
     #[cfg(feature = "esp32c6")]
     #[error("radio error")]
     RadioError(#[from] esp_radio::ieee802154::Error),

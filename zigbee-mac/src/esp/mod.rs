@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use byte::BytesExt;
 use embassy_futures::select::Either;
 use embassy_time::Timer;
+use esp_hal::efuse::Efuse;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
@@ -19,6 +20,7 @@ use ieee802154::mac::security::SecurityContext;
 
 use crate::esp::driver::Ieee802154Driver;
 use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
+use crate::mlme::A_RESPONSE_WAIT_TIME;
 use crate::mlme::AssociationResponse;
 use crate::mlme::MAX_IEEE802154_CHANNELS;
 use crate::mlme::MacError;
@@ -33,13 +35,27 @@ mod driver;
 pub struct EspMlme<'a> {
     driver: Ieee802154Driver<'a>,
     seq_number: u8,
+    /// IEEE 802.15.4 extended (EUI-64) address derived from the
+    /// ESP32's factory-burned eFuse MAC address.
+    ieee_address: ieee802154::mac::ExtendedAddress,
+}
+
+/// Derive an EUI-64 extended address from a 6-byte EUI-48 MAC.
+///
+/// Inserts `0xFF, 0xFE` after the OUI (first 3 bytes) per the
+/// IEEE EUI-64 conversion convention:
+///   `AA:BB:CC:DD:EE:FF` → `AA:BB:CC:FF:FE:DD:EE:FF`
+fn eui48_to_eui64(mac: [u8; 6]) -> u64 {
+    u64::from_be_bytes([mac[0], mac[1], mac[2], 0xFF, 0xFE, mac[3], mac[4], mac[5]])
 }
 
 impl<'a> EspMlme<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
+        let ieee_address = ieee802154::mac::ExtendedAddress(eui48_to_eui64(Efuse::mac_address()));
         Self {
             driver: Ieee802154Driver::new(ieee802154, config),
             seq_number: 0,
+            ieee_address,
         }
     }
 }
@@ -144,36 +160,43 @@ impl EspMlme<'_> {
         Ok(())
     }
 
-    async fn wait_for_ack(&mut self) -> Result<(), MacError> {
+    async fn wait_for_ack(&mut self) -> Result<bool, MacError> {
         let mut receiver_stream = self.driver.stream();
         while let Some(frame) = receiver_stream.next().await {
             match frame {
                 Ok(ReceivedFrame {
                     frame:
                         Frame {
-                            header: Header { seq, .. },
+                            header:
+                                Header {
+                                    seq, frame_pending, ..
+                                },
 
                             content: FrameContent::Acknowledgement,
                             ..
                         },
                     ..
                 }) if seq == self.seq_number => {
-                    break;
+                    return Ok(frame_pending);
                 }
                 Ok(_) => continue,
                 Err(e) => return Err(MacError::RadioError(e)),
             }
         }
 
-        Ok(())
+        Err(MacError::NoAck)
     }
 
-    fn association_request_frame(
-        &self,
+    /// Build a MAC data request command frame (IEEE 802.15.4 §7.3.2.1).
+    ///
+    /// After an association request, the device polls the coordinator for
+    /// the association response by sending this command.
+    fn data_request_frame(
+        &mut self,
         dest: Address,
-        src: Option<Address>,
-        capabilities: CapabilityInformation,
+        src_ieee: ieee802154::mac::ExtendedAddress,
     ) -> Result<[u8; 20], MacError> {
+        let seq = self.sequence_number();
         let frame_header = Header {
             frame_type: FrameType::MacCommand,
             frame_pending: false,
@@ -182,7 +205,104 @@ impl EspMlme<'_> {
             seq_no_suppress: false,
             ie_present: false,
             version: FrameVersion::Ieee802154_2003,
-            seq: self.seq_number,
+            seq,
+            destination: Some(dest),
+            source: Some(Address::Extended(dest.pan_id(), src_ieee)),
+            auxiliary_security_header: None,
+        };
+        let frame_content = FrameContent::Command(Command::DataRequest);
+
+        let mut buf = [0u8; 20];
+        let offset = &mut 0;
+        buf.write_with(
+            offset,
+            frame_header,
+            &Some(&mut SecurityContext::no_security()),
+        )?;
+        buf.write_with(offset, frame_content, ())?;
+
+        Ok(buf)
+    }
+
+    /// Wait for an association response command frame from the coordinator.
+    ///
+    /// Per IEEE 802.15.4 §7.5.3.1, after the data request is acknowledged
+    /// with frame_pending=1, the coordinator sends the association response
+    /// command containing the assigned short address and status.
+    ///
+    /// If no response is received within `aResponseWaitTime` symbols, the
+    /// primitive returns `MacError::NoData` (IEEE 802.15.4 §7.1.3.1.3).
+    async fn wait_for_association_response(&mut self) -> Result<AssociationResponse, MacError> {
+        let timeout = Timer::after_micros((A_RESPONSE_WAIT_TIME as u64) * 16);
+        let receive = async {
+            let mut receiver_stream = self.driver.stream();
+            while let Some(frame) = receiver_stream.next().await {
+                match frame {
+                    Ok(ReceivedFrame {
+                        frame:
+                            Frame {
+                                header:
+                                    Header {
+                                        source: Some(source),
+                                        ..
+                                    },
+                                content:
+                                    FrameContent::Command(Command::AssociationResponse(
+                                        short_addr,
+                                        status,
+                                    )),
+                                ..
+                            },
+                        ..
+                    }) => {
+                        let device_address = match source {
+                            Address::Extended(_, ext) => ext,
+                            Address::Short(_, _) => {
+                                log::warn!(
+                                    "[MLME-ASSOCIATE] expected extended address in association response"
+                                );
+                                continue;
+                            }
+                        };
+                        return Ok(AssociationResponse {
+                            device_address,
+                            association_address: zigbee_types::ShortAddress(short_addr.0),
+                            status,
+                        });
+                    }
+                    Ok(_) => continue,
+                    Err(e) => return Err(MacError::RadioError(e)),
+                }
+            }
+
+            Err(MacError::NoData)
+        };
+
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => {
+                log::warn!("[MLME-ASSOCIATE] timed out waiting for association response");
+                Err(MacError::NoData)
+            }
+            Either::Second(result) => result,
+        }
+    }
+
+    fn association_request_frame(
+        &mut self,
+        dest: Address,
+        src: Option<Address>,
+        capabilities: CapabilityInformation,
+    ) -> Result<[u8; 20], MacError> {
+        let seq = self.sequence_number();
+        let frame_header = Header {
+            frame_type: FrameType::MacCommand,
+            frame_pending: false,
+            ack_request: true,
+            pan_id_compress: false,
+            seq_no_suppress: false,
+            ie_present: false,
+            version: FrameVersion::Ieee802154_2003,
+            seq,
             destination: Some(dest),
             source: src,
             auxiliary_security_header: None,
@@ -249,21 +369,61 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
+        let ext_addr = self.ieee_address;
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
             config.pan_id = Some(dest.pan_id().0);
+            // Tell the hardware our extended address so that address
+            // filtering and auto-ACK work for frames addressed to us.
+            config.ext_addr = Some(ext_addr.0);
+            // Enable hardware auto-ACK for received frames addressed to us.
+            // The coordinator's association response has ack_request set, and
+            // per IEEE 802.15.4 §7.5.3.1 we must acknowledge it. ACK timing
+            // is 12 symbol periods (~192 µs) which is too tight for software.
+            config.auto_ack_rx = true;
         });
 
-        let frame = self.association_request_frame(dest, None, capabilities)?;
+        // Step 1: Send association request command (IEEE 802.15.4 §7.5.3.1).
+        // The source address must be the device's extended address.
+        let src = Address::Extended(dest.pan_id(), ext_addr);
+        let frame = self.association_request_frame(dest, Some(src), capabilities)?;
         self.driver.transmit(&frame).await?;
 
-        // wait for ACK (within macResponseWaitTime)
-        self.wait_for_ack().await?;
+        // Step 2: Wait for ACK to the association request
+        let _frame_pending = self.wait_for_ack().await?;
 
-        // wait for response
-        // generate MLME-ASSOCIATE.response
+        // Step 3: Wait aResponseWaitTime for the coordinator to prepare its
+        // association decision (IEEE 802.15.4 §7.5.3.1).
+        // aResponseWaitTime = 32 * aBaseSuperframeDuration symbols.
+        // At 16µs/symbol (2.4 GHz O-QPSK): ~491 ms.
+        let wait_us: u64 = (A_RESPONSE_WAIT_TIME as u64) * 16;
+        Timer::after_micros(wait_us).await;
 
-        unimplemented!()
+        // Step 4–5: Poll the coordinator for the association response
+        // (MLME-POLL.request per IEEE 802.15.4 §7.1.16.1).
+        let frame_pending = self.poll(dest).await?;
+        if !frame_pending {
+            return Err(MacError::NoData);
+        }
+
+        // Step 6: Receive the association response command frame from the
+        // coordinator containing the assigned short address and status.
+        // The ACK for the response is sent automatically by the hardware
+        // (auto_ack_rx = true) per IEEE 802.15.4 §7.5.3.1.
+        // If no response arrives within aResponseWaitTime, NoData is returned.
+        self.wait_for_association_response().await
+    }
+
+    async fn poll(&mut self, coord_address: Address) -> Result<bool, MacError> {
+        // Send a data request command to poll the coordinator for pending
+        // data (IEEE 802.15.4 §7.1.16.1.3, §7.3.2.1).
+        let data_req = self.data_request_frame(coord_address, self.ieee_address)?;
+        self.driver.transmit(&data_req).await?;
+
+        // Wait for ACK. The frame_pending subfield indicates whether the
+        // coordinator has data queued for us.
+        let frame_pending = self.wait_for_ack().await?;
+        Ok(frame_pending)
     }
 }

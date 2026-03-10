@@ -30,11 +30,11 @@ use basemgt::ApsmeUnbindRequestStatus;
 
 use super::binding::ApsBindingTable;
 use super::types::Address;
-use crate::nwk::nlme::management::NlmeJoinRequest;
-use crate::nwk::nlme::management::NlmeJoinStatus;
 //use crate::nwk::nlme::management::NlmeNetworkDiscoveryRequest;
 use crate::nwk::nlme::Nlme;
 use crate::nwk::nlme::NlmeSap;
+use crate::nwk::nlme::management::NlmeJoinRequest;
+use crate::nwk::nlme::management::NlmeJoinStatus;
 
 pub mod basemgt;
 pub mod groupmgt;
@@ -101,6 +101,7 @@ impl Apsme {
             extended_pan_id: 0x0015_8D00_01AB_CD12,
             rejoin_network: 0u8,
             scan_duration: 10u8,
+            capability_information: crate::nwk::nib::CapabilityInformation(0x80),
             security_enabled: false,
         };
         //let confirm = self.nwk.join(request);

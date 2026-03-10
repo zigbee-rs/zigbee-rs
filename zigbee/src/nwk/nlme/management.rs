@@ -1,8 +1,10 @@
-use zigbee_mac::mlme::PanDescriptor;
 use zigbee_mac::BeaconOrder;
 use zigbee_mac::SuperframeOrder;
+use zigbee_mac::mlme::PanDescriptor;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
+
+use crate::nwk::nib::CapabilityInformation;
 
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
 #[derive(Debug)]
@@ -15,7 +17,11 @@ pub struct NlmeNetworkDiscoveryConfirm {
 }
 
 /// Network descriptor
-#[derive(Debug)]
+///
+/// Each entry corresponds to a single beacon received during network
+/// discovery.  See Table 3-12 for the fields returned to the next
+/// higher layer.
+#[derive(Debug, Clone)]
 pub struct NetworkDescriptor {
     /// 64-bit PAN identifier
     pub extended_pan_id: IeeeAddress,
@@ -34,7 +40,7 @@ pub struct NetworkDescriptor {
     /// for beacon oriented networks
     pub superframe_order: SuperframeOrder,
     /// indicates that at least one ZigBee router or network currently permits
-    /// joineng
+    /// joining
     pub permit_joining: bool,
     /// set to TRUE if the device is capable of accepting join requests from
     /// router-capable devices
@@ -85,12 +91,25 @@ pub struct NlmeEdScanRequest {}
 /// 3.2.2.12 - NLME-ED-SCAN.confirm
 pub struct NlmeEdScanConfirm {}
 /// 3.2.2.13 - NLME-JOIN.request
+///
+/// See Table 3-21 for the full list of parameters.
 pub struct NlmeJoinRequest {
     pub extended_pan_id: u64,
     pub rejoin_network: u8,
     // ScanChannelsListStructure
     pub scan_duration: u8,
-    // CapabilityInformation
+    /// Capability information bitmap (Table 3-62).
+    ///
+    /// | Bit | Name                  |
+    /// |-----|-----------------------|
+    /// |  0  | Alternate PAN coord   |
+    /// |  1  | Device type (1=router)|
+    /// |  2  | Power source          |
+    /// |  3  | Receiver on when idle |
+    /// | 4-5 | Reserved              |
+    /// |  6  | Security capability   |
+    /// |  7  | Allocate address      |
+    pub capability_information: CapabilityInformation,
     pub security_enabled: bool,
 }
 /// 3.2.2.14 - NLME-JOIN.indication
@@ -106,7 +125,9 @@ pub struct NlmeJoinConfirm {
     pub status: NlmeJoinStatus,
     pub network_address: u16,
     pub extended_pan_id: u64,
-    // Channel List Structure
+    /// Logical channel of the joined network (from ChannelListStructure,
+    /// Table 3-25).
+    pub channel: u8,
     pub enhanced_beacon_type: bool,
     pub mac_interface_index: u8,
 }
@@ -117,6 +138,12 @@ pub enum NlmeJoinStatus {
     InvalidRequest,
     NotPermitted,
     NoNetworks,
+    /// MAC sub-layer reported PAN at capacity.
+    PanAtCapacity,
+    /// MAC sub-layer reported PAN access denied.
+    PanAccessDenied,
+    /// MAC association failed (forwarded from MLME-ASSOCIATE.confirm).
+    MacError,
     // TODO: add more from 3.2.2.13.3
 }
 

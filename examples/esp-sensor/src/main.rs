@@ -35,7 +35,7 @@ use zigbee::LogicalType;
 use zigbee_base_device_behavior::BaseDeviceBehavior;
 
 static BUTTON: Mutex<RefCell<Option<Input>>> = Mutex::new(RefCell::new(None));
-static TIMER:  Mutex<RefCell<Option<PeriodicTimer<'_, Blocking>>>> = Mutex::new(RefCell::new(None));
+static TIMER: Mutex<RefCell<Option<PeriodicTimer<'_, Blocking>>>> = Mutex::new(RefCell::new(None));
 
 #[main]
 fn main() -> ! {
@@ -46,9 +46,11 @@ fn main() -> ! {
     let offset = 0;
     // bdbIsNodeOnANetwork = true
     let data: &[u8] = &[1];
-    storage.write(offset, data).expect("Failed to write to storage");
+    storage
+        .write(offset, data)
+        .expect("Failed to write to storage");
 
-    let nlme = Nlme {};
+    let mut nlme = Nlme {};
 
     let config = zigbee::Config {
         device_type: LogicalType::EndDevice,
@@ -57,7 +59,7 @@ fn main() -> ! {
 
     let bdb_commisioning_capability = 0u8;
 
-    let mut bdb = BaseDeviceBehavior::new(storage, &nlme, config, bdb_commisioning_capability);
+    let mut bdb = BaseDeviceBehavior::new(storage, &mut nlme, config, bdb_commisioning_capability);
     let _ = bdb.start_initialization_procedure();
 
     let peripherals = esp_hal::init(esp_hal::Config::default());
@@ -107,4 +109,3 @@ fn timer_interrupt_handler() {
         };
     });
 }
-
