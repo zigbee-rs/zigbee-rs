@@ -121,6 +121,7 @@ pub struct NlmeJoinIndication {
     pub(crate) secure_rejoin: bool,
 }
 /// 3.2.2.15 - NLME-JOIN.confirm
+#[derive(Debug)]
 pub struct NlmeJoinConfirm {
     pub status: NlmeJoinStatus,
     pub network_address: u16,

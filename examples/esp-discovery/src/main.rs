@@ -11,9 +11,10 @@ use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use esp_storage::FlashStorage;
 use heapless::Vec;
+use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::NlmeSap;
-use zigbee::nwk::nlme::management::NetworkDescriptor;
+use zigbee::nwk::nlme::management::{NetworkDescriptor, NlmeJoinRequest, NlmeJoinStatus};
 use zigbee_mac::esp::EspMlme;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -39,38 +40,62 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let mac = EspMlme::new(ieee802154, Default::default());
 
     let mut nwk = Nlme::new(flash, mac);
+    nwk.nib.init();
 
-    loop {
-        println!("Start network discovery, channels: {CHANNELS:?}, duration: {SCAN_DURATION}");
-        match nwk.network_discovery(CHANNELS, SCAN_DURATION).await {
-            Ok(nd) => {
-                let mut visited: Vec<zigbee_types::ShortAddress, 10> = heapless::Vec::new();
-                let nd: Vec<NetworkDescriptor, 10> = nd
-                    .network_descriptor
-                    .into_iter()
-                    .filter(|nd| {
-                        if visited.contains(&nd.pan_id) {
-                            false
-                        } else {
-                            let _ = visited.push(nd.pan_id);
-                            true
-                        }
-                    })
-                    .collect();
+    println!("Starting network discovery, channels: {CHANNELS:?}, duration: {SCAN_DURATION}");
+    match nwk.network_discovery(CHANNELS, SCAN_DURATION).await {
+        Ok(nd) => {
+            let mut visited: Vec<zigbee_types::ShortAddress, 10> = heapless::Vec::new();
+            let nd: Vec<NetworkDescriptor, 10> = nd
+                .network_descriptor
+                .into_iter()
+                .filter(|nd| {
+                    if visited.contains(&nd.pan_id) {
+                        false
+                    } else {
+                        let _ = visited.push(nd.pan_id);
+                        true
+                    }
+                })
+                .collect();
 
-                println!("Found following Zigbee networks in proximity:");
-                println!("{nd:#?}");
+            println!("Found following Zigbee networks in proximity:");
+            println!("{nd:#?}");
 
-                println!("Neighbor Table:");
-                let nt = nwk.nib.neighbor_table();
-                println!("{nt:#?}");
-            }
-            Err(e) => {
-                println!("Failed to discovery networks: {e}");
+            println!("Neighbor Table:");
+            let nt = nwk.nib.neighbor_table();
+            println!("{nt:#?}");
+
+            // Join the first discovered network
+            if let Some(first) = nd.first() {
+                let request = NlmeJoinRequest {
+                    extended_pan_id: first.extended_pan_id.0,
+                    rejoin_network: 0x00,
+                    scan_duration: 0x00,
+                    capability_information: CapabilityInformation(0x80),
+                    security_enabled: false,
+                };
+                println!("Joining network EPID={:#x}...", request.extended_pan_id);
+                let confirm = nwk.join(request).await;
+                println!("Join result: {confirm:#?}");
+
+                if confirm.status == NlmeJoinStatus::Success {
+                    println!(
+                        "NIB: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
+                        nwk.nib.network_address(),
+                        nwk.nib.panid(),
+                        nwk.nib.extended_panid(),
+                        nwk.nib.update_id()
+                    );
+                }
             }
         }
+        Err(e) => {
+            println!("Discovery failed: {e}");
+        }
+    }
 
-        println!("Sleep for 5 min before starting next scan...");
-        Timer::after_secs(300).await;
+    loop {
+        Timer::after_secs(60).await;
     }
 }
