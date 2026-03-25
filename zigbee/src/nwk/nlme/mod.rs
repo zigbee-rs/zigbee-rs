@@ -14,6 +14,7 @@
 //! * routing
 #![allow(dead_code)]
 
+use byte::TryRead;
 use embedded_storage::Storage;
 use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
@@ -38,17 +39,27 @@ use zigbee_mac::PanId;
 use zigbee_mac::mlme::MacError;
 use zigbee_mac::mlme::Mlme;
 use zigbee_mac::mlme::ScanType;
+use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
 
+use crate::aps::aib::Aib;
+use crate::aps::aib::AibStorage;
+use crate::aps::apdu::frame::Frame as ApsFrame;
+use crate::aps::apdu::frame::command::Command as ApsCommand;
+use crate::aps::apdu::frame::command::TransportKey;
+use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
+use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nib::Nib;
+use crate::nwk::nib::NibStorage;
 use crate::nwk::nib::NwkNeighbor;
 use crate::nwk::nib::link_cost_from_lqi;
+use crate::security::SecurityContext;
 
 /// Network management entity
 pub mod management;
@@ -57,6 +68,22 @@ pub mod management;
 pub enum NetworkError {
     #[error("mac error")]
     MacError(#[from] MacError),
+    #[error("not joined to a network")]
+    NotJoined,
+    #[error("no transport key received from coordinator")]
+    NoTransportKey,
+    #[error("frame parse error")]
+    ParseError,
+    #[error("security error")]
+    SecurityError(#[from] crate::security::SecurityError),
+    #[error("unexpected frame type (expected APS Transport Key)")]
+    UnexpectedFrame,
+}
+
+impl From<byte::Error> for NetworkError {
+    fn from(_: byte::Error) -> Self {
+        Self::ParseError
+    }
 }
 
 /// Network management service - service access point
@@ -194,6 +221,103 @@ where
             allocate_address: cap.allocate_address(),
         }
     }
+
+    /// Find the parent's MAC address from the neighbor table.
+    fn parent_address(&self) -> Result<Address, NetworkError> {
+        let table = self.nib.neighbor_table();
+        let parent = table
+            .iter()
+            .find(|n| n.relationship == 0x00)
+            .ok_or(NetworkError::NotJoined)?;
+        let addr = Address::Short(
+            PanId(self.nib.panid()),
+            MacShortAddress(parent.network_address.0),
+        );
+        Ok(addr)
+    }
+
+    /// Wait for the Trust Center to deliver the network key after joining.
+    ///
+    /// After a successful NLME-JOIN via MAC association, the coordinator
+    /// queues an APS Transport-Key command (§4.4.10.1) containing the
+    /// active network key, encrypted with the default Trust Center Link
+    /// Key ("ZigBeeAlliance09").
+    ///
+    /// This method polls the coordinator, receives the NWK data frame,
+    /// decrypts the APS layer using the default TCLK, and installs the
+    /// network key into the NIB security material set.
+    pub async fn await_transport_key(&mut self) -> Result<(), NetworkError> {
+        let coord_addr = self.parent_address()?;
+
+        // Poll coordinator for pending data (§7.1.16.1).
+        // The transport key may not be ready immediately; retry a few times.
+        let mut frame_pending = false;
+        for _ in 0..5u8 {
+            if self.mac.poll(coord_addr).await.is_ok() {
+                frame_pending = true;
+                break;
+            }
+        }
+        if !frame_pending {
+            return Err(NetworkError::NoTransportKey);
+        }
+
+        // Receive the pending MAC data frame.
+        let mut buf = [0u8; 128];
+        let (len, _lqi) = self.mac.receive(&mut buf).await?;
+        let frame_buf = &mut buf[..len];
+
+        // Parse NWK header (§3.3.1). The initial transport key frame is
+        // NOT NWK-encrypted since the device does not yet possess a
+        // network key.
+        let (_nwk_hdr, nwk_hdr_len) = NwkHeader::try_read(frame_buf, ())?;
+        let aps_buf = &mut frame_buf[nwk_hdr_len..];
+
+        // Decrypt APS frame using the default Trust Center Link Key.
+        // Create temporary in-memory NIB/AIB for the SecurityContext
+        // (the default TCLK is used for unknown source addresses).
+        let temp_nib = Nib::new(NibStorage::default());
+        temp_nib.init();
+        temp_nib.set_security_level(self.nib.security_level());
+        temp_nib.set_ieee_address(self.nib.ieee_address());
+
+        let temp_aib = Aib::new(AibStorage::default());
+        temp_aib.init();
+
+        let cx = SecurityContext::new(&temp_nib, &temp_aib);
+        let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
+
+        // Extract and install the network key (§4.2.2.6).
+        match aps_frame {
+            ApsFrame::ApsCommand(cmd)
+                if matches!(
+                    cmd.command,
+                    ApsCommand::TransportKey(TransportKey::StandardNetworkKey(_))
+                ) =>
+            {
+                let ApsCommand::TransportKey(TransportKey::StandardNetworkKey(nwk_key)) =
+                    cmd.command
+                else {
+                    unreachable!()
+                };
+
+                let mut sec_material = self.nib.security_material_set();
+                sec_material.clear();
+                let _ = sec_material.push(NetworkSecurityMaterialDescriptor {
+                    key_seq_number: nwk_key.sequence_number,
+                    outgoing_frame_counter: 0,
+                    incoming_frame_counter_set: StorageVec::new(),
+                    key: nwk_key.key,
+                    network_key_type: 0x01,
+                });
+                self.nib.set_security_material_set(sec_material);
+                self.nib.set_active_key_seq_number(nwk_key.sequence_number);
+
+                Ok(())
+            }
+            _ => Err(NetworkError::UnexpectedFrame),
+        }
+    }
 }
 
 impl<S, M> NlmeSap for Nlme<S, M>
@@ -318,6 +442,7 @@ where
 
         let candidates = self.select_parent_candidates(request.extended_pan_id, join_as_router);
 
+        log::info!("candidates {candidates:?}");
         if candidates.is_empty() {
             return fail(NlmeJoinStatus::NotPermitted);
         }
@@ -332,10 +457,10 @@ where
             .set_capability_information(request.capability_information);
 
         // --- Try each candidate in order (§3.6.1.4.1.1) ---
-
         let mut last_status = NlmeJoinStatus::NotPermitted;
 
         for &candidate_idx in &candidates {
+            log::info!("read candidate {candidate_idx:?}");
             // Read the neighbor info we need before the async call.
             let table = self.nib.neighbor_table();
             let neighbor = &table[candidate_idx];
@@ -559,8 +684,16 @@ mod tests {
             outcome.result
         }
 
-        async fn poll(&mut self, _coord_address: Address) -> Result<bool, MacError> {
+        async fn poll(&mut self, _coord_address: Address) -> Result<(), MacError> {
             unimplemented!("poll not needed in join tests")
+        }
+
+        async fn receive(&mut self, _buf: &mut [u8]) -> Result<(usize, u8), MacError> {
+            unimplemented!("receive not needed in join tests")
+        }
+
+        async fn transmit_data(&mut self, _dest: Address, _payload: &[u8]) -> Result<(), MacError> {
+            unimplemented!("transmit_data not needed in join tests")
         }
     }
 

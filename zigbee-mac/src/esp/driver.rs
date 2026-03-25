@@ -62,6 +62,17 @@ impl<'a> Ieee802154Driver<'a> {
         Ok(())
     }
 
+    pub async fn transmit_and_listen(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
+        TX_SIGNAL.reset();
+        self.driver.transmit_raw(frame)?;
+        TX_SIGNAL.wait().await;
+
+        RX_SIGNAL.reset();
+        self.driver.start_receive();
+
+        Ok(())
+    }
+
     #[allow(unused)]
     pub async fn receive_one(&mut self) -> Result<ReceivedFrame, Ieee802154Error> {
         RX_SIGNAL.reset();

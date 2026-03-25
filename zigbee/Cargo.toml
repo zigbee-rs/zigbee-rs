@@ -29,6 +29,7 @@ spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false } 
 mockall = { workspace = true, optional = true }
+log = "0.4"
 
 zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }

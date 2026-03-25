@@ -237,6 +237,7 @@ impl EspMlme<'_> {
         let receive = async {
             let mut receiver_stream = self.driver.stream();
             while let Some(frame) = receiver_stream.next().await {
+                log::info!("[MLME-ASSOCIATE] received frame {frame:?}");
                 match frame {
                     Ok(ReceivedFrame {
                         frame:
@@ -292,7 +293,7 @@ impl EspMlme<'_> {
         dest: Address,
         src: Option<Address>,
         capabilities: CapabilityInformation,
-    ) -> Result<[u8; 20], MacError> {
+    ) -> Result<[u8; 21], MacError> {
         let seq = self.sequence_number();
         let frame_header = Header {
             frame_type: FrameType::MacCommand,
@@ -309,7 +310,7 @@ impl EspMlme<'_> {
         };
         let frame_content = FrameContent::Command(Command::AssociationRequest(capabilities));
 
-        let mut buf = [0u8; 20];
+        let mut buf = [0u8; 21];
         let offset = &mut 0;
         buf.write_with(
             offset,
@@ -389,9 +390,11 @@ impl Mlme for EspMlme<'_> {
         let src = Address::Extended(dest.pan_id(), ext_addr);
         let frame = self.association_request_frame(dest, Some(src), capabilities)?;
         self.driver.transmit(&frame).await?;
+        log::info!("[MLME-ASSOCIATE] request transmitted");
 
         // Step 2: Wait for ACK to the association request
-        let _frame_pending = self.wait_for_ack().await?;
+        //let _frame_pending = self.wait_for_ack().await?;
+        //log::info!("[MLME-ASSOCIATE] ack received");
 
         // Step 3: Wait aResponseWaitTime for the coordinator to prepare its
         // association decision (IEEE 802.15.4 §7.5.3.1).
@@ -399,13 +402,12 @@ impl Mlme for EspMlme<'_> {
         // At 16µs/symbol (2.4 GHz O-QPSK): ~491 ms.
         let wait_us: u64 = (A_RESPONSE_WAIT_TIME as u64) * 16;
         Timer::after_micros(wait_us).await;
+        log::info!("[MLME-ASSOCIATE] waited for {wait_us} us");
 
         // Step 4–5: Poll the coordinator for the association response
         // (MLME-POLL.request per IEEE 802.15.4 §7.1.16.1).
-        let frame_pending = self.poll(dest).await?;
-        if !frame_pending {
-            return Err(MacError::NoData);
-        }
+        self.poll(dest).await?;
+        //log::info!("[MLME-ASSOCIATE] data poll requested");
 
         // Step 6: Receive the association response command frame from the
         // coordinator containing the assigned short address and status.
@@ -415,15 +417,83 @@ impl Mlme for EspMlme<'_> {
         self.wait_for_association_response().await
     }
 
-    async fn poll(&mut self, coord_address: Address) -> Result<bool, MacError> {
+    async fn poll(&mut self, coord_address: Address) -> Result<(), MacError> {
         // Send a data request command to poll the coordinator for pending
         // data (IEEE 802.15.4 §7.1.16.1.3, §7.3.2.1).
         let data_req = self.data_request_frame(coord_address, self.ieee_address)?;
-        self.driver.transmit(&data_req).await?;
+        self.driver.transmit_and_listen(&data_req).await?;
 
-        // Wait for ACK. The frame_pending subfield indicates whether the
-        // coordinator has data queued for us.
-        let frame_pending = self.wait_for_ack().await?;
-        Ok(frame_pending)
+        Ok(())
+    }
+
+    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
+        let timeout = Timer::after_micros((A_RESPONSE_WAIT_TIME as u64) * 16);
+        let receive = async {
+            let mut stream = self.driver.stream();
+            while let Some(frame) = stream.next().await {
+                match frame {
+                    Ok(ReceivedFrame {
+                        frame:
+                            Frame {
+                                content: FrameContent::Data,
+                                payload,
+                                ..
+                            },
+                        lqi,
+                        ..
+                    }) => {
+                        let len = payload.len().min(buf.len());
+                        buf[..len].copy_from_slice(&payload[..len]);
+                        return Ok((len, lqi));
+                    }
+                    Ok(_) => continue,
+                    Err(e) => return Err(MacError::RadioError(e)),
+                }
+            }
+            Err(MacError::NoData)
+        };
+
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => Err(MacError::NoData),
+            Either::Second(result) => result,
+        }
+    }
+
+    async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
+        let seq = self.sequence_number();
+        let source = Some(Address::Extended(dest.pan_id(), self.ieee_address));
+
+        let frame_header = Header {
+            frame_type: FrameType::Data,
+            frame_pending: false,
+            ack_request: true,
+            pan_id_compress: source.is_some(),
+            seq_no_suppress: false,
+            ie_present: false,
+            version: FrameVersion::Ieee802154_2003,
+            seq,
+            destination: Some(dest),
+            source,
+            auxiliary_security_header: None,
+        };
+
+        let mut frame_buf = [0u8; 127];
+        let offset = &mut 0;
+        frame_buf.write_with(
+            offset,
+            frame_header,
+            &Some(&mut SecurityContext::no_security()),
+        )?;
+        let hdr_len = *offset;
+        let payload_len = payload.len().min(frame_buf.len() - hdr_len - 2);
+        frame_buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+        // 2-byte FCS placeholder (IEEE 802.15.4 §7.2.1.8) — the hardware
+        // computes the actual CRC-16 over the frame and overwrites these
+        // bytes during transmission.
+        let total_len = hdr_len + payload_len + 2;
+
+        self.driver.transmit(&frame_buf[..total_len]).await?;
+        self.wait_for_ack().await?;
+        Ok(())
     }
 }

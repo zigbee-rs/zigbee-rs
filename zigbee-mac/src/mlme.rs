@@ -43,7 +43,20 @@ pub trait Mlme {
     /// coordinator for pending data. Returns `Ok(true)` when the ACK has
     /// its frame-pending subfield set (data available) or `Err(NoData)`
     /// when the subfield is clear.
-    async fn poll(&mut self, coord_address: Address) -> Result<bool, MacError>;
+    async fn poll(&mut self, coord_address: Address) -> Result<(), MacError>;
+
+    /// Receive the next incoming MAC data frame.
+    ///
+    /// Waits for a MAC data frame to arrive and copies the MAC payload
+    /// (i.e. the NWK frame) into `buf`. Returns `(bytes_written, lqi)`.
+    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, u8), MacError>;
+
+    /// Transmit a MAC data frame carrying the given NWK-layer payload.
+    ///
+    /// The implementation constructs the MAC header (frame control,
+    /// sequence number, addressing) and appends `payload` as the MAC
+    /// service data unit.
+    async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
 }
 
 #[derive(Debug)]
