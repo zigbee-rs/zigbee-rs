@@ -249,22 +249,28 @@ where
     pub async fn await_transport_key(&mut self) -> Result<(), NetworkError> {
         let coord_addr = self.parent_address()?;
 
-        // Poll coordinator for pending data (§7.1.16.1).
-        // The transport key may not be ready immediately; retry a few times.
-        let mut frame_pending = false;
+        // Poll coordinator and receive the pending data frame in one
+        // atomic operation (§7.1.16.1). Retry a few times since the
+        // Trust Center may not have the transport key queued immediately
+        // after association.
+        let mut buf = [0u8; 128];
+        let mut len = 0usize;
+        let mut received = false;
         for _ in 0..5u8 {
-            if self.mac.poll(coord_addr).await.is_ok() {
-                frame_pending = true;
-                break;
+            match self.mac.poll_data(coord_addr, &mut buf).await {
+                Ok((n, _lqi)) => {
+                    len = n;
+                    received = true;
+                    break;
+                }
+                Err(MacError::NoData) => continue,
+                Err(e) => return Err(e.into()),
             }
         }
-        if !frame_pending {
+        if !received {
             return Err(NetworkError::NoTransportKey);
         }
 
-        // Receive the pending MAC data frame.
-        let mut buf = [0u8; 128];
-        let (len, _lqi) = self.mac.receive(&mut buf).await?;
         let frame_buf = &mut buf[..len];
 
         // Parse NWK header (§3.3.1). The initial transport key frame is
@@ -684,15 +690,19 @@ mod tests {
             outcome.result
         }
 
-        async fn poll(&mut self, _coord_address: Address) -> Result<(), MacError> {
-            unimplemented!("poll not needed in join tests")
+        async fn poll_data(
+            &mut self,
+            _coord_address: Address,
+            _buf: &mut [u8],
+        ) -> Result<(usize, u8), MacError> {
+            unimplemented!("poll_data not needed in join tests")
         }
 
-        async fn receive(&mut self, _buf: &mut [u8]) -> Result<(usize, u8), MacError> {
-            unimplemented!("receive not needed in join tests")
-        }
-
-        async fn transmit_data(&mut self, _dest: Address, _payload: &[u8]) -> Result<(), MacError> {
+        async fn transmit_data(
+            &mut self,
+            _dest: Address,
+            _payload: &[u8],
+        ) -> Result<(), MacError> {
             unimplemented!("transmit_data not needed in join tests")
         }
     }

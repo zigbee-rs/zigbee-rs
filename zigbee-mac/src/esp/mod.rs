@@ -8,7 +8,6 @@ use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
-use futures_util::StreamExt;
 use ieee802154::mac::Address;
 use ieee802154::mac::FrameContent;
 use ieee802154::mac::FrameType;
@@ -31,6 +30,28 @@ use crate::mlme::ScanResult;
 use crate::mlme::ScanType;
 
 mod driver;
+
+/// Wait for the first frame matching `$pat` within `$timeout_us` microseconds,
+/// skipping non-matching frames. Evaluates `$body` on match. Returns
+/// `Err(MacError::NoData)` if the timeout expires before a match.
+macro_rules! recv_frame {
+    ($self:expr, $timeout_us:expr, $($pat:pat => $body:expr),+ $(,)?) => {{
+        let timeout = Timer::after_micros($timeout_us);
+        let receive = async {
+            loop {
+                let frame = $self.next_frame().await?;
+                match frame {
+                    $($pat => return Ok($body),)+
+                    _ => continue,
+                }
+            }
+        };
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => Err(MacError::NoData),
+            Either::Second(result) => result,
+        }
+    }};
+}
 
 pub struct EspMlme<'a> {
     driver: Ieee802154Driver<'a>,
@@ -66,6 +87,21 @@ impl EspMlme<'_> {
         self.seq_number
     }
 
+    /// Discard all buffered frames from the hardware RX queue.
+    fn flush(&mut self) {
+        while self.driver.poll_received().is_some() {}
+    }
+
+    /// Wait for the next frame from the hardware RX queue (indefinite).
+    async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
+        loop {
+            if let Some(result) = self.driver.poll_received() {
+                return result.map_err(MacError::RadioError);
+            }
+            self.driver.wait_rx_available().await;
+        }
+    }
+
     fn beacon_request_frame(&mut self) -> [u8; 10] {
         let seq_number = self.sequence_number();
         [0x3, 0x8, seq_number, 0xff, 0xff, 0xff, 0xff, 0x7, 0x0, 0x0]
@@ -76,10 +112,12 @@ impl EspMlme<'_> {
         channel: u8,
         duration: u8,
     ) -> Result<Option<PanDescriptorList>, MacError> {
+        self.flush();
         self.driver.update_driver_config(|config| {
             config.promiscuous = false;
             config.channel = channel;
         });
+        self.driver.start_receive();
 
         let frame = self.beacon_request_frame();
         if let Err(e) = self.driver.transmit(&frame).await {
@@ -88,109 +126,75 @@ impl EspMlme<'_> {
 
         log::debug!("[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages...");
 
-        let delay_us = calculate_scan_duration_max_us(duration);
+        let delay_us: u64 = calculate_scan_duration_max_us(duration).into();
         log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
 
         let mut pds = Vec::new();
-
-        let timer_fut = Timer::after_micros(delay_us.into());
-        let receive_fut = self.receive_beacon(channel, &mut pds);
-        let sel = embassy_futures::select::select(timer_fut, receive_fut).await;
-        match sel {
-            Either::First(_) => Ok(Some(pds)),
-            Either::Second(Ok(_)) => Ok(Some(pds)),
-            Either::Second(Err(e)) => Err(e),
-        }
-    }
-
-    async fn receive_beacon(
-        &mut self,
-        channel: u8,
-        pds: &mut PanDescriptorList,
-    ) -> Result<(), MacError> {
-        let mut receiver_stream = self.driver.stream();
-        while let Some(frame) = receiver_stream.next().await {
-            match frame {
-                Ok(ReceivedFrame {
-                    frame:
-                        Frame {
-                            header:
-                                hdr @ Header {
-                                    source: Some(source),
-                                    ..
-                                },
-                            content: FrameContent::Beacon(beacon_content),
-                            payload,
-                            ..
-                        },
-                    channel,
-                    lqi,
-                    ..
-                }) => {
-                    log::debug!("[MLME-SCAN] received beacon frame on channel {channel}");
-
-                    let zigbee_beacon =
-                        payload.read_with(&mut 0, ()).map_err(MacError::ReadError)?;
-
-                    let pd = PanDescriptor {
-                        channel,
-                        coord_addr_mode: match source {
-                            Address::Short(_, _) => 0x2,
-                            Address::Extended(_, _) => 0x3,
-                        },
-                        coord_pan_id: source.pan_id().0.into(),
-                        coord_address: source,
-                        superframe_spec: beacon_content.superframe_spec,
-                        link_quality: lqi,
-                        security_use: hdr.has_security(),
-                        zigbee_beacon,
-                    };
+        let timeout = Timer::after_micros(delay_us);
+        let receive = async {
+            loop {
+                let frame = self.next_frame().await?;
+                if let Some(pd) = self.parse_beacon(frame) {
                     pds.push(pd);
                 }
-                Ok(f) => {
-                    log::debug!("[MLME-SCAN] received other frame on channel {channel}: {f:?}");
-                }
-                Err(e) => {
-                    log::error!("[MLME-SCAN] receive error: {e}");
-                    return Err(MacError::RadioError(e));
-                }
             }
-        }
+        };
+        // collect beacons until the scan duration expires
+        let _ = embassy_futures::select::select(timeout, receive).await;
 
-        Ok(())
+        Ok(Some(pds))
     }
 
-    async fn wait_for_ack(&mut self) -> Result<bool, MacError> {
-        let mut receiver_stream = self.driver.stream();
-        while let Some(frame) = receiver_stream.next().await {
-            match frame {
-                Ok(ReceivedFrame {
-                    frame:
-                        Frame {
-                            header:
-                                Header {
-                                    seq, frame_pending, ..
-                                },
+    fn parse_beacon(&self, received: ReceivedFrame) -> Option<PanDescriptor> {
+        match received {
+            ReceivedFrame {
+                frame:
+                    Frame {
+                        header:
+                            hdr @ Header {
+                                source: Some(source),
+                                ..
+                            },
+                        content: FrameContent::Beacon(beacon_content),
+                        payload,
+                        ..
+                    },
+                channel,
+                lqi,
+                ..
+            } => {
+                log::debug!("[MLME-SCAN] received beacon frame on channel {channel}");
 
-                            content: FrameContent::Acknowledgement,
-                            ..
-                        },
-                    ..
-                }) if seq == self.seq_number => {
-                    return Ok(frame_pending);
-                }
-                Ok(_) => continue,
-                Err(e) => return Err(MacError::RadioError(e)),
+                let zigbee_beacon = match payload.read_with(&mut 0, ()) {
+                    Ok(zb) => zb,
+                    Err(e) => {
+                        log::warn!("[MLME-SCAN] failed to parse zigbee beacon: {e}");
+                        return None;
+                    }
+                };
+
+                Some(PanDescriptor {
+                    channel,
+                    coord_addr_mode: match source {
+                        Address::Short(_, _) => 0x2,
+                        Address::Extended(_, _) => 0x3,
+                    },
+                    coord_pan_id: source.pan_id().0.into(),
+                    coord_address: source,
+                    superframe_spec: beacon_content.superframe_spec,
+                    link_quality: lqi,
+                    security_use: hdr.has_security(),
+                    zigbee_beacon,
+                })
+            }
+            other => {
+                log::debug!("[MLME-SCAN] received non-beacon frame: {other:?}");
+                None
             }
         }
-
-        Err(MacError::NoAck)
     }
 
     /// Build a MAC data request command frame (IEEE 802.15.4 §7.3.2.1).
-    ///
-    /// After an association request, the device polls the coordinator for
-    /// the association response by sending this command.
     fn data_request_frame(
         &mut self,
         dest: Address,
@@ -222,70 +226,6 @@ impl EspMlme<'_> {
         buf.write_with(offset, frame_content, ())?;
 
         Ok(buf)
-    }
-
-    /// Wait for an association response command frame from the coordinator.
-    ///
-    /// Per IEEE 802.15.4 §7.5.3.1, after the data request is acknowledged
-    /// with frame_pending=1, the coordinator sends the association response
-    /// command containing the assigned short address and status.
-    ///
-    /// If no response is received within `aResponseWaitTime` symbols, the
-    /// primitive returns `MacError::NoData` (IEEE 802.15.4 §7.1.3.1.3).
-    async fn wait_for_association_response(&mut self) -> Result<AssociationResponse, MacError> {
-        let timeout = Timer::after_micros((A_RESPONSE_WAIT_TIME as u64) * 16);
-        let receive = async {
-            let mut receiver_stream = self.driver.stream();
-            while let Some(frame) = receiver_stream.next().await {
-                log::info!("[MLME-ASSOCIATE] received frame {frame:?}");
-                match frame {
-                    Ok(ReceivedFrame {
-                        frame:
-                            Frame {
-                                header:
-                                    Header {
-                                        source: Some(source),
-                                        ..
-                                    },
-                                content:
-                                    FrameContent::Command(Command::AssociationResponse(
-                                        short_addr,
-                                        status,
-                                    )),
-                                ..
-                            },
-                        ..
-                    }) => {
-                        let device_address = match source {
-                            Address::Extended(_, ext) => ext,
-                            Address::Short(_, _) => {
-                                log::warn!(
-                                    "[MLME-ASSOCIATE] expected extended address in association response"
-                                );
-                                continue;
-                            }
-                        };
-                        return Ok(AssociationResponse {
-                            device_address,
-                            association_address: zigbee_types::ShortAddress(short_addr.0),
-                            status,
-                        });
-                    }
-                    Ok(_) => continue,
-                    Err(e) => return Err(MacError::RadioError(e)),
-                }
-            }
-
-            Err(MacError::NoData)
-        };
-
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => {
-                log::warn!("[MLME-ASSOCIATE] timed out waiting for association response");
-                Err(MacError::NoData)
-            }
-            Either::Second(result) => result,
-        }
     }
 
     fn association_request_frame(
@@ -375,88 +315,68 @@ impl Mlme for EspMlme<'_> {
             *config = Default::default();
             config.channel = channel;
             config.pan_id = Some(dest.pan_id().0);
-            // Tell the hardware our extended address so that address
-            // filtering and auto-ACK work for frames addressed to us.
             config.ext_addr = Some(ext_addr.0);
-            // Enable hardware auto-ACK for received frames addressed to us.
-            // The coordinator's association response has ack_request set, and
-            // per IEEE 802.15.4 §7.5.3.1 we must acknowledge it. ACK timing
-            // is 12 symbol periods (~192 µs) which is too tight for software.
             config.auto_ack_rx = true;
         });
 
         // Step 1: Send association request command (IEEE 802.15.4 §7.5.3.1).
-        // The source address must be the device's extended address.
         let src = Address::Extended(dest.pan_id(), ext_addr);
         let frame = self.association_request_frame(dest, Some(src), capabilities)?;
         self.driver.transmit(&frame).await?;
         log::info!("[MLME-ASSOCIATE] request transmitted");
 
-        // Step 2: Wait for ACK to the association request
-        //let _frame_pending = self.wait_for_ack().await?;
-        //log::info!("[MLME-ASSOCIATE] ack received");
-
-        // Step 3: Wait aResponseWaitTime for the coordinator to prepare its
+        // Step 2: Wait aResponseWaitTime for the coordinator to prepare its
         // association decision (IEEE 802.15.4 §7.5.3.1).
-        // aResponseWaitTime = 32 * aBaseSuperframeDuration symbols.
-        // At 16µs/symbol (2.4 GHz O-QPSK): ~491 ms.
         let wait_us: u64 = (A_RESPONSE_WAIT_TIME as u64) * 16;
         Timer::after_micros(wait_us).await;
         log::info!("[MLME-ASSOCIATE] waited for {wait_us} us");
 
-        // Step 4–5: Poll the coordinator for the association response
-        // (MLME-POLL.request per IEEE 802.15.4 §7.1.16.1).
-        self.poll(dest).await?;
-        //log::info!("[MLME-ASSOCIATE] data poll requested");
+        // Step 3: Poll the coordinator for the association response.
+        self.flush();
+        let data_req = self.data_request_frame(dest, self.ieee_address)?;
+        self.driver.transmit(&data_req).await?;
 
-        // Step 6: Receive the association response command frame from the
-        // coordinator containing the assigned short address and status.
-        // The ACK for the response is sent automatically by the hardware
-        // (auto_ack_rx = true) per IEEE 802.15.4 §7.5.3.1.
-        // If no response arrives within aResponseWaitTime, NoData is returned.
-        self.wait_for_association_response().await
+        // Step 4: Wait for the association response command frame.
+        let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
+        recv_frame!(self, timeout_us,
+            ReceivedFrame {
+                frame: Frame {
+                    header: Header { source: Some(Address::Extended(_, ext)), .. },
+                    content: FrameContent::Command(
+                        Command::AssociationResponse(short_addr, status),
+                    ),
+                    ..
+                },
+                ..
+            } => AssociationResponse {
+                device_address: ext,
+                association_address: zigbee_types::ShortAddress(short_addr.0),
+                status,
+            },
+        )
     }
 
-    async fn poll(&mut self, coord_address: Address) -> Result<(), MacError> {
-        // Send a data request command to poll the coordinator for pending
-        // data (IEEE 802.15.4 §7.1.16.1.3, §7.3.2.1).
+    async fn poll_data(
+        &mut self,
+        coord_address: Address,
+        buf: &mut [u8],
+    ) -> Result<(usize, u8), MacError> {
+        self.flush();
         let data_req = self.data_request_frame(coord_address, self.ieee_address)?;
-        self.driver.transmit_and_listen(&data_req).await?;
+        self.driver.transmit(&data_req).await?;
 
-        Ok(())
-    }
-
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
-        let timeout = Timer::after_micros((A_RESPONSE_WAIT_TIME as u64) * 16);
-        let receive = async {
-            let mut stream = self.driver.stream();
-            while let Some(frame) = stream.next().await {
-                match frame {
-                    Ok(ReceivedFrame {
-                        frame:
-                            Frame {
-                                content: FrameContent::Data,
-                                payload,
-                                ..
-                            },
-                        lqi,
-                        ..
-                    }) => {
-                        let len = payload.len().min(buf.len());
-                        buf[..len].copy_from_slice(&payload[..len]);
-                        return Ok((len, lqi));
-                    }
-                    Ok(_) => continue,
-                    Err(e) => return Err(MacError::RadioError(e)),
-                }
-            }
-            Err(MacError::NoData)
-        };
-
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => Err(MacError::NoData),
-            Either::Second(result) => result,
-        }
+        let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
+        recv_frame!(self, timeout_us,
+            ReceivedFrame {
+                frame: Frame { content: FrameContent::Data, payload, .. },
+                lqi,
+                ..
+            } => {
+                let len = payload.len().min(buf.len());
+                buf[..len].copy_from_slice(&payload[..len]);
+                (len, lqi)
+            },
+        )
     }
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
@@ -489,11 +409,10 @@ impl Mlme for EspMlme<'_> {
         frame_buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
         // 2-byte FCS placeholder (IEEE 802.15.4 §7.2.1.8) — the hardware
         // computes the actual CRC-16 over the frame and overwrites these
-        // bytes during transmission.
+        // bytes during transmission
         let total_len = hdr_len + payload_len + 2;
 
         self.driver.transmit(&frame_buf[..total_len]).await?;
-        self.wait_for_ack().await?;
         Ok(())
     }
 }

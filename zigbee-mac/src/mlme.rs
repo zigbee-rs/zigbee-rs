@@ -37,19 +37,20 @@ pub trait Mlme {
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError>;
 
-    /// MLME-POLL.request (IEEE 802.15.4 §7.1.16.1).
+    /// MLME-POLL.request + data reception (IEEE 802.15.4 §7.1.16.1).
     ///
-    /// Sends a data request command to `coord_address` to poll the
-    /// coordinator for pending data. Returns `Ok(true)` when the ACK has
-    /// its frame-pending subfield set (data available) or `Err(NoData)`
-    /// when the subfield is clear.
-    async fn poll(&mut self, coord_address: Address) -> Result<(), MacError>;
-
-    /// Receive the next incoming MAC data frame.
+    /// Sends a data request command to `coord_address`, then stays in
+    /// receive mode to capture both the ACK (with frame-pending check)
+    /// and the subsequent data frame in a single uninterrupted session.
     ///
-    /// Waits for a MAC data frame to arrive and copies the MAC payload
-    /// (i.e. the NWK frame) into `buf`. Returns `(bytes_written, lqi)`.
-    async fn receive(&mut self, buf: &mut [u8]) -> Result<(usize, u8), MacError>;
+    /// Returns `Ok((bytes_written, lqi))` on success, or
+    /// `Err(MacError::NoData)` if the ACK has frame-pending clear or
+    /// no data frame arrives within the timeout.
+    async fn poll_data(
+        &mut self,
+        coord_address: Address,
+        buf: &mut [u8],
+    ) -> Result<(usize, u8), MacError>;
 
     /// Transmit a MAC data frame carrying the given NWK-layer payload.
     ///

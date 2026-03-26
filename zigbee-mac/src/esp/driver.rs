@@ -1,19 +1,12 @@
-use core::task::Poll;
-use core::task::Waker;
-
-use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Error as Ieee802154Error;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
-use futures_util::Stream;
 
 static TX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-static RX_WAKER: CriticalSectionMutex<Option<Waker>> = CriticalSectionMutex::new(None);
 
 pub struct Ieee802154Driver<'a> {
     driver: Ieee802154<'a>,
@@ -32,6 +25,7 @@ impl<'a> Ieee802154Driver<'a> {
             .set_rx_available_callback_fn(Self::rx_callback);
         driver.driver.set_tx_done_callback_fn(Self::tx_callback);
 
+        driver.config.rx_when_idle = true;
         driver.update_driver_config(|_| {});
 
         driver
@@ -39,22 +33,20 @@ impl<'a> Ieee802154Driver<'a> {
 
     pub fn update_driver_config(&mut self, update_fn: impl Fn(&mut Config)) {
         update_fn(&mut self.config);
+        self.config.rx_when_idle = true;
         self.driver.set_config(self.config);
     }
 
     fn rx_callback() {
         RX_SIGNAL.signal(());
-        RX_WAKER.lock(|w| {
-            if let Some(w) = w {
-                w.wake_by_ref();
-            }
-        })
     }
 
     fn tx_callback() {
         TX_SIGNAL.signal(());
     }
 
+    /// Transmit a frame. The radio automatically returns to RX mode
+    /// after transmission completes (`rx_when_idle = true`).
     pub async fn transmit(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
         TX_SIGNAL.reset();
         self.driver.transmit_raw(frame)?;
@@ -62,62 +54,20 @@ impl<'a> Ieee802154Driver<'a> {
         Ok(())
     }
 
-    pub async fn transmit_and_listen(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
-        TX_SIGNAL.reset();
-        self.driver.transmit_raw(frame)?;
-        TX_SIGNAL.wait().await;
+    /// Poll the hardware RX queue for one frame (non-blocking).
+    pub fn poll_received(&mut self) -> Option<Result<ReceivedFrame, Ieee802154Error>> {
+        self.driver.received()
+    }
 
+    /// Wait until the hardware signals a frame is available in the RX queue.
+    pub async fn wait_rx_available(&self) {
         RX_SIGNAL.reset();
-        self.driver.start_receive();
-
-        Ok(())
+        RX_SIGNAL.wait().await;
     }
 
-    #[allow(unused)]
-    pub async fn receive_one(&mut self) -> Result<ReceivedFrame, Ieee802154Error> {
-        RX_SIGNAL.reset();
+    /// Enter RX mode explicitly. Needed after channel changes or
+    /// initial startup before the first TX triggers `rx_when_idle`.
+    pub fn start_receive(&mut self) {
         self.driver.start_receive();
-
-        let frame = loop {
-            if let Some(frame) = self.driver.received() {
-                break frame;
-            }
-            RX_SIGNAL.wait().await;
-        };
-
-        frame
-    }
-
-    pub fn stream<'b>(&'b mut self) -> ReceiverStream<'a, 'b> {
-        self.driver.start_receive();
-        ReceiverStream { driver: self }
-    }
-}
-
-pub struct ReceiverStream<'a, 'b> {
-    driver: &'b mut Ieee802154Driver<'a>,
-}
-
-impl Stream for ReceiverStream<'_, '_> {
-    type Item = Result<ReceivedFrame, Ieee802154Error>;
-
-    fn poll_next(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let received = self.driver.driver.received();
-        match received {
-            Some(frame) => Poll::Ready(Some(frame)),
-            None => {
-                // SAFETY: lock is called non-reentrantly
-                unsafe {
-                    RX_WAKER.lock_mut(|w| {
-                        *w = Some(cx.waker().clone());
-                    });
-                }
-
-                Poll::Pending
-            }
-        }
     }
 }
