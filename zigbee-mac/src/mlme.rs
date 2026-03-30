@@ -1,5 +1,4 @@
 use ieee802154::mac::Address;
-use ieee802154::mac::ExtendedAddress;
 use ieee802154::mac::beacon::SuperframeSpecification;
 use ieee802154::mac::command::AssociationStatus;
 use ieee802154::mac::command::CapabilityInformation;
@@ -62,7 +61,7 @@ pub trait Mlme {
 
 #[derive(Debug)]
 pub struct AssociationResponse {
-    pub device_address: ExtendedAddress,
+    pub device_address: IeeeAddress,
     pub association_address: ShortAddress,
     pub status: AssociationStatus,
 }

@@ -94,7 +94,7 @@ pub struct NlmeEdScanConfirm {}
 ///
 /// See Table 3-21 for the full list of parameters.
 pub struct NlmeJoinRequest {
-    pub extended_pan_id: u64,
+    pub extended_pan_id: IeeeAddress,
     pub rejoin_network: u8,
     // ScanChannelsListStructure
     pub scan_duration: u8,
@@ -124,8 +124,8 @@ pub struct NlmeJoinIndication {
 #[derive(Debug)]
 pub struct NlmeJoinConfirm {
     pub status: NlmeJoinStatus,
-    pub network_address: u16,
-    pub extended_pan_id: u64,
+    pub network_address: ShortAddress,
+    pub extended_pan_id: IeeeAddress,
     /// Logical channel of the joined network (from ChannelListStructure,
     /// Table 3-25).
     pub channel: u8,

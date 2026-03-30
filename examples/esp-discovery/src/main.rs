@@ -74,14 +74,14 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
                 .expect("no open network (permitJoin = true) found");
 
             let request = NlmeJoinRequest {
-                extended_pan_id: network.extended_pan_id.0,
+                extended_pan_id: network.extended_pan_id,
                 rejoin_network: 0x00,
                 scan_duration: 0x00,
                 capability_information: CapabilityInformation(0x80),
                 security_enabled: false,
             };
 
-            println!("Joining network EPID={:#x}...", request.extended_pan_id);
+            println!("Joining network EPID={:?}...", request.extended_pan_id);
             let confirm = nwk.join(request).await;
             println!("Join result: {confirm:#?}");
 

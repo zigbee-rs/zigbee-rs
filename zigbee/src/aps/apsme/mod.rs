@@ -98,7 +98,7 @@ impl Apsme {
 
     pub(crate) fn join_network(&self) {
         let _request = NlmeJoinRequest {
-            extended_pan_id: 0x0015_8D00_01AB_CD12,
+            extended_pan_id: zigbee_types::IeeeAddress(0x0015_8D00_01AB_CD12),
             rejoin_network: 0u8,
             scan_duration: 10u8,
             capability_information: crate::nwk::nib::CapabilityInformation(0x80),

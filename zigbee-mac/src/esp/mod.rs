@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 use byte::BytesExt;
 use embassy_futures::select::Either;
 use embassy_time::Timer;
-use esp_hal::efuse::Efuse;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
 use esp_radio::ieee802154::Ieee802154;
@@ -42,7 +41,10 @@ macro_rules! recv_frame {
                 let frame = $self.next_frame().await?;
                 match frame {
                     $($pat => return Ok($body),)+
-                    _ => continue,
+                    _ => {
+                        log::info!("[MLME-ASSOCIATE] received other frame");
+                        continue;
+                    },
                 }
             }
         };
@@ -56,27 +58,13 @@ macro_rules! recv_frame {
 pub struct EspMlme<'a> {
     driver: Ieee802154Driver<'a>,
     seq_number: u8,
-    /// IEEE 802.15.4 extended (EUI-64) address derived from the
-    /// ESP32's factory-burned eFuse MAC address.
-    ieee_address: ieee802154::mac::ExtendedAddress,
-}
-
-/// Derive an EUI-64 extended address from a 6-byte EUI-48 MAC.
-///
-/// Inserts `0xFF, 0xFE` after the OUI (first 3 bytes) per the
-/// IEEE EUI-64 conversion convention:
-///   `AA:BB:CC:DD:EE:FF` → `AA:BB:CC:FF:FE:DD:EE:FF`
-fn eui48_to_eui64(mac: [u8; 6]) -> u64 {
-    u64::from_be_bytes([mac[0], mac[1], mac[2], 0xFF, 0xFE, mac[3], mac[4], mac[5]])
 }
 
 impl<'a> EspMlme<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
-        let ieee_address = ieee802154::mac::ExtendedAddress(eui48_to_eui64(Efuse::mac_address()));
         Self {
             driver: Ieee802154Driver::new(ieee802154, config),
             seq_number: 0,
-            ieee_address,
         }
     }
 }
@@ -130,17 +118,20 @@ impl EspMlme<'_> {
         log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
 
         let mut pds = Vec::new();
-        let timeout = Timer::after_micros(delay_us);
-        let receive = async {
-            loop {
-                let frame = self.next_frame().await?;
-                if let Some(pd) = self.parse_beacon(frame) {
-                    pds.push(pd);
+        let deadline = Timer::after_micros(delay_us);
+        let mut deadline = core::pin::pin!(deadline);
+
+        loop {
+            match embassy_futures::select::select(&mut deadline, self.next_frame()).await {
+                Either::First(_) => break,
+                Either::Second(Ok(frame)) => {
+                    if let Some(pd) = self.parse_beacon(frame) {
+                        pds.push(pd);
+                    }
                 }
+                Either::Second(Err(_)) => continue,
             }
-        };
-        // collect beacons until the scan duration expires
-        let _ = embassy_futures::select::select(timeout, receive).await;
+        }
 
         Ok(Some(pds))
     }
@@ -168,7 +159,7 @@ impl EspMlme<'_> {
                 let zigbee_beacon = match payload.read_with(&mut 0, ()) {
                     Ok(zb) => zb,
                     Err(e) => {
-                        log::warn!("[MLME-SCAN] failed to parse zigbee beacon: {e}");
+                        log::warn!("[MLME-SCAN] failed to parse zigbee beacon: {e:?}");
                         return None;
                     }
                 };
@@ -310,16 +301,20 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        let ext_addr = self.ieee_address;
+        // Use promiscuous mode during association since we don't have a
+        // short address yet and the hardware filter may not match on
+        // ext_addr alone.
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
             config.pan_id = Some(dest.pan_id().0);
-            config.ext_addr = Some(ext_addr.0);
+            config.auto_ack_tx = true;
             config.auto_ack_rx = true;
+            config.promiscuous = true;
         });
 
         // Step 1: Send association request command (IEEE 802.15.4 §7.5.3.1).
+        let ext_addr = self.driver.ieee_address();
         let src = Address::Extended(dest.pan_id(), ext_addr);
         let frame = self.association_request_frame(dest, Some(src), capabilities)?;
         self.driver.transmit(&frame).await?;
@@ -333,12 +328,12 @@ impl Mlme for EspMlme<'_> {
 
         // Step 3: Poll the coordinator for the association response.
         self.flush();
-        let data_req = self.data_request_frame(dest, self.ieee_address)?;
+        let data_req = self.data_request_frame(dest, self.driver.ieee_address())?;
         self.driver.transmit(&data_req).await?;
 
         // Step 4: Wait for the association response command frame.
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
-        recv_frame!(self, timeout_us,
+        let response = recv_frame!(self, timeout_us,
             ReceivedFrame {
                 frame: Frame {
                     header: Header { source: Some(Address::Extended(_, ext)), .. },
@@ -349,11 +344,22 @@ impl Mlme for EspMlme<'_> {
                 },
                 ..
             } => AssociationResponse {
-                device_address: ext,
+                device_address: zigbee_types::IeeeAddress(ext.0),
                 association_address: zigbee_types::ShortAddress(short_addr.0),
                 status,
             },
-        )
+        )?;
+
+        // Step 5: Configure the assigned short address on the driver and
+        // disable promiscuous mode so the hardware filter accepts
+        // unicast frames addressed to us.
+        let short = response.association_address.0;
+        self.driver.update_driver_config(|config| {
+            config.promiscuous = false;
+            config.short_addr = Some(short);
+        });
+
+        Ok(response)
     }
 
     async fn poll_data(
@@ -362,7 +368,7 @@ impl Mlme for EspMlme<'_> {
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError> {
         self.flush();
-        let data_req = self.data_request_frame(coord_address, self.ieee_address)?;
+        let data_req = self.data_request_frame(coord_address, self.driver.ieee_address())?;
         self.driver.transmit(&data_req).await?;
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
@@ -381,7 +387,7 @@ impl Mlme for EspMlme<'_> {
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
         let seq = self.sequence_number();
-        let source = Some(Address::Extended(dest.pan_id(), self.ieee_address));
+        let source = Some(Address::Extended(dest.pan_id(), self.driver.ieee_address()));
 
         let frame_header = Header {
             frame_type: FrameType::Data,

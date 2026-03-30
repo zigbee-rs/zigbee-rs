@@ -152,7 +152,7 @@ where
     /// table, best candidate first.
     fn select_parent_candidates(
         &self,
-        extended_pan_id: u64,
+        extended_pan_id: IeeeAddress,
         join_as_router: bool,
     ) -> heapless::Vec<usize, 16> {
         let table = self.nib.neighbor_table();
@@ -162,9 +162,7 @@ where
         let max_update_id = table
             .iter()
             .filter(|n| {
-                n.extended_pan_id == IeeeAddress(extended_pan_id)
-                    && n.permit_joining
-                    && n.potential_parent == 1
+                n.extended_pan_id == extended_pan_id && n.permit_joining && n.potential_parent == 1
             })
             .map(|n| n.update_id)
             .max();
@@ -179,7 +177,7 @@ where
             .enumerate()
             .filter(|(_, n)| {
                 // (1) Correct network
-                n.extended_pan_id == IeeeAddress(extended_pan_id)
+                n.extended_pan_id == extended_pan_id
                 // (2) Accepting joins of correct type
                     && n.permit_joining
                     && if join_as_router {
@@ -417,8 +415,8 @@ where
     async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
         let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
             status,
-            network_address: 0xffff,
-            extended_pan_id: 0u64,
+            network_address: ShortAddress(0xffff),
+            extended_pan_id: IeeeAddress(0u64),
             channel: 0,
             enhanced_beacon_type: false,
             mac_interface_index: 0u8,
@@ -483,9 +481,9 @@ where
                     match response.status {
                         AssociationStatus::Successful => {
                             // --- Success: update NIB (§3.6.1.4.1.1) ---
-                            let assigned_addr = response.association_address.0;
-                            self.nib.set_network_address(assigned_addr);
-                            self.nib.set_extended_panid(request.extended_pan_id);
+                            let assigned_addr = response.association_address;
+                            self.nib.set_network_address(assigned_addr.0);
+                            self.nib.set_extended_panid(request.extended_pan_id.0);
                             self.nib.set_panid(pan_id.0);
 
                             // Read parent fields before the clearing loop
@@ -565,7 +563,7 @@ where
         // TODO: read extended_pan_id from NIB
         let request = NlmeJoinRequest {
             // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
-            extended_pan_id: 0u64,
+            extended_pan_id: IeeeAddress(0u64),
             rejoin_network: 0x02,
             // TODO: set ScanChannels parameter to 0x00000000
             scan_duration: 0x00,
@@ -648,7 +646,7 @@ mod tests {
                 .get_mut()
                 .push(AssociateOutcome {
                     result: Ok(AssociationResponse {
-                        device_address: ExtendedAddress(0),
+                        device_address: IeeeAddress(0),
                         association_address: MacShortAddr(addr),
                         status,
                     }),
@@ -698,11 +696,7 @@ mod tests {
             unimplemented!("poll_data not needed in join tests")
         }
 
-        async fn transmit_data(
-            &mut self,
-            _dest: Address,
-            _payload: &[u8],
-        ) -> Result<(), MacError> {
+        async fn transmit_data(&mut self, _dest: Address, _payload: &[u8]) -> Result<(), MacError> {
             unimplemented!("transmit_data not needed in join tests")
         }
     }
@@ -748,7 +742,7 @@ mod tests {
 
     fn default_join_request(epid: u64) -> NlmeJoinRequest {
         NlmeJoinRequest {
-            extended_pan_id: epid,
+            extended_pan_id: IeeeAddress(epid),
             rejoin_network: 0x00,
             scan_duration: 0x00,
             // End device, no special capabilities, allocate address.
@@ -764,7 +758,7 @@ mod tests {
     #[test]
     fn select_parent_no_neighbors() {
         let nlme = make_nlme(MockMlme::new());
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
     }
 
@@ -783,7 +777,7 @@ mod tests {
             .unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0], 0); // first neighbor
     }
@@ -803,7 +797,7 @@ mod tests {
             .unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0], 0);
     }
@@ -819,7 +813,7 @@ mod tests {
         nlme.nib.set_neighbor_table(table);
 
         // Joining as end device — should find no candidates.
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
     }
 
@@ -834,7 +828,7 @@ mod tests {
         nlme.nib.set_neighbor_table(table);
 
         // Joining as router — should find no candidates.
-        let candidates = nlme.select_parent_candidates(0x1234, true);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), true);
         assert!(candidates.is_empty());
     }
 
@@ -856,7 +850,7 @@ mod tests {
             .unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 3);
         // Should be sorted: depth 1 (idx 1), depth 2 (idx 2), depth 3 (idx 0)
         assert_eq!(candidates[0], 1);
@@ -874,7 +868,7 @@ mod tests {
         table.push(n).unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
     }
 
@@ -888,7 +882,7 @@ mod tests {
         table.push(n).unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
     }
 
@@ -905,7 +899,7 @@ mod tests {
         table.push(n2).unwrap();
         nlme.nib.set_neighbor_table(table);
 
-        let candidates = nlme.select_parent_candidates(0x1234, false);
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0], 0); // only the one with update_id=5
     }
@@ -930,8 +924,8 @@ mod tests {
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
 
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
-        assert_eq!(confirm.network_address, 0x1234);
-        assert_eq!(confirm.extended_pan_id, 0xDEAD);
+        assert_eq!(confirm.network_address.0, 0x1234);
+        assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
         assert_eq!(confirm.channel, 11);
 
         // NIB should be updated.
@@ -1005,7 +999,7 @@ mod tests {
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
-        assert_eq!(confirm.network_address, 0x5678);
+        assert_eq!(confirm.network_address.0, 0x5678);
 
         // After successful join, Table 3-64 fields are cleared.
         // First neighbor was marked potential_parent=0 before the second
@@ -1031,7 +1025,7 @@ mod tests {
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::PanAccessDenied);
-        assert_eq!(confirm.network_address, 0xffff);
+        assert_eq!(confirm.network_address.0, 0xffff);
     }
 
     #[test]
