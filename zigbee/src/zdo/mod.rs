@@ -1,6 +1,7 @@
 use config::Config;
 
 pub mod config;
+pub mod device_annce;
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::aps::apsme::Apsme;
 

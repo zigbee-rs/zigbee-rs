@@ -14,6 +14,7 @@
 //! * routing
 #![allow(dead_code)]
 
+use byte::BytesExt;
 use byte::TryRead;
 use management::NlmeEdScanConfirm;
 use management::NlmeEdScanRequest;
@@ -42,6 +43,9 @@ use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
 
+use crate::nwk::frame::frame_control::DiscoverRoute;
+use crate::nwk::frame::frame_control::FrameControl as NwkFrameControl;
+use crate::nwk::frame::frame_control::FrameType as NwkFrameType;
 use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
@@ -108,10 +112,17 @@ pub trait NlmeSap {
     /// Poll the coordinator for pending data, strip the NWK header, and
     /// return the APS payload (§3.6.2).
     async fn poll_nwk_data(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError>;
+
+    /// Broadcast an NWK data frame to all RxOnWhenIdle devices (§3.6.5).
+    ///
+    /// Wraps `payload` in a NWK header and transmits it as a MAC
+    /// broadcast.
+    async fn broadcast_data(&mut self, payload: &[u8]) -> Result<(), NetworkError>;
 }
 
 pub struct Nlme<M> {
     mac: M,
+    nwk_seq: u8,
 }
 
 impl<M> Nlme<M>
@@ -119,7 +130,12 @@ where
     M: Mlme,
 {
     pub fn new(mac: M) -> Self {
-        Self { mac }
+        Self { mac, nwk_seq: 0 }
+    }
+
+    fn next_nwk_seq(&mut self) -> u8 {
+        self.nwk_seq = self.nwk_seq.wrapping_add(1);
+        self.nwk_seq
     }
 
     /// Returns a reference to the global NIB singleton.
@@ -485,6 +501,41 @@ where
         let (_nwk_hdr, nwk_hdr_len) = NwkHeader::try_read(&buf[..len], ())?;
         buf.copy_within(nwk_hdr_len..len, 0);
         Ok(len - nwk_hdr_len)
+    }
+
+    async fn broadcast_data(&mut self, payload: &[u8]) -> Result<(), NetworkError> {
+        let nib = self.nib();
+        let frame_control = NwkFrameControl(0)
+            .set_frame_type(NwkFrameType::Data)
+            .set_protocol_version(2)
+            .set_discover_route(DiscoverRoute::Suppress);
+
+        let seq = self.next_nwk_seq();
+        let header = NwkHeader {
+            frame_control,
+            destination: ShortAddress(0xFFFF),
+            source: ShortAddress(nib.network_address()),
+            radius: 30,
+            sequence_number: seq,
+            destination_ieee: None,
+            source_ieee: None,
+            multicast_control: None,
+            source_route_subframe: None,
+        };
+
+        let mut buf = [0u8; 127];
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+        let hdr_len = *offset;
+        let payload_len = payload.len().min(buf.len() - hdr_len);
+        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+
+        let dest = Address::Short(
+            PanId(nib.panid()),
+            MacShortAddress(0xFFFF),
+        );
+        self.mac.transmit_data(dest, &buf[..hdr_len + payload_len]).await?;
+        Ok(())
     }
 }
 

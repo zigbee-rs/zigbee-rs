@@ -38,7 +38,9 @@ use zigbee::nwk::nlme::management::NlmeJoinStatus;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::zdo::ZigbeeDevice;
+use zigbee::zdo::device_annce::DeviceAnnce;
 use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 /// Base Device Behavior (BDB) commissioning manager.
 ///
@@ -51,6 +53,8 @@ pub struct BaseDeviceBehavior<T: NlmeSap> {
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
+    capability: CapabilityInformation,
+    aps_counter: u8,
 }
 
 impl<T: NlmeSap> BaseDeviceBehavior<T> {
@@ -63,6 +67,8 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
+            capability: CapabilityInformation(0),
+            aps_counter: 0,
         }
     }
 
@@ -86,6 +92,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         capability_information: CapabilityInformation,
     ) -> Result<NlmeJoinConfirm, NetworkError> {
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+        self.capability = capability_information;
 
         // BDB 8.2 step 1: NLME-NETWORK-DISCOVERY.request
         self.nlme
@@ -106,12 +113,31 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             return Ok(confirm);
         }
 
-        // BDB 8.2 step 12: wait for Trust Center to deliver the network key
+        // BDB 8.2 step 9: wait for Trust Center to deliver the network key
         zigbee::aps::security::await_transport_key(&mut self.nlme).await?;
+
+        // BDB 8.2 step 11: broadcast Device_annce
+        self.device_annce().await?;
 
         self.bdb_node_is_on_a_network = true;
         self.bdb_commissioning_status = BdbCommissioningStatus::Success;
         Ok(confirm)
+    }
+
+    /// Broadcast a ZDO Device_annce (§2.4.3.1.11, BDB §8.2 step 11).
+    async fn device_annce(&mut self) -> Result<(), NetworkError> {
+        let nib = nib::get_ref();
+        let annce = DeviceAnnce {
+            nwk_addr: ShortAddress(nib.network_address()),
+            ieee_addr: nib.ieee_address(),
+            capability: self.capability,
+        };
+        zigbee::zdo::device_annce::broadcast(
+            &mut self.nlme,
+            &mut self.aps_counter,
+            annce,
+        )
+        .await
     }
 
     fn is_end_device(&self) -> bool {
