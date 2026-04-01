@@ -6,19 +6,19 @@
 use core::convert::TryInto;
 use core::slice;
 
-use aead::generic_array::GenericArray;
 use aead::AeadMutInPlace;
-use aes::cipher::generic_array::GenericArray as AesGenericArray;
+use aead::generic_array::GenericArray;
+use aes::Aes128;
 use aes::cipher::BlockEncrypt;
 use aes::cipher::KeyInit as AesKeyInit;
-use aes::Aes128;
+use aes::cipher::generic_array::GenericArray as AesGenericArray;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
-use ccm::consts::U13;
-use ccm::consts::U4;
 use ccm::Ccm;
 use ccm::KeyInit;
+use ccm::consts::U4;
+use ccm::consts::U13;
 use frame::AuxFrameHeader;
 use frame::SecurityControl;
 use frame::SecurityLevel;
@@ -33,15 +33,15 @@ use crate::aps::aib::AibStorage;
 use crate::aps::aib::DeviceKeyPairDescriptor;
 use crate::aps::aib::KeyAttribute;
 use crate::aps::aib::LinkKeyType;
+use crate::aps::apdu::frame::CommandFrame as ApsCommandFrame;
+use crate::aps::apdu::frame::Frame as ApsFrame;
 use crate::aps::apdu::frame::command::Command as ApsCommand;
 use crate::aps::apdu::frame::command::TransportKey;
 use crate::aps::apdu::frame::frame_control::FrameType as ApsFrameType;
 use crate::aps::apdu::frame::header::Header as ApsHeader;
-use crate::aps::apdu::frame::CommandFrame as ApsCommandFrame;
-use crate::aps::apdu::frame::Frame as ApsFrame;
 use crate::aps::types::TxOptions;
-use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::frame::Frame as NwkFrame;
+use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
@@ -110,7 +110,8 @@ impl<'a> SecurityContext<'a> {
         Self { nib, aib }
     }
 
-    pub fn no_security() -> Self {
+    /// Returns the `SecurityContext` referencing the static `NIB` and `AIB`.
+    pub fn get() -> Self {
         Self {
             nib: nib::get_ref(),
             aib: aib::get_ref(),
@@ -495,6 +496,42 @@ impl<'a> SecurityContext<'a> {
     }
 }
 
+/// Decrypted transport key material extracted from an APS command frame (§4.4.10).
+pub struct TransportKeyIndication {
+    pub key: ByteArray<16>,
+    pub key_seq_number: u8,
+    pub source_address: IeeeAddress,
+    pub destination_address: IeeeAddress,
+}
+
+impl<'a> TryFrom<ApsFrame<'a>> for TransportKeyIndication {
+    type Error = SecurityError;
+
+    fn try_from(frame: ApsFrame<'a>) -> Result<Self, SecurityError> {
+        match frame {
+            ApsFrame::ApsCommand(cmd)
+                if matches!(
+                    cmd.command,
+                    ApsCommand::TransportKey(TransportKey::StandardNetworkKey(_))
+                ) =>
+            {
+                let ApsCommand::TransportKey(TransportKey::StandardNetworkKey(nwk_key)) =
+                    cmd.command
+                else {
+                    unreachable!()
+                };
+                Ok(Self {
+                    key: nwk_key.key,
+                    key_seq_number: nwk_key.sequence_number,
+                    source_address: nwk_key.source_address,
+                    destination_address: nwk_key.destination_address,
+                })
+            }
+            _ => Err(SecurityError::Unspecified),
+        }
+    }
+}
+
 // Figure 4-20
 #[allow(clippy::needless_range_loop)]
 fn create_nonce(aux_header: &AuxFrameHeader) -> Result<[u8; 13], SecurityError> {
@@ -583,7 +620,9 @@ mod tests {
         let nonce = create_nonce(&aux_hdr).unwrap();
         assert_eq!(
             nonce,
-            [0xdd, 0xdd, 0xcc, 0xcc, 0xbb, 0xbb, 0xaa, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x40]
+            [
+                0xdd, 0xdd, 0xcc, 0xcc, 0xbb, 0xbb, 0xaa, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x40
+            ]
         );
     }
 

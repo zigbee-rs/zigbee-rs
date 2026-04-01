@@ -96,7 +96,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
 
                 // Wait for the Trust Center to deliver the network key
                 println!("Waiting for transport key from Trust Center...");
-                match nwk.await_transport_key().await {
+                match zigbee::aps::security::await_transport_key(&mut nwk).await {
                     Ok(()) => {
                         let sec = nwk.nib.security_material_set();
                         if let Some(key) = sec.first() {

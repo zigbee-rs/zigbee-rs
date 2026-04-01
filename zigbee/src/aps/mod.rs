@@ -19,4 +19,5 @@ pub mod apdu;
 /// It also maintains a database of managed objects, known as the APS
 /// information base (AIB).
 pub mod apsme;
+pub mod security;
 mod binding;
