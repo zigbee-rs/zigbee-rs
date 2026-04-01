@@ -54,6 +54,11 @@ impl<'a> Ieee802154Driver<'a> {
         self.ieee_address
     }
 
+    /// The assigned short address, if any.
+    pub fn short_address(&self) -> Option<u16> {
+        self.config.short_addr
+    }
+
     pub fn update_driver_config(&mut self, update_fn: impl Fn(&mut Config)) {
         update_fn(&mut self.config);
         self.config.rx_when_idle = true;

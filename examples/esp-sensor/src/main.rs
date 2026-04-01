@@ -18,10 +18,10 @@ use zigbee_types::IeeeAddress;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 /// Extended PAN ID of the network to join.
-const EXTENDED_PAN_ID: u64 = 0x1122334455667788;
+const EXTENDED_PAN_ID: u64 = 0xf4ce36c17d3852e1;
 
 /// Channel to scan on (must match the coordinator's channel).
-const CHANNEL: u8 = 15;
+const CHANNEL: u8 = 16;
 
 /// Scan duration exponent (beacon order).
 const SCAN_DURATION: u8 = 5;
@@ -38,6 +38,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
     zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
+    zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
     let mac = EspMlme::new(ieee802154, Default::default());

@@ -2,6 +2,7 @@
 /target
 **/target
 docs/spec
+docs/captures
 .idea
 Cargo.lock
 

@@ -185,24 +185,31 @@ impl EspMlme<'_> {
         }
     }
 
-    /// Build a MAC data request command frame (IEEE 802.15.4 §7.3.2.1).
-    fn data_request_frame(
-        &mut self,
-        dest: Address,
-        src_ieee: ieee802154::mac::ExtendedAddress,
-    ) -> Result<[u8; 20], MacError> {
+    /// Build a MAC data request command frame (IEEE 802.15.4 §7.3.4).
+    ///
+    /// Uses the assigned short address as source when available (i.e.
+    /// after a successful association), otherwise falls back to the
+    /// extended address.
+    fn data_request_frame(&mut self, dest: Address) -> Result<[u8; 20], MacError> {
         let seq = self.sequence_number();
+        let source = match self.driver.short_address() {
+            Some(short) => Address::Short(
+                dest.pan_id(),
+                ieee802154::mac::ShortAddress(short),
+            ),
+            None => Address::Extended(dest.pan_id(), self.driver.ieee_address()),
+        };
         let frame_header = Header {
             frame_type: FrameType::MacCommand,
             frame_pending: false,
             ack_request: true,
-            pan_id_compress: false,
+            pan_id_compress: true,
             seq_no_suppress: false,
             ie_present: false,
             version: FrameVersion::Ieee802154_2003,
             seq,
             destination: Some(dest),
-            source: Some(Address::Extended(dest.pan_id(), src_ieee)),
+            source: Some(source),
             auxiliary_security_header: None,
         };
         let frame_content = FrameContent::Command(Command::DataRequest);
@@ -328,7 +335,7 @@ impl Mlme for EspMlme<'_> {
 
         // Step 3: Poll the coordinator for the association response.
         self.flush();
-        let data_req = self.data_request_frame(dest, self.driver.ieee_address())?;
+        let data_req = self.data_request_frame(dest)?;
         self.driver.transmit(&data_req).await?;
 
         // Step 4: Wait for the association response command frame.
@@ -368,7 +375,7 @@ impl Mlme for EspMlme<'_> {
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError> {
         self.flush();
-        let data_req = self.data_request_frame(coord_address, self.driver.ieee_address())?;
+        let data_req = self.data_request_frame(coord_address)?;
         self.driver.transmit(&data_req).await?;
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
