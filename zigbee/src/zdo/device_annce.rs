@@ -1,37 +1,19 @@
-//! ZDO Device_annce (§2.4.3.1.11)
+//! ZDO Device_annce broadcast (§2.4.3.1.11, §2.5.3)
 //!
-//! Broadcast by a device that has joined or re-joined a network to notify
-//! other devices of its short address, IEEE address, and capabilities.
+//! ZDO sends Device_annce via the APSDE-SAP on endpoint 0.
 
 use byte::BytesExt;
-use zigbee_macros::impl_byte;
-use zigbee_types::IeeeAddress;
-use zigbee_types::ShortAddress;
 
+pub use crate::zdp::device_annce::DeviceAnnce;
 use crate::aps::apsde;
-use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::NlmeSap;
+use crate::zdp::device_annce::CLUSTER_ID;
 
-/// ZDP Device_annce cluster identifier.
-const DEVICE_ANNCE_CLUSTER_ID: u16 = 0x0013;
 /// ZigBee Device Profile identifier.
 const ZDP_PROFILE_ID: u16 = 0x0000;
 /// ZDO endpoint.
 const ZDO_ENDPOINT: u8 = 0x00;
-
-impl_byte! {
-    /// ZDP Device_annce payload (§2.4.3.1.11).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct DeviceAnnce {
-        /// NWK address for the local device.
-        pub nwk_addr: ShortAddress,
-        /// IEEE address for the local device.
-        pub ieee_addr: IeeeAddress,
-        /// Capability of the local device.
-        pub capability: CapabilityInformation,
-    }
-}
 
 /// Broadcast a ZDO Device_annce (§2.4.3.1.11).
 ///
@@ -53,7 +35,7 @@ pub async fn broadcast<T: NlmeSap>(
         nlme,
         aps_counter,
         ZDO_ENDPOINT,
-        DEVICE_ANNCE_CLUSTER_ID,
+        CLUSTER_ID,
         ZDP_PROFILE_ID,
         ZDO_ENDPOINT,
         &zdp_buf[..*offset],

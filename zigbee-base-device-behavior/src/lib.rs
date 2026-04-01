@@ -38,7 +38,7 @@ use zigbee::nwk::nlme::management::NlmeJoinStatus;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::zdo::ZigbeeDevice;
-use zigbee::zdo::device_annce::DeviceAnnce;
+use zigbee::zdp::device_annce::DeviceAnnce;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 

@@ -57,7 +57,7 @@ mod tests {
     use byte::TryRead;
     use byte::TryWrite;
 
-    use crate::aps::apdu::frame::command::Command;
+    use crate::aps::frame::command::Command;
 
     #[test]
     fn parse_transport_key() {

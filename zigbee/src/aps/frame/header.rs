@@ -4,7 +4,7 @@ use zigbee_types::ShortAddress;
 
 use super::frame_control::DeliveryMode;
 use super::frame_control::FrameControl;
-use crate::aps::apdu::frame::frame_control::ExtendedFrameControlField;
+use crate::aps::frame::frame_control::ExtendedFrameControlField;
 
 impl_byte! {
     /// 2.2.5.1 General APDU Frame Format

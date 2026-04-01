@@ -1,8 +1,8 @@
 use byte::BytesExt;
 
-use crate::aps::apdu::frame::command::Command;
-use crate::aps::apdu::frame::frame_control::FrameType;
-use crate::aps::apdu::frame::header::Header;
+use crate::aps::frame::command::Command;
+use crate::aps::frame::frame_control::FrameType;
+use crate::aps::frame::header::Header;
 
 pub mod command;
 pub mod frame_control;
