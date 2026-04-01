@@ -18,13 +18,10 @@ default = []
 mock = ["zigbee/mock", "dep:mockall"]
 
 [dependencies]
-byte.workspace = true
-embedded-storage.workspace = true
-spin.workspace = true
 thiserror.workspace = true
 zigbee = { path = "../zigbee" }
+zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 mockall = { workspace = true, optional = true }
-log = "0.4.27"
 
 [dev-dependencies]
 zigbee-base-device-behavior = { path = ".", features = ["mock"] }

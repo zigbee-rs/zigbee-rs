@@ -879,7 +879,8 @@ mod tests {
     fn join_fails_when_no_candidates() {
         let mac = MockMlme::new();
         let (_guard, mut nlme) = make_nlme(mac);
-        // Empty neighbor table.
+        // ensure neighbor table is empty
+        nlme.nib().set_neighbor_table(StorageVec::new());
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
     }

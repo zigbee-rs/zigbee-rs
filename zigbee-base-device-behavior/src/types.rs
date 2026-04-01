@@ -2,10 +2,6 @@
 //!
 //! See Section 5.2.1 and 5.2.9
 
-use byte::BytesExt;
-use byte::TryRead;
-use byte::TryWrite;
-use byte::LE;
 use zigbee::nwk::nlme::management::NetworkDescriptor;
 
 /// Commissioning modes

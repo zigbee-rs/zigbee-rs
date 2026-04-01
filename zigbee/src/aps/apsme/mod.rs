@@ -1,9 +1,9 @@
 //! Application Support Sub-Layer Management Entity
 //!
 //! The APSME shall provide a management service to allow an application to
-//! interact with the stack
+//! interact with the stack.
 //!
-//! it provices the following services:
+//! It provides the following services:
 //! * Binding management
 //! * AIB management
 //! * Security
@@ -30,11 +30,6 @@ use basemgt::ApsmeUnbindRequestStatus;
 
 use super::binding::ApsBindingTable;
 use super::types::Address;
-//use crate::nwk::nlme::management::NlmeNetworkDiscoveryRequest;
-use crate::nwk::nlme::Nlme;
-use crate::nwk::nlme::NlmeSap;
-use crate::nwk::nlme::management::NlmeJoinRequest;
-use crate::nwk::nlme::management::NlmeJoinStatus;
 
 pub mod basemgt;
 pub mod groupmgt;
@@ -43,7 +38,7 @@ pub mod groupmgt;
 ///
 /// 2.2.4.2
 ///
-/// supports the transport of management commands between the NHLE and the APSME
+/// Supports the transport of management commands between the NHLE and the APSME.
 pub trait ApsmeSap {
     /// 2.2.4.3.1 - request to bind two devices together, or to bind a device to
     /// a group
@@ -62,11 +57,11 @@ pub trait ApsmeSap {
     ) -> ApsmeRemoveAllGroupsConfirm;
 }
 
+/// APS Management Entity (§2.2.4).
 pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
-    //pub(crate) nwk: Nlme,
 }
 
 impl Apsme {
@@ -75,53 +70,12 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
-            //nwk: Nlme {},
         }
     }
+
     fn is_joined(&self) -> bool {
         self.joined_network.is_some()
     }
-
-    pub(crate) fn start_network_discovery(&mut self) {
-        //let request = NlmeNetworkDiscoveryRequest {
-        //    scan_channels_list_structure: [0, 0, 0, 0, 0, 0, 0, 0],
-        //    scan_duration: 10u8,
-        //};
-        //let confirm = self.nwk.network_discovery(request);
-
-        //match confirm.status {
-        //    crate::nwk::nlme::management::NlmeNetworkDiscoveryStatus::Successful => {
-        //        // TODO: return list of available networks
-        //    }
-        //}
-    }
-
-    pub(crate) fn join_network(&self) {
-        let _request = NlmeJoinRequest {
-            extended_pan_id: zigbee_types::IeeeAddress(0x0015_8D00_01AB_CD12),
-            rejoin_network: 0u8,
-            scan_duration: 10u8,
-            capability_information: crate::nwk::nib::CapabilityInformation(0x80),
-            security_enabled: false,
-        };
-        //let confirm = self.nwk.join(request);
-        //if let NlmeJoinStatus::Success = confirm.status {
-        //    // confirm.extended_pan_id
-        //} else {
-        //    // TODO: handle errors
-        //}
-    }
-
-    // 2.2.8.2.2 Binding
-    // fn add_binding(&mut self, address: Address) -> Result<(), &'static str> {
-    // self.binding_table.create_binding_link(address.)
-    // Ok(())
-    // }
-    // fn remove_binding(&mut self, address: Address) -> Result<(), &'static str> {
-    // self.binding_table.retain(|addr| addr != &address);
-
-    // Ok(())
-    // }
 }
 
 impl ApsmeSap for Apsme {
