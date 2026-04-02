@@ -19,6 +19,7 @@ mock = ["zigbee/mock", "dep:mockall"]
 
 [dependencies]
 thiserror.workspace = true
+log.workspace = true
 zigbee = { path = "../zigbee" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 mockall = { workspace = true, optional = true }

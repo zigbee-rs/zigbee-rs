@@ -111,7 +111,7 @@ pub trait NlmeSap {
 
     /// Poll the coordinator for pending data, strip the NWK header, and
     /// return the APS payload (§3.6.2).
-    async fn poll_nwk_data(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError>;
+    async fn poll_nwk_data(&mut self, buf: &mut [u8], retries: u8) -> Result<usize, NetworkError>;
 
     /// Broadcast an NWK data frame to all RxOnWhenIdle devices (§3.6.5).
     ///
@@ -245,6 +245,13 @@ where
         Ok(addr)
     }
 
+    async fn poll_nwk_data_request(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+        let coord_addr = self.parent_address()?;
+        let (len, _lqi) = self.mac.poll_data(coord_addr, buf).await?;
+        let (_nwk_hdr, nwk_hdr_len) = NwkHeader::try_read(&buf[..len], ())?;
+        buf.copy_within(nwk_hdr_len..len, 0);
+        Ok(len - nwk_hdr_len)
+    }
 }
 
 impl<M> NlmeSap for Nlme<M>
@@ -495,12 +502,17 @@ where
         self.join(request).await
     }
 
-    async fn poll_nwk_data(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
-        let coord_addr = self.parent_address()?;
-        let (len, _lqi) = self.mac.poll_data(coord_addr, buf).await?;
-        let (_nwk_hdr, nwk_hdr_len) = NwkHeader::try_read(&buf[..len], ())?;
-        buf.copy_within(nwk_hdr_len..len, 0);
-        Ok(len - nwk_hdr_len)
+    async fn poll_nwk_data(&mut self, buf: &mut [u8], retries: u8) -> Result<usize, NetworkError> {
+        for _ in 0..retries {
+            match self.poll_nwk_data_request(buf).await {
+                Ok(n) => {
+                    return Ok(n);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(NetworkError::MacError(MacError::NoData))
     }
 
     async fn broadcast_data(&mut self, payload: &[u8]) -> Result<(), NetworkError> {
@@ -530,11 +542,10 @@ where
         let payload_len = payload.len().min(buf.len() - hdr_len);
         buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-        let dest = Address::Short(
-            PanId(nib.panid()),
-            MacShortAddress(0xFFFF),
-        );
-        self.mac.transmit_data(dest, &buf[..hdr_len + payload_len]).await?;
+        let dest = Address::Short(PanId(nib.panid()), MacShortAddress(0xFFFF));
+        self.mac
+            .transmit_data(dest, &buf[..hdr_len + payload_len])
+            .await?;
         Ok(())
     }
 }

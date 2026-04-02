@@ -42,7 +42,7 @@ macro_rules! recv_frame {
                 match frame {
                     $($pat => return Ok($body),)+
                     _ => {
-                        log::info!("[MLME-ASSOCIATE] received other frame");
+                        log::debug!("[MLME-ASSOCIATE] received other frame");
                         continue;
                     },
                 }
@@ -193,10 +193,7 @@ impl EspMlme<'_> {
     fn data_request_frame(&mut self, dest: Address) -> Result<[u8; 20], MacError> {
         let seq = self.sequence_number();
         let source = match self.driver.short_address() {
-            Some(short) => Address::Short(
-                dest.pan_id(),
-                ieee802154::mac::ShortAddress(short),
-            ),
+            Some(short) => Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(short)),
             None => Address::Extended(dest.pan_id(), self.driver.ieee_address()),
         };
         let frame_header = Header {
@@ -325,13 +322,13 @@ impl Mlme for EspMlme<'_> {
         let src = Address::Extended(dest.pan_id(), ext_addr);
         let frame = self.association_request_frame(dest, Some(src), capabilities)?;
         self.driver.transmit(&frame).await?;
-        log::info!("[MLME-ASSOCIATE] request transmitted");
+        log::debug!("[MLME-ASSOCIATE] request transmitted");
 
         // Step 2: Wait aResponseWaitTime for the coordinator to prepare its
         // association decision (IEEE 802.15.4 §7.5.3.1).
         let wait_us: u64 = (A_RESPONSE_WAIT_TIME as u64) * 16;
         Timer::after_micros(wait_us).await;
-        log::info!("[MLME-ASSOCIATE] waited for {wait_us} us");
+        log::debug!("[MLME-ASSOCIATE] waited for {wait_us} us");
 
         // Step 3: Poll the coordinator for the association response.
         self.flush();

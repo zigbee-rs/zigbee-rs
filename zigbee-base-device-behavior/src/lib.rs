@@ -91,13 +91,14 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         scan_duration: u8,
         capability_information: CapabilityInformation,
     ) -> Result<NlmeJoinConfirm, NetworkError> {
+        log::debug!(
+            "[BDB] start network steering, EPID={extended_pan_id:?}, channels={channels:?}"
+        );
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
         self.capability = capability_information;
 
         // BDB 8.2 step 1: NLME-NETWORK-DISCOVERY.request
-        self.nlme
-            .network_discovery(channels, scan_duration)
-            .await?;
+        self.nlme.network_discovery(channels, scan_duration).await?;
 
         // BDB 8.2 step 5: NLME-JOIN.request via MAC association
         let request = NlmeJoinRequest {
@@ -114,7 +115,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         }
 
         // BDB 8.2 step 9: wait for Trust Center to deliver the network key
-        zigbee::aps::security::await_transport_key(&mut self.nlme).await?;
+        zigbee::aps::security::poll_transport_key(&mut self.nlme).await?;
 
         // BDB 8.2 step 11: broadcast Device_annce
         self.device_annce().await?;
@@ -132,12 +133,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             ieee_addr: nib.ieee_address(),
             capability: self.capability,
         };
-        zigbee::zdo::device_annce::broadcast(
-            &mut self.nlme,
-            &mut self.aps_counter,
-            annce,
-        )
-        .await
+        zigbee::zdo::device_annce::broadcast(&mut self.nlme, &mut self.aps_counter, annce).await
     }
 
     fn is_end_device(&self) -> bool {

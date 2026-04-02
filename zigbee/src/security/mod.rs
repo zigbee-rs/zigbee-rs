@@ -496,42 +496,6 @@ impl<'a> SecurityContext<'a> {
     }
 }
 
-/// Decrypted transport key material extracted from an APS command frame (§4.4.10).
-pub struct TransportKeyIndication {
-    pub key: ByteArray<16>,
-    pub key_seq_number: u8,
-    pub source_address: IeeeAddress,
-    pub destination_address: IeeeAddress,
-}
-
-impl<'a> TryFrom<ApsFrame<'a>> for TransportKeyIndication {
-    type Error = SecurityError;
-
-    fn try_from(frame: ApsFrame<'a>) -> Result<Self, SecurityError> {
-        match frame {
-            ApsFrame::ApsCommand(cmd)
-                if matches!(
-                    cmd.command,
-                    ApsCommand::TransportKey(TransportKey::StandardNetworkKey(_))
-                ) =>
-            {
-                let ApsCommand::TransportKey(TransportKey::StandardNetworkKey(nwk_key)) =
-                    cmd.command
-                else {
-                    unreachable!()
-                };
-                Ok(Self {
-                    key: nwk_key.key,
-                    key_seq_number: nwk_key.sequence_number,
-                    source_address: nwk_key.source_address,
-                    destination_address: nwk_key.destination_address,
-                })
-            }
-            _ => Err(SecurityError::Unspecified),
-        }
-    }
-}
-
 // Figure 4-20
 #[allow(clippy::needless_range_loop)]
 fn create_nonce(aux_header: &AuxFrameHeader) -> Result<[u8; 13], SecurityError> {
