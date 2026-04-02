@@ -26,6 +26,17 @@ use types::BdbCommissioningStatus;
 use types::CommissioningMode;
 use zigbee::Config;
 use zigbee::LogicalType;
+use zigbee::aps::aib;
+use zigbee::aps::aib::DeviceKeyPairDescriptor;
+use zigbee::aps::aib::KeyAttribute;
+use zigbee::aps::aib::LinkKeyType;
+use zigbee::aps::frame::command::Command;
+use zigbee::aps::frame::command::ConfirmKey;
+use zigbee::aps::frame::command::RequestKey;
+use zigbee::aps::frame::command::TransportKey;
+use zigbee::aps::frame::command::VerifyKey;
+use zigbee::aps::security::poll_aps_command;
+use zigbee::aps::security::send_aps_command;
 use zigbee::nwk::nib;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nib::Nib;
@@ -37,8 +48,10 @@ use zigbee::nwk::nlme::management::NlmeJoinRequest;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
+use zigbee::security::primitives::HmacAes128Mmo;
 use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdp::device_annce::DeviceAnnce;
+use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 
@@ -120,6 +133,9 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         // BDB 8.2 step 11: broadcast Device_annce
         self.device_annce().await?;
 
+        // BDB 8.2 step 12: TC link key exchange (§10.2.5)
+        self.tc_link_key_exchange().await?;
+
         self.bdb_node_is_on_a_network = true;
         self.bdb_commissioning_status = BdbCommissioningStatus::Success;
         Ok(confirm)
@@ -134,6 +150,107 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             capability: self.capability,
         };
         zigbee::zdo::device_annce::broadcast(&mut self.nlme, &mut self.aps_counter, annce).await
+    }
+
+    /// Trust Center link key exchange procedure (BDB §10.2.5).
+    ///
+    /// Replaces the default TC link key (key A) with a unique key (key B)
+    /// through a three-phase exchange: REQUEST-KEY → TRANSPORT-KEY →
+    /// VERIFY-KEY → CONFIRM-KEY.
+    async fn tc_link_key_exchange(&mut self) -> Result<(), NetworkError> {
+        let tc_short = ShortAddress(0x0000);
+        let tc_ieee = aib::get_ref().trust_center_address();
+
+        log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
+
+        // Phase 2 (§10.2.5 steps 6-9): REQUEST-KEY → TRANSPORT-KEY
+        let mut attempts = 0u8;
+        let new_key = loop {
+            log::debug!("[BDB] send_aps_command");
+            send_aps_command(
+                &mut self.nlme,
+                &mut self.aps_counter,
+                tc_short,
+                tc_ieee,
+                Command::RequestKey(RequestKey::TrustCenterLinkKey),
+            )
+            .await?;
+            attempts += 1;
+            log::debug!("[BDB] send_aps_command ok");
+
+            match poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout).await {
+                Ok(Command::TransportKey(TransportKey::TrustCenterLinkKey(key_desc))) => {
+                    log::debug!("[BDB] received new TC link key");
+                    break key_desc.key;
+                }
+                _ if attempts >= bdbcMaxSameNetworkRetryAttempts => {
+                    log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
+                    self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
+                    return Err(NetworkError::NoTransportKey);
+                }
+                _ => continue,
+            }
+        };
+
+        // §10.2.5 step 9: install key B in apsDeviceKeyPairSet
+        let aib = aib::get_ref();
+        let mut key_set = aib.device_key_pair_set();
+        if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
+            entry.link_key = new_key;
+            entry.key_attributes = KeyAttribute::UnverifiedKey;
+            entry.incoming_frame_counter = 0;
+        } else {
+            let _ = key_set.push(DeviceKeyPairDescriptor {
+                device_address: tc_ieee,
+                key_attributes: KeyAttribute::UnverifiedKey,
+                link_key: new_key,
+                outgoing_frame_counter: 0,
+                incoming_frame_counter: 0,
+                link_key_type: LinkKeyType::UniqueLinkKey,
+            });
+        }
+        aib.set_device_key_pair_set(key_set);
+
+        // Phase 3 (§10.2.5 steps 10-13): VERIFY-KEY → CONFIRM-KEY
+        let hash = HmacAes128Mmo::hmac(new_key.as_slice(), &[0x03]).map_err(|_| {
+            NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
+        })?;
+
+        let mut attempts = 0u8;
+        loop {
+            send_aps_command(
+                &mut self.nlme,
+                &mut self.aps_counter,
+                tc_short,
+                tc_ieee,
+                Command::VerifyKey(VerifyKey {
+                    key_type: 0x04,
+                    source_address: tc_ieee,
+                    hash: ByteArray(hash),
+                }),
+            )
+            .await?;
+            attempts += 1;
+
+            match poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout).await {
+                Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
+                    log::debug!("[BDB] TC link key verified successfully");
+                    // mark key as verified
+                    let mut key_set = aib.device_key_pair_set();
+                    if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
+                        entry.key_attributes = KeyAttribute::VerifiedKey;
+                    }
+                    aib.set_device_key_pair_set(key_set);
+                    return Ok(());
+                }
+                _ if attempts >= bdbcMaxSameNetworkRetryAttempts => {
+                    log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
+                    self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
+                    return Err(NetworkError::NoTransportKey);
+                }
+                _ => continue,
+            }
+        }
     }
 
     fn is_end_device(&self) -> bool {

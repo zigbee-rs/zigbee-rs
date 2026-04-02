@@ -31,9 +31,12 @@ pub async fn broadcast<T: NlmeSap>(
     zdp_buf.write(offset, aps_counter.wrapping_add(1))?;
     zdp_buf.write_with(offset, annce, ())?;
 
+    // §2.4.3.1.11: broadcast to all RxOnWhenIdle devices
+    let rx_on_when_idle = zigbee_types::ShortAddress(0xFFFD);
     apsde::broadcast_data(
         nlme,
         aps_counter,
+        rx_on_when_idle,
         ZDO_ENDPOINT,
         CLUSTER_ID,
         ZDP_PROFILE_ID,

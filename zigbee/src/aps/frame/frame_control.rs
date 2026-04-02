@@ -47,6 +47,12 @@ impl FrameControl {
         ((self.0 & mask::SECURITY_FLAG) >> offset::SECURITY_FLAG) != 0
     }
 
+    #[must_use]
+    pub fn set_security_flag(mut self, value: bool) -> Self {
+        self.0 = (self.0 & !mask::SECURITY_FLAG) | ((value as u8) << offset::SECURITY_FLAG);
+        self
+    }
+
     // specifies whether the current transmission requires an  acknowledgement frame
     // to be sent to the originator on receipt of the frame
     //

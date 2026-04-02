@@ -156,13 +156,62 @@ pub struct ApsdeSapIndication {
     rx_time: u8,
 }
 
-/// Broadcast an APS data frame to all devices (§2.2.5.1).
+/// Send a unicast APS data frame to a specific destination (§2.2.5.1).
+///
+/// Builds an APS header with [`DeliveryMode::Unicast`], appends
+/// `payload`, and hands the APDU to the NWK layer via
+/// [`NlmeSap::send_data`].
+pub async fn unicast_data<T: NlmeSap>(
+    nlme: &mut T,
+    aps_counter: &mut u8,
+    destination: zigbee_types::ShortAddress,
+    dst_endpoint: u8,
+    cluster_id: u16,
+    profile_id: u16,
+    src_endpoint: u8,
+    payload: &[u8],
+) -> Result<(), NetworkError> {
+    *aps_counter = aps_counter.wrapping_add(1);
+    let counter = *aps_counter;
+
+    let frame_control = FrameControl::default()
+        .set_frame_type(FrameType::Data)
+        .set_delivery_mode(DeliveryMode::Unicast);
+
+    let header = Header {
+        frame_control,
+        destination_endpoint: Some(dst_endpoint),
+        group_address: None,
+        cluster_id: Some(cluster_id),
+        profile_id: Some(profile_id),
+        source_endpoint: Some(src_endpoint),
+        counter,
+        extended_header: None,
+    };
+
+    let mut buf = [0u8; 100];
+    let offset = &mut 0;
+    buf.write_with(offset, header, ())?;
+
+    let hdr_len = *offset;
+    let payload_len = payload.len().min(buf.len() - hdr_len);
+    buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+
+    nlme.send_data(destination, &buf[..hdr_len + payload_len])
+        .await
+}
+
+/// Broadcast an APS data frame (§2.2.5.1).
 ///
 /// Builds an APS header with the given parameters, appends `payload`,
 /// and hands the APDU to the NWK layer via [`NlmeSap::broadcast_data`].
+///
+/// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
+/// RxOnWhenIdle devices).
 pub async fn broadcast_data<T: NlmeSap>(
     nlme: &mut T,
     aps_counter: &mut u8,
+    nwk_broadcast: zigbee_types::ShortAddress,
     dst_endpoint: u8,
     cluster_id: u16,
     profile_id: u16,
@@ -195,5 +244,6 @@ pub async fn broadcast_data<T: NlmeSap>(
     let payload_len = payload.len().min(buf.len() - hdr_len);
     buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-    nlme.broadcast_data(&buf[..hdr_len + payload_len]).await
+    nlme.broadcast_data(nwk_broadcast, &buf[..hdr_len + payload_len])
+        .await
 }

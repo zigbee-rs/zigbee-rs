@@ -42,7 +42,7 @@ macro_rules! recv_frame {
                 match frame {
                     $($pat => return Ok($body),)+
                     _ => {
-                        log::debug!("[MLME-ASSOCIATE] received other frame");
+                        log::debug!("[MLME-POLL] received other frame");
                         continue;
                     },
                 }
@@ -354,6 +354,11 @@ impl Mlme for EspMlme<'_> {
             },
         )?;
 
+        log::debug!(
+            "[MLME-ASSOCIATE] success, short_addr={:?}",
+            response.association_address
+        );
+
         // Step 5: Configure the assigned short address on the driver and
         // disable promiscuous mode so the hardware filter accepts
         // unicast frames addressed to us.
@@ -374,6 +379,7 @@ impl Mlme for EspMlme<'_> {
         self.flush();
         let data_req = self.data_request_frame(coord_address)?;
         self.driver.transmit(&data_req).await?;
+        log::debug!("[MLME-POLL] tx data req");
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
         recv_frame!(self, timeout_us,
@@ -383,6 +389,7 @@ impl Mlme for EspMlme<'_> {
                 ..
             } => {
                 let len = payload.len().min(buf.len());
+                log::debug!("[MLME-POLL] rx data len={len}");
                 buf[..len].copy_from_slice(&payload[..len]);
                 (len, lqi)
             },
@@ -391,7 +398,10 @@ impl Mlme for EspMlme<'_> {
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
         let seq = self.sequence_number();
-        let source = Some(Address::Extended(dest.pan_id(), self.driver.ieee_address()));
+        let source = Some(match self.driver.short_address() {
+            Some(short) => Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(short)),
+            None => Address::Extended(dest.pan_id(), self.driver.ieee_address()),
+        });
 
         let frame_header = Header {
             frame_type: FrameType::Data,
@@ -423,6 +433,8 @@ impl Mlme for EspMlme<'_> {
         let total_len = hdr_len + payload_len + 2;
 
         self.driver.transmit(&frame_buf[..total_len]).await?;
+        log::debug!("[MLME] tx data, len={total_len}");
+
         Ok(())
     }
 }

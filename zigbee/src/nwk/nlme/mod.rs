@@ -113,11 +113,28 @@ pub trait NlmeSap {
     /// return the APS payload (§3.6.2).
     async fn poll_nwk_data(&mut self, buf: &mut [u8], retries: u8) -> Result<usize, NetworkError>;
 
-    /// Broadcast an NWK data frame to all RxOnWhenIdle devices (§3.6.5).
+    /// Broadcast an NWK data frame (§3.6.5).
     ///
-    /// Wraps `payload` in a NWK header and transmits it as a MAC
-    /// broadcast.
-    async fn broadcast_data(&mut self, payload: &[u8]) -> Result<(), NetworkError>;
+    /// Wraps `payload` in a NWK header addressed to `destination` and
+    /// transmits it as a MAC broadcast. Common broadcast addresses:
+    /// - `0xFFFF` — all devices
+    /// - `0xFFFD` — all RxOnWhenIdle devices
+    /// - `0xFFFC` — all routers and coordinator
+    async fn broadcast_data(
+        &mut self,
+        destination: ShortAddress,
+        payload: &[u8],
+    ) -> Result<(), NetworkError>;
+
+    /// Send an NWK data frame to a specific destination (§3.6.3).
+    ///
+    /// Wraps `payload` in a NWK header addressed to `destination` and
+    /// transmits it via the parent (for end devices) or directly.
+    async fn send_data(
+        &mut self,
+        destination: ShortAddress,
+        payload: &[u8],
+    ) -> Result<(), NetworkError>;
 }
 
 pub struct Nlme<M> {
@@ -508,6 +525,7 @@ where
                 Ok(n) => {
                     return Ok(n);
                 }
+                Err(NetworkError::MacError(MacError::NoData)) => (),
                 Err(e) => return Err(e),
             }
         }
@@ -515,7 +533,11 @@ where
         Err(NetworkError::MacError(MacError::NoData))
     }
 
-    async fn broadcast_data(&mut self, payload: &[u8]) -> Result<(), NetworkError> {
+    async fn broadcast_data(
+        &mut self,
+        destination: ShortAddress,
+        payload: &[u8],
+    ) -> Result<(), NetworkError> {
         let nib = self.nib();
         let frame_control = NwkFrameControl(0)
             .set_frame_type(NwkFrameType::Data)
@@ -525,7 +547,7 @@ where
         let seq = self.next_nwk_seq();
         let header = NwkHeader {
             frame_control,
-            destination: ShortAddress(0xFFFF),
+            destination,
             source: ShortAddress(nib.network_address()),
             radius: 30,
             sequence_number: seq,
@@ -542,7 +564,46 @@ where
         let payload_len = payload.len().min(buf.len() - hdr_len);
         buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-        let dest = Address::Short(PanId(nib.panid()), MacShortAddress(0xFFFF));
+        let dest = Address::Short(PanId(nib.panid()), MacShortAddress(destination.0));
+        self.mac
+            .transmit_data(dest, &buf[..hdr_len + payload_len])
+            .await?;
+        Ok(())
+    }
+
+    async fn send_data(
+        &mut self,
+        destination: ShortAddress,
+        payload: &[u8],
+    ) -> Result<(), NetworkError> {
+        let nib = self.nib();
+        let frame_control = NwkFrameControl(0)
+            .set_frame_type(NwkFrameType::Data)
+            .set_protocol_version(2)
+            .set_discover_route(DiscoverRoute::Suppress);
+
+        let seq = self.next_nwk_seq();
+        let header = NwkHeader {
+            frame_control,
+            destination,
+            source: ShortAddress(nib.network_address()),
+            radius: 30,
+            sequence_number: seq,
+            destination_ieee: None,
+            source_ieee: None,
+            multicast_control: None,
+            source_route_subframe: None,
+        };
+
+        let mut buf = [0u8; 127];
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+        let hdr_len = *offset;
+        let payload_len = payload.len().min(buf.len() - hdr_len);
+        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+
+        // end devices route via parent
+        let dest = self.parent_address()?;
         self.mac
             .transmit_data(dest, &buf[..hdr_len + payload_len])
             .await?;

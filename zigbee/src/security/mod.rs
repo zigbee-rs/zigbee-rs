@@ -271,7 +271,9 @@ impl<'a> SecurityContext<'a> {
                 k.device_address == dest
                     && matches!(
                         k.key_attributes,
-                        KeyAttribute::ProvisionalKey | KeyAttribute::VerifiedKey
+                        KeyAttribute::ProvisionalKey
+                            | KeyAttribute::UnverifiedKey
+                            | KeyAttribute::VerifiedKey
                     )
             })
             .ok_or(SecurityError::Unspecified)?;
