@@ -1,11 +1,18 @@
 //! APS layer security services (§4.4)
 
+use core::slice;
+
 use byte::BytesExt;
 use zigbee_mac::mlme::MacError;
+use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
 
+use crate::aps::aib;
+use crate::aps::aib::DeviceKeyPairDescriptor;
+use crate::aps::aib::KeyAttribute;
+use crate::aps::aib::LinkKeyType;
 use crate::aps::frame::CommandFrame;
 use crate::aps::frame::Frame;
 use crate::aps::frame::command::Command;
@@ -27,9 +34,11 @@ use crate::security::SecurityContext;
 /// the transport key queued immediately after association.
 pub async fn poll_transport_key<T: NlmeSap>(nlme: &mut T) -> Result<(), NetworkError> {
     let mut buf = [0u8; 128];
-    let aps_len = nlme.poll_nwk_data(&mut buf, 5).await?;
+    let b = buf.as_ptr();
+    let mut nwk_data = nlme.poll_nwk_data(&mut buf, 5).await?;
 
-    let aps_buf = &mut buf[..aps_len];
+    // SAFETY: we can safely take a &mut since it references the buf above
+    let aps_buf = unsafe { nwk_data.payload_as_mut() };
     let cx = SecurityContext::get();
     let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
 
@@ -44,6 +53,26 @@ pub async fn poll_transport_key<T: NlmeSap>(nlme: &mut T) -> Result<(), NetworkE
     match transport_key {
         TransportKey::StandardNetworkKey(nwk_key) => {
             log::debug!("[APS-Sec] received network key {:?}", nwk_key.key);
+
+            // record the TC's IEEE address and install the default
+            // link key in the AIB so we can encrypt towards the TC
+            let aib = aib::get_ref();
+            aib.set_trust_center_address(nwk_key.source_address);
+            let mut key_set = aib.device_key_pair_set();
+            if !key_set
+                .iter()
+                .any(|k| k.device_address == nwk_key.source_address)
+            {
+                let _ = key_set.push(DeviceKeyPairDescriptor {
+                    device_address: nwk_key.source_address,
+                    key_attributes: KeyAttribute::ProvisionalKey,
+                    link_key: ByteArray(crate::security::TRUST_CENTER_LINK_KEY),
+                    outgoing_frame_counter: 0,
+                    incoming_frame_counter: 0,
+                    link_key_type: LinkKeyType::GlobalLinkKey,
+                });
+                aib.set_device_key_pair_set(key_set);
+            }
 
             // install network key in NIB
             let nib = nib::get_ref();
@@ -101,7 +130,7 @@ pub async fn send_aps_command<T: NlmeSap>(
     let len =
         cx.encrypt_aps_frame_in_place(aps_frame, &mut buf, dest_ieee, TxOptions::default())?;
 
-    nlme.send_data(destination, &buf[..len]).await
+    nlme.send_data(destination, true, &buf[..len]).await
 }
 
 /// Poll the coordinator for an encrypted APS command, decrypt it, and
@@ -111,11 +140,12 @@ pub async fn poll_aps_command<T: NlmeSap>(
     retries: u8,
 ) -> Result<Command, NetworkError> {
     let mut buf = [0u8; 128];
-    let aps_len = nlme.poll_nwk_data(&mut buf, retries).await?;
+    let mut nwk_data = nlme.poll_nwk_data(&mut buf, retries).await?;
 
-    let aps_buf = &mut buf[..aps_len];
+    // SAFETY: we can safely take a &mut since it references the buf above
+    let aps_buf = unsafe { nwk_data.payload_as_mut() };
     let cx = SecurityContext::get();
-    let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
+    let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf).unwrap();
 
     let Frame::ApsCommand(CommandFrame { command, .. }) = aps_frame else {
         return Err(NetworkError::ParseError);

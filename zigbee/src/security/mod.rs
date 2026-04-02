@@ -53,7 +53,7 @@ pub mod frame;
 pub mod primitives;
 
 /// Default ZigbeeAlliance09 centralized security global trust center link key
-const TRUST_CENTER_LINK_KEY: [u8; 16] = [
+pub const TRUST_CENTER_LINK_KEY: [u8; 16] = [
     0x5a, 0x69, 0x67, 0x42, 0x65, 0x65, 0x41, 0x6c, 0x6c, 0x69, 0x61, 0x6e, 0x63, 0x65, 0x30, 0x39,
 ];
 
@@ -155,7 +155,7 @@ impl<'a> SecurityContext<'a> {
                 aux_hdr,
                 key.as_slice(),
                 data_frame.header,
-                ByteArrayRef(data_frame.payload),
+                data_frame.payload,
             ),
             NwkFrame::NwkCommand(command_frame) => Self::write_and_encrypt_in_place(
                 frame_buffer,
@@ -193,7 +193,10 @@ impl<'a> SecurityContext<'a> {
         let (nwk_hdr, _) = NwkHeader::try_read(hdr_buf, ())?;
         if !nwk_hdr.frame_control.security_flag() {
             // no security enabled for frame, exit with payload
-            return Ok(NwkFrame::from_payload(nwk_hdr, frame_buffer)?);
+            return Ok(NwkFrame::from_payload(
+                nwk_hdr,
+                &frame_buffer[nwk_hdr_len..],
+            )?);
         }
 
         let (mut aux_hdr, aux_hdr_len) =
@@ -370,8 +373,8 @@ impl<'a> SecurityContext<'a> {
         frame_buffer: &mut [u8],
         aux_hdr: AuxFrameHeader,
         key: &[u8],
-        hdr: impl TryWrite,
-        payload: impl TryWrite,
+        hdr: impl TryWrite + core::fmt::Debug,
+        payload: impl TryWrite + core::fmt::Debug,
     ) -> Result<usize, SecurityError> {
         let mic_len = aux_hdr.security_control.security_level().mic_length();
         let nonce = create_nonce(&aux_hdr)?;
@@ -384,10 +387,12 @@ impl<'a> SecurityContext<'a> {
 
         let payload_offset = *offset;
         frame_buffer.write_with(offset, payload, ())?;
+        let payload_len = *offset - payload_offset;
 
         let (aad, payload) = frame_buffer.split_at_mut(payload_offset);
-        let (payload, tag) = payload.split_at_mut(payload.len() - mic_len);
-        let len = payload_offset + payload.len() + mic_len;
+        let (payload, tag) = payload.split_at_mut(payload_len);
+        let tag = &mut tag[..mic_len];
+        let len = *offset + mic_len;
 
         let nonce = GenericArray::from(nonce);
 
@@ -715,13 +720,13 @@ mod tests {
         );
         nib.set_ieee_address(IeeeAddress(0xf4ce_36c1_7d38_52e1));
 
-        let mut got_buffer = [0u8; 53];
+        let mut got_buffer = [0u8; 128];
         let offset = security_context
             .encrypt_aps_frame_in_place(frame, &mut got_buffer, dest, TxOptions::SecurityEnabled)
             .unwrap();
 
         assert_eq!(offset, frame_buffer.len());
-        assert_eq!(frame_buffer, got_buffer);
+        assert_eq!(frame_buffer, got_buffer[..offset]);
     }
 
     // encrypted NWK EndDeviceTimeoutRequest

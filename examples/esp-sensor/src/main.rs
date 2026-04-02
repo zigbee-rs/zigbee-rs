@@ -82,7 +82,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             println!("Join failed: {:?}", confirm.status);
         }
         Err(e) => {
-            println!("Join error: {e}");
+            println!("Join error: {e:#}");
         }
     }
 

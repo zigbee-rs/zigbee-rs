@@ -6,17 +6,17 @@ pub mod header;
 use core::mem;
 use core::slice;
 
-use byte::ctx;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
+use byte::ctx;
 use frame_control::FrameType;
 use header::Header;
 use zigbee_macros::impl_byte;
 
 use crate::nwk::frame::command::Command;
-use crate::security::frame::AuxFrameHeader;
 use crate::security::SecurityContext;
+use crate::security::frame::AuxFrameHeader;
 
 /// NWK Frame
 #[derive(Debug, Clone)]
@@ -78,6 +78,15 @@ impl<'a> TryWrite<SecurityContext<'a>> for Frame<'a> {
 pub struct DataFrame<'a> {
     pub header: Header<'a>,
     pub payload: &'a [u8],
+}
+
+impl<'a> DataFrame<'a> {
+    /// # Safety
+    ///
+    /// Ensure that the buffer referenced by `self` is mutable locally.
+    pub(crate) unsafe fn payload_as_mut(&mut self) -> &'a mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.payload.as_ptr().cast_mut(), self.payload.len()) }
+    }
 }
 
 /// NWK Command Frame

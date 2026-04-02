@@ -197,7 +197,7 @@ pub async fn unicast_data<T: NlmeSap>(
     let payload_len = payload.len().min(buf.len() - hdr_len);
     buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-    nlme.send_data(destination, &buf[..hdr_len + payload_len])
+    nlme.send_data(destination, false, &buf[..hdr_len + payload_len])
         .await
 }
 
@@ -244,6 +244,6 @@ pub async fn broadcast_data<T: NlmeSap>(
     let payload_len = payload.len().min(buf.len() - hdr_len);
     buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-    nlme.broadcast_data(nwk_broadcast, &buf[..hdr_len + payload_len])
+    nlme.broadcast_data(nwk_broadcast, false, &buf[..hdr_len + payload_len])
         .await
 }

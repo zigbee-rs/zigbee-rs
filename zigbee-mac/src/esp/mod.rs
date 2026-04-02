@@ -340,7 +340,6 @@ impl Mlme for EspMlme<'_> {
         let response = recv_frame!(self, timeout_us,
             ReceivedFrame {
                 frame: Frame {
-                    header: Header { source: Some(Address::Extended(_, ext)), .. },
                     content: FrameContent::Command(
                         Command::AssociationResponse(short_addr, status),
                     ),
@@ -348,7 +347,7 @@ impl Mlme for EspMlme<'_> {
                 },
                 ..
             } => AssociationResponse {
-                device_address: zigbee_types::IeeeAddress(ext.0),
+                device_address: zigbee_types::IeeeAddress(self.driver.ieee_address().0),
                 association_address: zigbee_types::ShortAddress(short_addr.0),
                 status,
             },
