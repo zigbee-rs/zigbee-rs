@@ -27,9 +27,22 @@ use basemgt::ApsmeSetConfirm;
 use basemgt::ApsmeUnbindConfirm;
 use basemgt::ApsmeUnbindRequest;
 use basemgt::ApsmeUnbindRequestStatus;
+use byte::BytesExt;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 use super::binding::ApsBindingTable;
+use super::frame::CommandFrame;
+use super::frame::Frame;
+use super::frame::command::Command;
+use super::frame::frame_control::FrameControl;
+use super::frame::frame_control::FrameType;
+use super::frame::header::Header;
 use super::types::Address;
+use super::types::TxOptions;
+use crate::nwk::nlme::NetworkError;
+use crate::nwk::nlme::NlmeSap;
+use crate::security::SecurityContext;
 
 pub mod basemgt;
 pub mod groupmgt;
@@ -62,6 +75,8 @@ pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
+    /// apsCounter AIB attribute (§4.4.11)
+    pub(crate) aps_counter: u8,
 }
 
 impl Apsme {
@@ -70,11 +85,79 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
+            aps_counter: 0,
         }
     }
 
     fn is_joined(&self) -> bool {
         self.joined_network.is_some()
+    }
+
+    /// Build and send an APS command frame to a specific destination (§4.4).
+    ///
+    /// When `aps_secure` is true the APS frame is encrypted with the link key
+    /// for `dest_ieee` before handing it to the NWK layer. The NWK layer
+    /// always encrypts with the network key.
+    pub(crate) async fn send_command<N: NlmeSap>(
+        &mut self,
+        nlme: &mut N,
+        destination: ShortAddress,
+        dest_ieee: IeeeAddress,
+        command: Command,
+        aps_secure: bool,
+    ) -> Result<(), NetworkError> {
+        self.aps_counter = self.aps_counter.wrapping_add(1);
+
+        let frame_control = FrameControl::default()
+            .set_frame_type(FrameType::Command)
+            .set_security_flag(aps_secure);
+
+        let header = Header {
+            frame_control,
+            destination_endpoint: None,
+            group_address: None,
+            cluster_id: None,
+            profile_id: None,
+            source_endpoint: None,
+            counter: self.aps_counter,
+            extended_header: None,
+        };
+
+        let mut buf = [0u8; 128];
+        let len = if aps_secure {
+            let aps_frame = Frame::ApsCommand(CommandFrame { header, command });
+            let cx = SecurityContext::get();
+            cx.encrypt_aps_frame_in_place(aps_frame, &mut buf, dest_ieee, TxOptions::default())?
+        } else {
+            let offset = &mut 0;
+            buf.write_with(offset, header, ())?;
+            buf.write_with(offset, command, ())?;
+            *offset
+        };
+
+        nlme.send_data(destination, true, &buf[..len]).await
+    }
+
+    /// Poll for an encrypted APS command, decrypt it, and return the parsed
+    /// command (§4.4).
+    pub(crate) async fn poll_command<N: NlmeSap>(
+        &mut self,
+        nlme: &mut N,
+        retries: u8,
+    ) -> Result<Command, NetworkError> {
+        let mut buf = [0u8; 128];
+        let mut nwk_data = nlme.poll_nwk_data(&mut buf, retries).await?;
+
+        // SAFETY: we can safely take a &mut since it references the buf above
+        let aps_buf = unsafe { nwk_data.payload_as_mut() };
+        let cx = SecurityContext::get();
+        let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
+
+        let Frame::ApsCommand(CommandFrame { command, .. }) = aps_frame else {
+            return Err(NetworkError::ParseError);
+        };
+
+        Ok(command)
     }
 }
 

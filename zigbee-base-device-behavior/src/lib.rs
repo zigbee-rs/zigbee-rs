@@ -35,8 +35,6 @@ use zigbee::aps::frame::command::ConfirmKey;
 use zigbee::aps::frame::command::RequestKey;
 use zigbee::aps::frame::command::TransportKey;
 use zigbee::aps::frame::command::VerifyKey;
-use zigbee::aps::security::poll_aps_command;
-use zigbee::aps::security::send_aps_command;
 use zigbee::nwk::nib;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nib::Nib;
@@ -67,7 +65,6 @@ pub struct BaseDeviceBehavior<T: NlmeSap> {
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
     capability: CapabilityInformation,
-    aps_counter: u8,
 }
 
 impl<T: NlmeSap> BaseDeviceBehavior<T> {
@@ -81,7 +78,6 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
             capability: CapabilityInformation(0),
-            aps_counter: 0,
         }
     }
 
@@ -128,7 +124,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         }
 
         // BDB 8.2 step 9: wait for Trust Center to deliver the network key
-        zigbee::aps::security::poll_transport_key(&mut self.nlme).await?;
+        self.device.poll_transport_key(&mut self.nlme).await?;
 
         // BDB 8.2 step 11: broadcast Device_annce
         self.device_annce().await?;
@@ -149,7 +145,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             ieee_addr: nib.ieee_address(),
             capability: self.capability,
         };
-        zigbee::zdo::device_annce::broadcast(&mut self.nlme, &mut self.aps_counter, annce).await
+        self.device.device_annce(&mut self.nlme, annce).await
     }
 
     /// Trust Center link key exchange procedure (BDB §10.2.5).
@@ -167,19 +163,23 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         let mut attempts = 0u8;
         let new_key = loop {
             log::debug!("[BDB] send_aps_command");
-            send_aps_command(
-                &mut self.nlme,
-                &mut self.aps_counter,
-                tc_short,
-                tc_ieee,
-                Command::RequestKey(RequestKey::TrustCenterLinkKey),
-                true,
-            )
-            .await?;
+            self.device
+                .send_aps_command(
+                    &mut self.nlme,
+                    tc_short,
+                    tc_ieee,
+                    Command::RequestKey(RequestKey::TrustCenterLinkKey),
+                    true,
+                )
+                .await?;
             attempts += 1;
             log::debug!("[BDB] send_aps_command ok");
 
-            match poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout).await {
+            match self
+                .device
+                .poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout)
+                .await
+            {
                 Ok(Command::TransportKey(TransportKey::TrustCenterLinkKey(key_desc))) => {
                     log::debug!("[BDB] received new TC link key");
                     break key_desc.key;
@@ -223,22 +223,26 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
 
         let mut attempts = 0u8;
         loop {
-            send_aps_command(
-                &mut self.nlme,
-                &mut self.aps_counter,
-                tc_short,
-                tc_ieee,
-                Command::VerifyKey(VerifyKey {
-                    key_type: 0x04,
-                    source_address: device_addr,
-                    hash: ByteArray(hash),
-                }),
-                false,
-            )
-            .await?;
+            self.device
+                .send_aps_command(
+                    &mut self.nlme,
+                    tc_short,
+                    tc_ieee,
+                    Command::VerifyKey(VerifyKey {
+                        key_type: 0x04,
+                        source_address: device_addr,
+                        hash: ByteArray(hash),
+                    }),
+                    false,
+                )
+                .await?;
             attempts += 1;
 
-            match poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout).await {
+            match self
+                .device
+                .poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout)
+                .await
+            {
                 Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
                     log::debug!("[BDB] TC link key verified successfully");
                     // mark key as verified
