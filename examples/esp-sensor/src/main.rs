@@ -8,6 +8,7 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
+use zigbee::aps::aib;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
@@ -70,13 +71,15 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
                 nib.update_id()
             );
 
-            let sec = nib.security_material_set();
-            if let Some(key) = sec.first() {
-                println!(
-                    "Network key installed: seq={} key={:02x?}",
-                    key.key_seq_number, key.key.0
-                );
-            }
+            let network_key = nib.security_material_set().first().unwrap().key;
+            println!("Network key installed: key={:02x?}", network_key);
+
+            let link_key = aib::get_ref()
+                .device_key_pair_set()
+                .first()
+                .unwrap()
+                .link_key;
+            println!("Link key installed: key={:02x?}", link_key);
         }
         Ok(confirm) => {
             println!("Join failed: {:?}", confirm.status);

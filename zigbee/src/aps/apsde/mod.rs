@@ -12,19 +12,12 @@
 //! * Duplicate rejection
 //! * Fragmentation
 #![allow(dead_code)]
-use byte::BytesExt;
 
 use super::types::Address;
 use super::types::DstAddrMode;
 use super::types::SrcAddrMode;
 use super::types::TxOptions;
-use crate::aps::frame::frame_control::DeliveryMode;
-use crate::aps::frame::frame_control::FrameControl;
-use crate::aps::frame::frame_control::FrameType;
-use crate::aps::frame::header::Header;
 use crate::aps::types;
-use crate::nwk::nlme::NetworkError;
-use crate::nwk::nlme::NlmeSap;
 
 /// Application support sub-layer data entity – service access point
 ///
@@ -156,94 +149,3 @@ pub struct ApsdeSapIndication {
     rx_time: u8,
 }
 
-/// Send a unicast APS data frame to a specific destination (§2.2.5.1).
-///
-/// Builds an APS header with [`DeliveryMode::Unicast`], appends
-/// `payload`, and hands the APDU to the NWK layer via
-/// [`NlmeSap::send_data`].
-pub async fn unicast_data<T: NlmeSap>(
-    nlme: &mut T,
-    aps_counter: &mut u8,
-    destination: zigbee_types::ShortAddress,
-    dst_endpoint: u8,
-    cluster_id: u16,
-    profile_id: u16,
-    src_endpoint: u8,
-    payload: &[u8],
-) -> Result<(), NetworkError> {
-    *aps_counter = aps_counter.wrapping_add(1);
-    let counter = *aps_counter;
-
-    let frame_control = FrameControl::default()
-        .set_frame_type(FrameType::Data)
-        .set_delivery_mode(DeliveryMode::Unicast);
-
-    let header = Header {
-        frame_control,
-        destination_endpoint: Some(dst_endpoint),
-        group_address: None,
-        cluster_id: Some(cluster_id),
-        profile_id: Some(profile_id),
-        source_endpoint: Some(src_endpoint),
-        counter,
-        extended_header: None,
-    };
-
-    let mut buf = [0u8; 100];
-    let offset = &mut 0;
-    buf.write_with(offset, header, ())?;
-
-    let hdr_len = *offset;
-    let payload_len = payload.len().min(buf.len() - hdr_len);
-    buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
-
-    nlme.send_data(destination, false, &buf[..hdr_len + payload_len])
-        .await
-}
-
-/// Broadcast an APS data frame (§2.2.5.1).
-///
-/// Builds an APS header with the given parameters, appends `payload`,
-/// and hands the APDU to the NWK layer via [`NlmeSap::broadcast_data`].
-///
-/// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
-/// RxOnWhenIdle devices).
-pub async fn broadcast_data<T: NlmeSap>(
-    nlme: &mut T,
-    aps_counter: &mut u8,
-    nwk_broadcast: zigbee_types::ShortAddress,
-    dst_endpoint: u8,
-    cluster_id: u16,
-    profile_id: u16,
-    src_endpoint: u8,
-    payload: &[u8],
-) -> Result<(), NetworkError> {
-    *aps_counter = aps_counter.wrapping_add(1);
-    let counter = *aps_counter;
-
-    let frame_control = FrameControl::default()
-        .set_frame_type(FrameType::Data)
-        .set_delivery_mode(DeliveryMode::Broadcast);
-
-    let header = Header {
-        frame_control,
-        destination_endpoint: Some(dst_endpoint),
-        group_address: None,
-        cluster_id: Some(cluster_id),
-        profile_id: Some(profile_id),
-        source_endpoint: Some(src_endpoint),
-        counter,
-        extended_header: None,
-    };
-
-    let mut buf = [0u8; 100];
-    let offset = &mut 0;
-    buf.write_with(offset, header, ())?;
-
-    let hdr_len = *offset;
-    let payload_len = payload.len().min(buf.len() - hdr_len);
-    buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
-
-    nlme.broadcast_data(nwk_broadcast, false, &buf[..hdr_len + payload_len])
-        .await
-}

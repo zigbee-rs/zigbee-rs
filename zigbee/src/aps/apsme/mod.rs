@@ -35,6 +35,7 @@ use super::binding::ApsBindingTable;
 use super::frame::CommandFrame;
 use super::frame::Frame;
 use super::frame::command::Command;
+use super::frame::frame_control::DeliveryMode;
 use super::frame::frame_control::FrameControl;
 use super::frame::frame_control::FrameType;
 use super::frame::header::Header;
@@ -158,6 +159,89 @@ impl Apsme {
         };
 
         Ok(command)
+    }
+
+    /// Send a unicast APS data frame to a specific destination (§2.2.5.1).
+    pub(crate) async fn unicast_data<N: NlmeSap>(
+        &mut self,
+        nlme: &mut N,
+        destination: ShortAddress,
+        dst_endpoint: u8,
+        cluster_id: u16,
+        profile_id: u16,
+        src_endpoint: u8,
+        payload: &[u8],
+    ) -> Result<(), NetworkError> {
+        self.aps_counter = self.aps_counter.wrapping_add(1);
+
+        let frame_control = FrameControl::default()
+            .set_frame_type(FrameType::Data)
+            .set_delivery_mode(DeliveryMode::Unicast);
+
+        let header = Header {
+            frame_control,
+            destination_endpoint: Some(dst_endpoint),
+            group_address: None,
+            cluster_id: Some(cluster_id),
+            profile_id: Some(profile_id),
+            source_endpoint: Some(src_endpoint),
+            counter: self.aps_counter,
+            extended_header: None,
+        };
+
+        let mut buf = [0u8; 100];
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+
+        let hdr_len = *offset;
+        let payload_len = payload.len().min(buf.len() - hdr_len);
+        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+
+        nlme.send_data(destination, false, &buf[..hdr_len + payload_len])
+            .await
+    }
+
+    /// Broadcast an APS data frame (§2.2.5.1).
+    ///
+    /// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
+    /// RxOnWhenIdle devices).
+    pub(crate) async fn broadcast_data<N: NlmeSap>(
+        &mut self,
+        nlme: &mut N,
+        nwk_broadcast: ShortAddress,
+        dst_endpoint: u8,
+        cluster_id: u16,
+        profile_id: u16,
+        src_endpoint: u8,
+        payload: &[u8],
+    ) -> Result<(), NetworkError> {
+        self.aps_counter = self.aps_counter.wrapping_add(1);
+
+        let frame_control = FrameControl::default()
+            .set_frame_type(FrameType::Data)
+            .set_delivery_mode(DeliveryMode::Broadcast);
+
+        let header = Header {
+            frame_control,
+            destination_endpoint: Some(dst_endpoint),
+            group_address: None,
+            cluster_id: Some(cluster_id),
+            profile_id: Some(profile_id),
+            source_endpoint: Some(src_endpoint),
+            counter: self.aps_counter,
+            extended_header: None,
+        };
+
+        let mut buf = [0u8; 100];
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+
+        let hdr_len = *offset;
+        let payload_len = payload.len().min(buf.len() - hdr_len);
+        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+
+        nlme.broadcast_data(nwk_broadcast, false, &buf[..hdr_len + payload_len])
+            .await
     }
 }
 

@@ -4,6 +4,8 @@ use zigbee_types::ShortAddress;
 
 pub mod config;
 pub mod device_annce;
+use zigbee_types::StorageVec;
+
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::aps::aib;
 use crate::aps::aib::DeviceKeyPairDescriptor;
@@ -19,13 +21,15 @@ use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::NlmeSap;
 use crate::security::SecurityContext;
-use zigbee_types::StorageVec;
 
 /// Provides an interface between the application object, the device profile and
 /// the APS.
 pub struct ZigbeeDevice {
     config: Config,
     apsme: Apsme,
+    /// ZDP transaction sequence number (§2.4.2), independent of the APS
+    /// counter.
+    zdp_seq: u8,
 }
 
 /// zigbee network
@@ -37,6 +41,7 @@ impl ZigbeeDevice {
         Self {
             config,
             apsme: Apsme::new(),
+            zdp_seq: 0,
         }
     }
 
@@ -86,7 +91,8 @@ impl ZigbeeDevice {
         nlme: &mut N,
         annce: device_annce::DeviceAnnce,
     ) -> Result<(), NetworkError> {
-        device_annce::broadcast(nlme, &mut self.apsme.aps_counter, annce).await
+        self.zdp_seq = self.zdp_seq.wrapping_add(1);
+        device_annce::broadcast(nlme, &mut self.apsme, self.zdp_seq, annce).await
     }
 
     /// Security Manager: poll for a Transport-Key command and install the
@@ -113,7 +119,7 @@ impl ZigbeeDevice {
 
         match transport_key {
             TransportKey::StandardNetworkKey(nwk_key) => {
-                log::debug!("[ZDO] received network key {:?}", nwk_key.key);
+                log::debug!("[ZDO] received network key {:02x?}", nwk_key.key);
 
                 let aib = aib::get_ref();
                 aib.set_trust_center_address(nwk_key.source_address);

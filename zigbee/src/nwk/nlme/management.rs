@@ -1,3 +1,6 @@
+//! NLME service primitives (§3.2.2)
+//!
+//! Request, confirm, and indication types for all NLME-SAP primitives.
 use zigbee_mac::BeaconOrder;
 use zigbee_mac::SuperframeOrder;
 use zigbee_mac::mlme::PanDescriptor;
@@ -90,25 +93,26 @@ pub struct NlmeStartRouterConfirm {}
 pub struct NlmeEdScanRequest {}
 /// 3.2.2.12 - NLME-ED-SCAN.confirm
 pub struct NlmeEdScanConfirm {}
+/// Method used to join or rejoin a network (Table 3-21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejoinNetwork {
+    /// Join through MAC association (0x00).
+    Association,
+    /// Join or rejoin using the orphaning procedure (0x01).
+    Orphan,
+    /// Rejoin using the NWK rejoin procedure (0x02).
+    NwkRejoin,
+    /// Change the operational channel (0x03).
+    ChannelChange,
+}
+
 /// 3.2.2.13 - NLME-JOIN.request
 ///
 /// See Table 3-21 for the full list of parameters.
 pub struct NlmeJoinRequest {
     pub extended_pan_id: IeeeAddress,
-    pub rejoin_network: u8,
-    // ScanChannelsListStructure
-    pub scan_duration: u8,
+    pub rejoin_network: RejoinNetwork,
     /// Capability information bitmap (Table 3-62).
-    ///
-    /// | Bit | Name                  |
-    /// |-----|-----------------------|
-    /// |  0  | Alternate PAN coord   |
-    /// |  1  | Device type (1=router)|
-    /// |  2  | Power source          |
-    /// |  3  | Receiver on when idle |
-    /// | 4-5 | Reserved              |
-    /// |  6  | Security capability   |
-    /// |  7  | Allocate address      |
     pub capability_information: CapabilityInformation,
     pub security_enabled: bool,
 }
@@ -116,8 +120,8 @@ pub struct NlmeJoinRequest {
 pub struct NlmeJoinIndication {
     pub(crate) network_address: u16,
     pub(crate) extended_address: u64,
-    //CapabilityInformation
-    pub(crate) rejoin_network: u8,
+    pub(crate) capability_information: u8,
+    pub(crate) rejoin_network: RejoinNetwork,
     pub(crate) secure_rejoin: bool,
 }
 /// 3.2.2.15 - NLME-JOIN.confirm
@@ -135,9 +139,13 @@ pub struct NlmeJoinConfirm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NlmeJoinStatus {
+    /// Join completed successfully.
     Success,
+    /// The request was invalid (e.g. device already joined, unsupported rejoin method).
     InvalidRequest,
+    /// No suitable parent was found in the neighbor table.
     NotPermitted,
+    /// Network discovery found no matching networks.
     NoNetworks,
     /// MAC sub-layer reported PAN at capacity.
     PanAtCapacity,

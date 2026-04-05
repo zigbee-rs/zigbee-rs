@@ -41,6 +41,22 @@ impl_byte! {
 
 pub const NWK_COORDINATOR_ADDRESS: u16 = 0x0000;
 
+/// Neighbor table relationship values (Table 3-63).
+pub mod relationship {
+    /// The neighbor is the parent of this device.
+    pub const PARENT: u8 = 0x00;
+    /// The neighbor is a child of this device.
+    pub const CHILD: u8 = 0x01;
+    /// The neighbor is a sibling.
+    pub const SIBLING: u8 = 0x02;
+    /// No relationship.
+    pub const NONE: u8 = 0x03;
+    /// Previous child (relationship ended).
+    pub const PREVIOUS_CHILD: u8 = 0x04;
+    /// Unauthenticated child.
+    pub const UNAUTHENTICATED_CHILD: u8 = 0x05;
+}
+
 /// See Section 3.5.1.
 const NWKC_COORDINATOR_CAPABLE: bool = true;
 const NWKC_DEFAULT_SECURITY_LEVEL: u8 = 0x00; // defined in stack profile
@@ -239,12 +255,7 @@ impl_byte! {
         //mac_unicast_bytes_transmitted: u32,
         //mac_unicast_bytes_received: u32,
 
-        // --- Table 3-64: Additional Neighbor Table Fields ---
-        //
-        // These fields are optional and used during network discovery
-        // and rejoining.  They should not be retained after the NLME
-        // has chosen a network to join.  After a successful join the
-        // NLME clears them to their default (zero) values.
+        // table 3-64: optional discovery-time fields, cleared after joining
 
         /// Extended PAN identifier of the network the neighbor belongs to.
         pub extended_pan_id: IeeeAddress,
@@ -277,7 +288,7 @@ pub(crate) enum RouteStatus {
     Active,
     DiscoveryUnderway,
     DiscoveryFailed,
-    Inavtive,
+    Inactive,
     ValidationUnderway,
     Reserved,
 }

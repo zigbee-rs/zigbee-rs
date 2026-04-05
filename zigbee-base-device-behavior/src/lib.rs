@@ -13,14 +13,10 @@ use thiserror::Error;
 pub mod types;
 
 // BDB 5.1 | Table 1
-#[allow(non_upper_case_globals)]
-const bdbcMaxSameNetworkRetryAttempts: u8 = 10;
-#[allow(non_upper_case_globals)]
-const bdbcMinCommissioningTime: u8 = 0xb4;
-#[allow(non_upper_case_globals)]
-const bdbcRecSameNetworkRetryAttempts: u8 = 3;
-#[allow(non_upper_case_globals)]
-const bdbcTCLinkKeyExchangeTimeout: u8 = 5;
+const BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 10;
+const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
+const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
+const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
 use types::BdbCommissioningStatus;
 use types::CommissioningMode;
@@ -44,6 +40,7 @@ use zigbee::nwk::nlme::NlmeSap;
 use zigbee::nwk::nlme::management::NlmeJoinConfirm;
 use zigbee::nwk::nlme::management::NlmeJoinRequest;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
+use zigbee::nwk::nlme::management::RejoinNetwork;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::security::primitives::HmacAes128Mmo;
@@ -106,14 +103,13 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
         self.capability = capability_information;
 
-        // BDB 8.2 step 1: NLME-NETWORK-DISCOVERY.request
+        // §8.2 step 1
         self.nlme.network_discovery(channels, scan_duration).await?;
 
-        // BDB 8.2 step 5: NLME-JOIN.request via MAC association
+        // §8.2 step 5
         let request = NlmeJoinRequest {
             extended_pan_id,
-            rejoin_network: 0x00,
-            scan_duration: 0x00,
+            rejoin_network: RejoinNetwork::Association,
             capability_information,
             security_enabled: false,
         };
@@ -123,13 +119,13 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             return Ok(confirm);
         }
 
-        // BDB 8.2 step 9: wait for Trust Center to deliver the network key
+        // §8.2 step 9
         self.device.poll_transport_key(&mut self.nlme).await?;
 
-        // BDB 8.2 step 11: broadcast Device_annce
+        // §8.2 step 11
         self.device_annce().await?;
 
-        // BDB 8.2 step 12: TC link key exchange (§10.2.5)
+        // §8.2 step 12, §10.2.5
         self.tc_link_key_exchange().await?;
 
         self.bdb_node_is_on_a_network = true;
@@ -159,7 +155,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
 
         log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
 
-        // Phase 2 (§10.2.5 steps 6-9): REQUEST-KEY → TRANSPORT-KEY
+        // §10.2.5 steps 6-9
         let mut attempts = 0u8;
         let new_key = loop {
             log::debug!("[BDB] send_aps_command");
@@ -177,14 +173,14 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
 
             match self
                 .device
-                .poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout)
+                .poll_aps_command(&mut self.nlme, BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
                 .await
             {
                 Ok(Command::TransportKey(TransportKey::TrustCenterLinkKey(key_desc))) => {
                     log::debug!("[BDB] received new TC link key");
                     break key_desc.key;
                 }
-                _ if attempts >= bdbcMaxSameNetworkRetryAttempts => {
+                _ if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
                     log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);
@@ -193,7 +189,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             }
         };
 
-        // §10.2.5 step 9: install key B in apsDeviceKeyPairSet
+        // §10.2.5 step 9
         let aib = aib::get_ref();
         let mut key_set = aib.device_key_pair_set();
         if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
@@ -213,12 +209,12 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         }
         aib.set_device_key_pair_set(key_set);
 
-        // Phase 3 (§10.2.5 steps 10-13): VERIFY-KEY → CONFIRM-KEY
-        // §4.4.10.7.4: hash = keyed-hash-function(key_B, 0x03)
+        // §10.2.5 steps 10-13
+        // §4.4.10.7.4
         let hash = HmacAes128Mmo::hmac(new_key.as_slice(), &[0x03]).map_err(|_| {
             NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
         })?;
-        // §4.4.10.7.3: source address is the joining device's own IEEE address
+        // §4.4.10.7.3
         let device_addr = nib::get_ref().ieee_address();
 
         let mut attempts = 0u8;
@@ -240,7 +236,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
 
             match self
                 .device
-                .poll_aps_command(&mut self.nlme, bdbcTCLinkKeyExchangeTimeout)
+                .poll_aps_command(&mut self.nlme, BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
                 .await
             {
                 Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
@@ -253,7 +249,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
                     aib.set_device_key_pair_set(key_set);
                     return Ok(());
                 }
-                _ if attempts >= bdbcMaxSameNetworkRetryAttempts => {
+                _ if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
                     log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);

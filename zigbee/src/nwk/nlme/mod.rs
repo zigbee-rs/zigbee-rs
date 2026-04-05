@@ -12,7 +12,6 @@
 //! * route discovery
 //! * reception control
 //! * routing
-#![allow(dead_code)]
 
 use core::slice;
 
@@ -23,6 +22,7 @@ use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
 use management::NlmeJoinStatus;
+use management::RejoinNetwork;
 use management::NlmeNetworkDiscoveryConfirm;
 use management::NlmeNetworkFormationConfirm;
 use management::NlmeNetworkFormationRequest;
@@ -36,6 +36,7 @@ use mockall::automock;
 use mockall::mock;
 use thiserror::Error;
 use zigbee_mac::Address;
+use zigbee_mac::AssociationStatus;
 use zigbee_mac::MacShortAddress;
 use zigbee_mac::PanId;
 use zigbee_mac::mlme::MacError;
@@ -55,6 +56,7 @@ use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
+use crate::nwk::nib::relationship;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
 use crate::nwk::nib::NwkNeighbor;
@@ -111,9 +113,10 @@ pub trait NlmeSap {
     async fn start_router(&self, request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm;
     /// 3.2.2.11
     async fn ed_scan(&self, request: NlmeEdScanRequest) -> NlmeEdScanConfirm;
-    // 3.2.2.13
+    /// 3.2.2.13
     async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
 
+    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin` (3.2.2.13).
     async fn rejoin(&mut self) -> NlmeJoinConfirm;
 
     /// Poll the coordinator for pending data, strip the NWK header, and
@@ -229,24 +232,7 @@ where
         crate::nwk::nib::get_ref()
     }
 
-    /// Select candidate parents from the neighbor table populated
-    /// during network discovery (§3.6.1.4.1.1).
-    ///
-    /// A suitable parent device is one for which **all** of the following
-    /// conditions are true:
-    ///
-    /// 1. It belongs to the network identified by `extended_pan_id`.
-    /// 2. It is open to join requests and advertises capacity for the correct
-    ///    device type (`join_as_router`).
-    /// 3. The link cost computed from LQI is at most 3 (§3.6.3.1).
-    /// 4. The `potential_parent` field is `Some(1)`.
-    /// 5. Its `update_id` is the most recent (accounting for wrap).
-    ///
-    /// When `nwkStackProfile == 1`, candidates at minimum depth are
-    /// preferred.
-    ///
-    /// Returns an ordered list of candidate indices into the neighbor
-    /// table, best candidate first.
+    /// Select parent candidates from the neighbor table (§3.6.1.4.1.1).
     fn select_parent_candidates(
         &self,
         extended_pan_id: IeeeAddress,
@@ -256,17 +242,23 @@ where
         let stack_profile = self.nib().stack_profile();
 
         // Determine the most recent update_id among all matching neighbors.
-        let max_update_id = table
-            .iter()
-            .filter(|n| {
-                n.extended_pan_id == extended_pan_id && n.permit_joining && n.potential_parent == 1
-            })
-            .map(|n| n.update_id)
-            .max();
+        //
+        // §3.6.1.4.1.1: "the determination of most recent needs to take into
+        // account that the update id will wrap back to zero."  We treat the
+        // update_id as a modular counter: an id `b` is considered newer than
+        // `a` when the signed difference `(b - a) as i8` is positive.
+        let mut matching = table.iter().filter(|n| {
+            n.extended_pan_id == extended_pan_id && n.permit_joining && n.potential_parent == 1
+        });
 
-        let Some(best_update_id) = max_update_id else {
+        let Some(first) = matching.next() else {
             return heapless::Vec::new();
         };
+
+        let best_update_id = matching.map(|n| n.update_id).fold(first.update_id, |best, id| {
+            // positive signed difference means id is newer
+            if (id.wrapping_sub(best) as i8) > 0 { id } else { best }
+        });
 
         // Collect indices of eligible parents.
         let mut candidates: heapless::Vec<usize, 16> = table
@@ -322,7 +314,7 @@ where
         let table = self.nib().neighbor_table();
         let parent = table
             .iter()
-            .find(|n| n.relationship == 0x00)
+            .find(|n| n.relationship == relationship::PARENT)
             .ok_or(NetworkError::NotJoined)?;
         let addr = Address::Short(
             PanId(self.nib().panid()),
@@ -378,7 +370,7 @@ where
                     },
                     rx_on_when_idle: false,
                     end_device_configuration: 0,
-                    relationship: 0x03, // none — not yet joined
+                    relationship: relationship::NONE,
                     transmit_failure: 0,
                     lqi: pd.link_quality,
                     outgoing_cost: 0,
@@ -389,7 +381,14 @@ where
                     logical_channel: pd.channel,
                     depth: pd.zigbee_beacon.stack_profile.device_depth(),
                     permit_joining: pd.superframe_spec.association_permit,
-                    potential_parent: 1,
+                    // end devices cannot be parents (Table 3-64)
+                    potential_parent: if pd.zigbee_beacon.stack_profile.router_capacity()
+                        || short_address.0 == NWK_COORDINATOR_ADDRESS
+                    {
+                        1
+                    } else {
+                        0
+                    },
                     router_capacity: pd.zigbee_beacon.stack_profile.router_capacity(),
                     end_device_capacity: pd.zigbee_beacon.stack_profile.end_device_capacity(),
                     update_id: pd.zigbee_beacon.update_id,
@@ -448,10 +447,9 @@ where
 
         // --- Validate the request (§3.2.2.13.3) ---
 
-        // Only RejoinNetwork == 0x00 (MAC association) is handled here.
-        // 0x02 (NWK rejoin) is handled separately.
-        if request.rejoin_network != 0x00 {
-            // TODO: implement rejoin_network 0x01 (orphan) and 0x02 (NWK rejoin)
+        // Only MAC association is handled here.
+        // Orphan (0x01), NWK rejoin (0x02), and channel change (0x03) are not yet implemented.
+        if request.rejoin_network != RejoinNetwork::Association {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
 
@@ -498,8 +496,6 @@ where
             // Issue MLME-ASSOCIATE.request to MAC sub-layer.
             match self.mac.associate(channel, dest, mac_caps).await {
                 Ok(response) => {
-                    use zigbee_mac::AssociationStatus;
-
                     match response.status {
                         AssociationStatus::Successful => {
                             // --- Success: update NIB (§3.6.1.4.1.1) ---
@@ -522,7 +518,7 @@ where
                             // Table 3-64 fields on all entries (they should
                             // not be retained after joining).
                             let mut table = self.nib().neighbor_table();
-                            table[candidate_idx].relationship = 0x00;
+                            table[candidate_idx].relationship = relationship::PARENT;
                             for neighbor in table.iter_mut() {
                                 neighbor.extended_pan_id = IeeeAddress(0);
                                 neighbor.logical_channel = 0;
@@ -583,19 +579,8 @@ where
     }
 
     async fn rejoin(&mut self) -> NlmeJoinConfirm {
-        // TODO: read extended_pan_id from NIB
-        let request = NlmeJoinRequest {
-            // TODO: set ExtendedPANId parameter to the extended PAN identifier of the known network
-            extended_pan_id: IeeeAddress(0u64),
-            rejoin_network: 0x02,
-            // TODO: set ScanChannels parameter to 0x00000000
-            scan_duration: 0x00,
-            // TODO: set the CapabilityInformation appropriately for the node
-            capability_information: CapabilityInformation(0x00),
-            security_enabled: true,
-        };
-
-        self.join(request).await
+        // TODO: implement NWK rejoin procedure (§3.6.1.4.2)
+        todo!()
     }
 
     async fn poll_nwk_data<'a>(
