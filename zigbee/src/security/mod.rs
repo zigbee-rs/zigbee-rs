@@ -128,14 +128,18 @@ impl<'a> SecurityContext<'a> {
         let _mic_len = sec_level.mic_length();
 
         let key_sequence_number = self.nib.active_key_seq_number();
-        let sec_material = self.nib.security_material_set();
-        let sec_material = sec_material
-            .iter()
+        let mut sec_material_set = self.nib.security_material_set();
+        let sec_material = sec_material_set
+            .iter_mut()
             .find(|k| k.key_seq_number == key_sequence_number)
             .ok_or(SecurityError::Unspecified)?;
         let frame_counter = sec_material.outgoing_frame_counter;
         let local_addr = self.nib.ieee_address();
         let key = sec_material.key;
+
+        // increment outgoing frame counter (§4.3.1.1)
+        sec_material.outgoing_frame_counter += 1;
+        self.nib.set_security_material_set(sec_material_set);
 
         let mut security_control = SecurityControl::default();
         security_control.set_security_level(sec_level);
@@ -775,5 +779,136 @@ mod tests {
         assert_eq!(offset, NWK_FRAME_CMD_BUFFER.len());
         assert_eq!(frame_buffer[..38], NWK_FRAME_CMD_BUFFER[..38]);
         assert_eq!(frame_buffer[38..45], NWK_FRAME_CMD_BUFFER[38..45]);
+    }
+
+    #[test]
+    fn encrypt_nwk_frame_increments_frame_counter() {
+        let nib = setup_nib();
+        let aib = setup_aib();
+        let security_context = SecurityContext::new(&nib, &aib);
+
+        // initial outgoing frame counter is 1 (from setup_nib)
+        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 1);
+
+        let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
+        let frame = security_context
+            .decrypt_nwk_frame_in_place(&mut frame_buffer)
+            .unwrap();
+
+        nib.set_ieee_address(IeeeAddress(0xa4c1_389c_3830_01e5));
+        let mut buf = [0u8; 45];
+        security_context
+            .encrypt_nwk_frame_in_place(frame, &mut buf)
+            .unwrap();
+
+        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 2);
+
+        // encrypt again — counter should keep incrementing
+        let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
+        let frame = security_context
+            .decrypt_nwk_frame_in_place(&mut frame_buffer)
+            .unwrap();
+        let mut buf = [0u8; 45];
+        security_context
+            .encrypt_nwk_frame_in_place(frame, &mut buf)
+            .unwrap();
+
+        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 3);
+    }
+
+    #[test]
+    fn decrypt_unsecured_nwk_data_frame() {
+        let nib = setup_nib();
+        let aib = setup_aib();
+        let security_context = SecurityContext::new(&nib, &aib);
+
+        // unsecured NWK data frame: security_flag = false
+        // frame control: frame_type=0 (Data), protocol_version=2 → 0x0008
+        #[rustfmt::skip]
+        let mut frame_buffer = [
+            0x08, 0x00, // frame control (data, protocol v2, no security)
+            0x00, 0x00, // destination
+            0xcd, 0xe1, // source
+            0x01,       // radius
+            0x42,       // sequence number
+            // APS payload follows
+            0xAA, 0xBB, 0xCC,
+        ];
+
+        let frame = security_context
+            .decrypt_nwk_frame_in_place(&mut frame_buffer)
+            .unwrap();
+
+        let NwkFrame::Data(data_frame) = frame else {
+            panic!("expected data frame");
+        };
+
+        // payload should be the APS bytes, not the entire buffer
+        assert_eq!(data_frame.payload, &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn encrypt_aps_frame_increments_frame_counter() {
+        let nib = setup_nib();
+        let aib = setup_aib();
+
+        let dest = IeeeAddress(0xa4c1_389c_3830_01e5);
+        append_aib_device_key_pair_set(
+            &aib,
+            DeviceKeyPairDescriptor {
+                device_address: dest,
+                key_attributes: KeyAttribute::VerifiedKey,
+                link_key: ByteArray(TRUST_CENTER_LINK_KEY),
+                outgoing_frame_counter: 0,
+                incoming_frame_counter: 0,
+                link_key_type: LinkKeyType::GlobalLinkKey,
+            },
+        );
+
+        let security_context = SecurityContext::new(&nib, &aib);
+
+        // first encryption
+        let mut buf = [0u8; 128];
+        let frame_buffer = [
+            0x21, 0x66, // aps header
+            0x20, 0x4, 0x0, 0x0, 0x0, 0xe5, 0x1, 0x30, 0x38, 0x9c, 0x38, 0xc1,
+            0xa4, // aux header
+            0x1a, 0x31, // enc data
+            0xa4, 0xd7, 0xf4, 0xd7, //mic
+        ];
+        let mut dec_buf = frame_buffer;
+        let frame = security_context
+            .decrypt_aps_frame_in_place(&mut dec_buf)
+            .unwrap();
+        security_context
+            .encrypt_aps_frame_in_place(frame, &mut buf, dest, TxOptions::SecurityEnabled)
+            .unwrap();
+
+        assert_eq!(
+            aib.device_key_pair_set()
+                .iter()
+                .find(|k| k.device_address == dest)
+                .unwrap()
+                .outgoing_frame_counter,
+            1
+        );
+
+        // second encryption — counter should be 2
+        let mut dec_buf = frame_buffer;
+        let frame = security_context
+            .decrypt_aps_frame_in_place(&mut dec_buf)
+            .unwrap();
+        security_context
+            .encrypt_aps_frame_in_place(frame, &mut buf, dest, TxOptions::SecurityEnabled)
+            .unwrap();
+
+        assert_eq!(
+            aib.device_key_pair_set()
+                .iter()
+                .find(|k| k.device_address == dest)
+                .unwrap()
+                .outgoing_frame_counter,
+            2
+        );
     }
 }

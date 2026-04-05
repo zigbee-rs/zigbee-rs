@@ -97,20 +97,24 @@ pub async fn poll_transport_key<T: NlmeSap>(nlme: &mut T) -> Result<(), NetworkE
     Ok(())
 }
 
-/// Build, encrypt, and send an APS command frame to a specific
-/// destination (§4.4).
+/// Build and send an APS command frame to a specific destination (§4.4).
+///
+/// When `aps_secure` is true the APS frame is encrypted with the link
+/// key for `dest_ieee` before handing it to the NWK layer.  The NWK
+/// layer always encrypts with the network key.
 pub async fn send_aps_command<T: NlmeSap>(
     nlme: &mut T,
     aps_counter: &mut u8,
     destination: ShortAddress,
     dest_ieee: IeeeAddress,
     command: Command,
+    aps_secure: bool,
 ) -> Result<(), NetworkError> {
     *aps_counter = aps_counter.wrapping_add(1);
 
     let frame_control = FrameControl::default()
         .set_frame_type(FrameType::Command)
-        .set_security_flag(true);
+        .set_security_flag(aps_secure);
 
     let header = Header {
         frame_control,
@@ -123,12 +127,17 @@ pub async fn send_aps_command<T: NlmeSap>(
         extended_header: None,
     };
 
-    let aps_frame = Frame::ApsCommand(CommandFrame { header, command });
-
     let mut buf = [0u8; 128];
-    let cx = SecurityContext::get();
-    let len =
-        cx.encrypt_aps_frame_in_place(aps_frame, &mut buf, dest_ieee, TxOptions::default())?;
+    let len = if aps_secure {
+        let aps_frame = Frame::ApsCommand(CommandFrame { header, command });
+        let cx = SecurityContext::get();
+        cx.encrypt_aps_frame_in_place(aps_frame, &mut buf, dest_ieee, TxOptions::default())?
+    } else {
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+        buf.write_with(offset, command, ())?;
+        *offset
+    };
 
     nlme.send_data(destination, true, &buf[..len]).await
 }
@@ -145,7 +154,7 @@ pub async fn poll_aps_command<T: NlmeSap>(
     // SAFETY: we can safely take a &mut since it references the buf above
     let aps_buf = unsafe { nwk_data.payload_as_mut() };
     let cx = SecurityContext::get();
-    let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf).unwrap();
+    let aps_frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
 
     let Frame::ApsCommand(CommandFrame { command, .. }) = aps_frame else {
         return Err(NetworkError::ParseError);

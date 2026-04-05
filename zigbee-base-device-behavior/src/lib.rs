@@ -173,6 +173,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
                 tc_short,
                 tc_ieee,
                 Command::RequestKey(RequestKey::TrustCenterLinkKey),
+                true,
             )
             .await?;
             attempts += 1;
@@ -198,6 +199,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
             entry.link_key = new_key;
             entry.key_attributes = KeyAttribute::UnverifiedKey;
+            entry.outgoing_frame_counter = 0;
             entry.incoming_frame_counter = 0;
         } else {
             let _ = key_set.push(DeviceKeyPairDescriptor {
@@ -212,9 +214,12 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         aib.set_device_key_pair_set(key_set);
 
         // Phase 3 (§10.2.5 steps 10-13): VERIFY-KEY → CONFIRM-KEY
+        // §4.4.10.7.4: hash = keyed-hash-function(key_B, 0x03)
         let hash = HmacAes128Mmo::hmac(new_key.as_slice(), &[0x03]).map_err(|_| {
             NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
         })?;
+        // §4.4.10.7.3: source address is the joining device's own IEEE address
+        let device_addr = nib::get_ref().ieee_address();
 
         let mut attempts = 0u8;
         loop {
@@ -225,9 +230,10 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
                 tc_ieee,
                 Command::VerifyKey(VerifyKey {
                     key_type: 0x04,
-                    source_address: tc_ieee,
+                    source_address: device_addr,
                     hash: ByteArray(hash),
                 }),
+                false,
             )
             .await?;
             attempts += 1;
