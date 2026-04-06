@@ -9,7 +9,7 @@ impl_byte! {
     /// Frame Control field
     ///
     /// See Section 2.2.5.1.1
-    #[derive(Clone, Copy, Eq, PartialEq)]
+    #[derive(Clone, Copy, Eq, PartialEq, Default)]
     pub struct FrameControl(pub u8);
 }
 
@@ -30,6 +30,12 @@ impl FrameControl {
         unsafe { mem::transmute((self.0 & mask::DELIVERY_MODE) >> offset::DELIVERY_MODE) }
     }
 
+    #[must_use]
+    pub fn set_delivery_mode(mut self, value: DeliveryMode) -> Self {
+        self.0 = (self.0 & !mask::DELIVERY_MODE) | (value as u8) << offset::DELIVERY_MODE;
+        self
+    }
+
     /// indicates if the destination endpoint, cluster identifier, profile
     /// identifier and source endpoint fields shall be  present in the
     /// acknowledgement frame.
@@ -39,6 +45,12 @@ impl FrameControl {
 
     pub fn security_flag(&self) -> bool {
         ((self.0 & mask::SECURITY_FLAG) >> offset::SECURITY_FLAG) != 0
+    }
+
+    #[must_use]
+    pub fn set_security_flag(mut self, value: bool) -> Self {
+        self.0 = (self.0 & !mask::SECURITY_FLAG) | ((value as u8) << offset::SECURITY_FLAG);
+        self
     }
 
     // specifies whether the current transmission requires an  acknowledgement frame
@@ -55,6 +67,25 @@ impl FrameControl {
     // the frame. Otherwise, it shall not  be included in the frame.
     pub fn extended_header(&self) -> bool {
         ((self.0 & mask::EXTENDED_HEADER_FLAG) >> offset::EXTENDED_HEADER_FLAG) != 0
+    }
+
+    /// Whether the endpoint, cluster, and profile fields are present (§2.2.5.1).
+    ///
+    /// True for data frames and for ack frames with ack_format set.
+    pub fn has_data_fields(&self) -> bool {
+        matches!(self.frame_type(), FrameType::Data | FrameType::InterPan)
+            || (self.frame_type() == FrameType::Acknowledgement && self.ack_format_flag())
+    }
+
+    /// Whether the destination endpoint field is present (§2.2.5.1.2).
+    ///
+    /// Present for unicast or broadcast delivery when data fields are included.
+    pub fn has_destination_endpoint(&self) -> bool {
+        self.has_data_fields()
+            && matches!(
+                self.delivery_mode(),
+                DeliveryMode::Unicast | DeliveryMode::Broadcast
+            )
     }
 }
 
@@ -134,22 +165,23 @@ impl_byte! {
     }
 }
 
+// §2.2.5.1.1 frame control bit layout
 mod offset {
     pub const FRAME_TYPE: u8 = 0;
-    pub const DELIVERY_MODE: u8 = 1;
-    pub const ACK_FORMAT_FLAG: u8 = 1;
-    pub const SECURITY_FLAG: u8 = 1;
-    pub const ACK_FLAG: u8 = 1;
-    pub const EXTENDED_HEADER_FLAG: u8 = 1;
+    pub const DELIVERY_MODE: u8 = 2;
+    pub const ACK_FORMAT_FLAG: u8 = 4;
+    pub const SECURITY_FLAG: u8 = 5;
+    pub const ACK_FLAG: u8 = 6;
+    pub const EXTENDED_HEADER_FLAG: u8 = 7;
 }
 
 mod mask {
-    pub const FRAME_TYPE: u8 = 0x1;
-    pub const DELIVERY_MODE: u8 = 0x2;
-    pub const ACK_FORMAT_FLAG: u8 = 0x3;
-    pub const SECURITY_FLAG: u8 = 0x4;
-    pub const ACK_FLAG: u8 = 0x5;
-    pub const EXTENDED_HEADER_FLAG: u8 = 0x6;
+    pub const FRAME_TYPE: u8 = 0x03;
+    pub const DELIVERY_MODE: u8 = 0x0C;
+    pub const ACK_FORMAT_FLAG: u8 = 0x10;
+    pub const SECURITY_FLAG: u8 = 0x20;
+    pub const ACK_FLAG: u8 = 0x40;
+    pub const EXTENDED_HEADER_FLAG: u8 = 0x80;
 }
 
 #[cfg(test)]
@@ -160,7 +192,8 @@ mod tests {
 
     #[test]
     fn parse_frame_control() {
-        let raw = [0b0010_0001_u8];
+        // bits 0-1: 01 (Command), bits 2-3: 00 (Unicast), rest: 0
+        let raw = [0b0000_0001_u8];
 
         let (frame_control, len) = FrameControl::try_read(&raw, ()).unwrap();
         assert_eq!(len, 1);
@@ -170,6 +203,31 @@ mod tests {
         assert!(!frame_control.security_flag());
         assert!(!frame_control.ack_request());
         assert!(!frame_control.extended_header());
+    }
+
+    #[test]
+    fn parse_frame_control_data_broadcast_with_security() {
+        // bits 0-1: 00 (Data), bits 2-3: 10 (Broadcast), bit 5: 1 (Security)
+        let raw = [0b0010_1000_u8];
+
+        let (frame_control, len) = FrameControl::try_read(&raw, ()).unwrap();
+        assert_eq!(len, 1);
+        assert_eq!(frame_control.frame_type(), FrameType::Data);
+        assert_eq!(frame_control.delivery_mode(), DeliveryMode::Broadcast);
+        assert!(!frame_control.ack_format_flag());
+        assert!(frame_control.security_flag());
+        assert!(!frame_control.ack_request());
+        assert!(!frame_control.extended_header());
+    }
+
+    #[test]
+    fn set_frame_control_roundtrip() {
+        let fc = FrameControl::default()
+            .set_frame_type(FrameType::Data)
+            .set_delivery_mode(DeliveryMode::Broadcast);
+        assert_eq!(fc.0, 0x08);
+        assert_eq!(fc.frame_type(), FrameType::Data);
+        assert_eq!(fc.delivery_mode(), DeliveryMode::Broadcast);
     }
 
     #[test]

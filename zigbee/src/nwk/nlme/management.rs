@@ -1,8 +1,13 @@
-use zigbee_mac::mlme::PanDescriptor;
+//! NLME service primitives (§3.2.2)
+//!
+//! Request, confirm, and indication types for all NLME-SAP primitives.
 use zigbee_mac::BeaconOrder;
 use zigbee_mac::SuperframeOrder;
+use zigbee_mac::mlme::PanDescriptor;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
+
+use crate::nwk::nib::CapabilityInformation;
 
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
 #[derive(Debug)]
@@ -15,7 +20,11 @@ pub struct NlmeNetworkDiscoveryConfirm {
 }
 
 /// Network descriptor
-#[derive(Debug)]
+///
+/// Each entry corresponds to a single beacon received during network
+/// discovery.  See Table 3-12 for the fields returned to the next
+/// higher layer.
+#[derive(Debug, Clone)]
 pub struct NetworkDescriptor {
     /// 64-bit PAN identifier
     pub extended_pan_id: IeeeAddress,
@@ -34,7 +43,7 @@ pub struct NetworkDescriptor {
     /// for beacon oriented networks
     pub superframe_order: SuperframeOrder,
     /// indicates that at least one ZigBee router or network currently permits
-    /// joineng
+    /// joining
     pub permit_joining: bool,
     /// set to TRUE if the device is capable of accepting join requests from
     /// router-capable devices
@@ -84,39 +93,66 @@ pub struct NlmeStartRouterConfirm {}
 pub struct NlmeEdScanRequest {}
 /// 3.2.2.12 - NLME-ED-SCAN.confirm
 pub struct NlmeEdScanConfirm {}
+/// Method used to join or rejoin a network (Table 3-21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejoinNetwork {
+    /// Join through MAC association (0x00).
+    Association,
+    /// Join or rejoin using the orphaning procedure (0x01).
+    Orphan,
+    /// Rejoin using the NWK rejoin procedure (0x02).
+    NwkRejoin,
+    /// Change the operational channel (0x03).
+    ChannelChange,
+}
+
 /// 3.2.2.13 - NLME-JOIN.request
+///
+/// See Table 3-21 for the full list of parameters.
 pub struct NlmeJoinRequest {
-    pub extended_pan_id: u64,
-    pub rejoin_network: u8,
-    // ScanChannelsListStructure
-    pub scan_duration: u8,
-    // CapabilityInformation
+    pub extended_pan_id: IeeeAddress,
+    pub rejoin_network: RejoinNetwork,
+    /// Capability information bitmap (Table 3-62).
+    pub capability_information: CapabilityInformation,
     pub security_enabled: bool,
 }
 /// 3.2.2.14 - NLME-JOIN.indication
 pub struct NlmeJoinIndication {
     pub(crate) network_address: u16,
     pub(crate) extended_address: u64,
-    //CapabilityInformation
-    pub(crate) rejoin_network: u8,
+    pub(crate) capability_information: u8,
+    pub(crate) rejoin_network: RejoinNetwork,
     pub(crate) secure_rejoin: bool,
 }
 /// 3.2.2.15 - NLME-JOIN.confirm
+#[derive(Debug)]
 pub struct NlmeJoinConfirm {
     pub status: NlmeJoinStatus,
-    pub network_address: u16,
-    pub extended_pan_id: u64,
-    // Channel List Structure
+    pub network_address: ShortAddress,
+    pub extended_pan_id: IeeeAddress,
+    /// Logical channel of the joined network (from ChannelListStructure,
+    /// Table 3-25).
+    pub channel: u8,
     pub enhanced_beacon_type: bool,
     pub mac_interface_index: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NlmeJoinStatus {
+    /// Join completed successfully.
     Success,
+    /// The request was invalid (e.g. device already joined, unsupported rejoin method).
     InvalidRequest,
+    /// No suitable parent was found in the neighbor table.
     NotPermitted,
+    /// Network discovery found no matching networks.
     NoNetworks,
+    /// MAC sub-layer reported PAN at capacity.
+    PanAtCapacity,
+    /// MAC sub-layer reported PAN access denied.
+    PanAccessDenied,
+    /// MAC association failed (forwarded from MLME-ASSOCIATE.confirm).
+    MacError,
     // TODO: add more from 3.2.2.13.3
 }
 

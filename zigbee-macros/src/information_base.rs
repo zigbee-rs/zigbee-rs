@@ -29,10 +29,35 @@ macro_rules! construct_ib {
             }
         }
 
-        /// Returns a reference to the NIB.
+        /// Returns a reference to the IB.
         pub fn get_ref() -> &'static $ib_name<${ concat($ib_name, Storage) }> {
-            // SAFETY: NIB is mutated only in init once
+            // SAFETY: IB is mutated only in init once
             unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " not initialized")) }
+        }
+
+        /// Initialize the IB if not already initialized, otherwise do nothing.
+        #[cfg(test)]
+        pub fn try_init(storage: ${ concat($ib_name, Storage) }) {
+            // SAFETY: only called at test setup before concurrent access
+            unsafe {
+                if IB.is_none() {
+                    let ib = $ib_name::new(storage);
+                    ib.init();
+                    IB = Some(ib);
+                }
+            }
+        }
+
+        /// Re-write default values to the existing IB storage.
+        #[cfg(test)]
+        pub fn reset() {
+            // SAFETY: only called at test setup; the singleton reference
+            // is not reallocated, just its storage contents are overwritten
+            unsafe {
+                if let Some(ref ib) = IB {
+                    ib.init();
+                }
+            }
         }
 
         #[repr(usize)]

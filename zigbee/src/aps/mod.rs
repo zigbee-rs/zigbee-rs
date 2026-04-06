@@ -13,10 +13,12 @@ pub(crate) mod types;
 pub mod apsde;
 
 pub mod aib;
-pub mod apdu;
+/// APS frame formats (§2.2.5).
+pub mod frame;
 /// The APS management entity provides a variety of services to application
 /// objects including security services and binding of devices.
 /// It also maintains a database of managed objects, known as the APS
 /// information base (AIB).
 pub mod apsme;
+pub mod security;
 mod binding;

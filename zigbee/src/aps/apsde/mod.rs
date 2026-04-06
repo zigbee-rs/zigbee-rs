@@ -12,6 +12,7 @@
 //! * Duplicate rejection
 //! * Fragmentation
 #![allow(dead_code)]
+
 use super::types::Address;
 use super::types::DstAddrMode;
 use super::types::SrcAddrMode;
@@ -147,3 +148,4 @@ pub struct ApsdeSapIndication {
     link_quality: u8,
     rx_time: u8,
 }
+

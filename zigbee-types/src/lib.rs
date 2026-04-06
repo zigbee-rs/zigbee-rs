@@ -6,12 +6,12 @@ use core::ops::Deref;
 use core::ops::DerefMut;
 use core::slice;
 
-use byte::ctx;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
-use heapless::index_set::FnvIndexSet;
+use byte::ctx;
 use heapless::Vec;
+use heapless::index_set::FnvIndexSet;
 use itertools::Itertools;
 use zigbee_macros::impl_byte;
 

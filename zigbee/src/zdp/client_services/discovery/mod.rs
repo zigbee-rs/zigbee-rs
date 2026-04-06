@@ -5,8 +5,8 @@ use heapless::Vec;
 use crate::apl::descriptors::node_descriptor::MacCapabilities;
 use crate::apl::descriptors::node_descriptor::ServerMask;
 use crate::apl::descriptors::user_descriptor::UserDescriptor;
-use crate::internal::types::IeeeAddress;
-use crate::internal::types::NwkAddress;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 const CLUSTER_LIST_SIZE: usize = 2 * 0xffff;
 
@@ -28,7 +28,7 @@ pub struct NWKAddrReq {
 /// 2.4.3.1.2 IEEE_addr_req
 pub struct IeeeAddrReq {
     /// NWK address that is used for IEEE address mapping.
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
     /// Request type for this command:
     /// 0x00 – Single device response
     /// 0x01 – Extended response
@@ -43,19 +43,19 @@ pub struct IeeeAddrReq {
 /// 2.4.3.1.3 Node_Desc_req
 pub struct NodeDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
 }
 
 /// 2.4.3.1.4 Power_Desc_req
 pub struct PowerDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
 }
 
 /// 2.4.3.1.5 Simple_Desc_req
 pub struct SimpleDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
     /// The endpoint on the destination
     endpoint: u8,
 }
@@ -63,13 +63,13 @@ pub struct SimpleDescReq {
 /// 2.4.3.1.6 Active_EP_req
 pub struct ActivePeReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
 }
 
 /// 2.4.3.1.7 Match_Desc_req
 pub struct MatchDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
     /// Profile ID to be matched at the destination.
     profile_id: u16,
     /// The number of Input Clusters provided for matching within the
@@ -94,24 +94,16 @@ pub struct MatchDescReq {
 /// 2.4.3.1.8 Complex_Desc_req
 pub struct ComplexDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
 }
 
 /// 2.4.3.1.9 User_Desc_req
 pub struct UserDescReq {
     /// NWK address for the request
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
 }
 
-/// 2.4.3.1.11 Device_annce
-pub struct DeviceAnnce {
-    /// NWK address for the Local Device
-    nwk_addr: NwkAddress,
-    /// IEEE address for the Local Device
-    ieee_addr: IeeeAddress,
-    /// Capability of the local device
-    capability: MacCapabilities,
-}
+// 2.4.3.1.11 Device_annce — see crate::zdp::device_annce::DeviceAnnce
 
 /// 2.4.3.1.11 Parent_annce
 pub struct ChildInfo(IeeeAddress);
@@ -124,7 +116,7 @@ pub struct ParentAnnce {
 // 2.4.3.1.13 User_Desc_set
 pub struct UserDescSet<'a> {
     /// NWK address for the request.
-    nwk_addr_of_interest: NwkAddress,
+    nwk_addr_of_interest: ShortAddress,
     /// Length of the User Descriptor in bytes.
     length: u8,
     /// The user description to configure; if the ASCII character string to be
@@ -142,7 +134,7 @@ pub struct SystemServerDiscoveryReq {
 /// 2.4.3.1.15 Discovery_store_req
 pub struct DiscoveryStoreReq {
     /// NWK Address for the Local Device.
-    nwk_addr: NwkAddress,
+    nwk_addr: ShortAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
     /// Size in bytes of the Node Descriptor for the Local Device.
@@ -164,7 +156,7 @@ pub struct DiscoveryStoreReq {
 /// 2.4.3.1.16 Node_Desc_store_req
 pub struct NodeDescStoreReq {
     /// NWK Address for the Local Device
-    nwk_addr: NwkAddress,
+    nwk_addr: ShortAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
     // Node Descriptor

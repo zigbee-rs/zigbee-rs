@@ -57,7 +57,8 @@ pub mod apl;
 pub mod aps;
 pub mod nwk;
 pub mod security;
-//pub mod zdp;
+/// ZigBee Device Profile (§2.4).
+pub mod zdp;
 
 // ZDO is not directly called by the application — it is controlled by BDB or
 // used internally by the stack.

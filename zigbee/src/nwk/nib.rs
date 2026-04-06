@@ -41,6 +41,22 @@ impl_byte! {
 
 pub const NWK_COORDINATOR_ADDRESS: u16 = 0x0000;
 
+/// Neighbor table relationship values (Table 3-63).
+pub mod relationship {
+    /// The neighbor is the parent of this device.
+    pub const PARENT: u8 = 0x00;
+    /// The neighbor is a child of this device.
+    pub const CHILD: u8 = 0x01;
+    /// The neighbor is a sibling.
+    pub const SIBLING: u8 = 0x02;
+    /// No relationship.
+    pub const NONE: u8 = 0x03;
+    /// Previous child (relationship ended).
+    pub const PREVIOUS_CHILD: u8 = 0x04;
+    /// Unauthenticated child.
+    pub const UNAUTHENTICATED_CHILD: u8 = 0x05;
+}
+
 /// See Section 3.5.1.
 const NWKC_COORDINATOR_CAPABLE: bool = true;
 const NWKC_DEFAULT_SECURITY_LEVEL: u8 = 0x00; // defined in stack profile
@@ -69,6 +85,35 @@ const MAX_ROUTE_RECORD_TABLE: usize = 8;
 const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
 const MAX_SECURITY_KEYS: usize = 1;
+
+/// Maximum acceptable link cost for parent selection (§3.6.1.4.1.1).
+pub const MAX_PARENT_LINK_COST: u8 = 3;
+
+/// Compute the link cost from an LQI value (§3.6.3.1).
+///
+/// The link cost is a value in the range 1–7 representing the estimated
+/// number of transmission attempts required to successfully deliver a frame
+/// over a given link.  Lower is better.
+///
+/// The mapping from LQI to link cost is implementation-defined.  We use a
+/// simple threshold table suitable for IEEE 802.15.4 2.4 GHz PHY where LQI
+/// is typically in the range 0–255.
+pub fn link_cost_from_lqi(lqi: u8) -> u8 {
+    match lqi {
+        // Excellent link
+        200..=255 => 1,
+        // Good link
+        150..=199 => 2,
+        // Acceptable
+        120..=149 => 3,
+        // Marginal
+        90..=119 => 5,
+        // Poor
+        50..=89 => 6,
+        // Very poor
+        _ => 7,
+    }
+}
 
 construct_ib! {
     /// Network Information Base.
@@ -145,8 +190,41 @@ construct_ib! {
 }
 
 impl_byte! {
-    #[derive(Debug, Default, PartialEq, Eq)]
-    pub struct CapabilityInformation(u8);
+    #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+    pub struct CapabilityInformation(pub u8);
+}
+
+impl CapabilityInformation {
+    /// Bit 0 — Alternate PAN coordinator (always 0 in Zigbee).
+    pub fn alternate_pan_coordinator(&self) -> bool {
+        self.0 & (1 << 0) != 0
+    }
+
+    /// Bit 1 — Device type: 1 = router (FFD), 0 = end device (RFD).
+    pub fn device_type(&self) -> bool {
+        self.0 & (1 << 1) != 0
+    }
+
+    /// Bit 2 — Power source: 1 = mains-powered, 0 = other.
+    pub fn power_source(&self) -> bool {
+        self.0 & (1 << 2) != 0
+    }
+
+    /// Bit 3 — Receiver on when idle.
+    pub fn receiver_on_when_idle(&self) -> bool {
+        self.0 & (1 << 3) != 0
+    }
+
+    /// Bit 6 — Security capability (always 0 in Zigbee).
+    pub fn security_capability(&self) -> bool {
+        self.0 & (1 << 6) != 0
+    }
+
+    /// Bit 7 — Allocate address: 1 = coordinator should allocate a short
+    /// address.
+    pub fn allocate_address(&self) -> bool {
+        self.0 & (1 << 7) != 0
+    }
 }
 
 impl_byte! {
@@ -176,6 +254,30 @@ impl_byte! {
         // optional
         //mac_unicast_bytes_transmitted: u32,
         //mac_unicast_bytes_received: u32,
+
+        // table 3-64: optional discovery-time fields, cleared after joining
+
+        /// Extended PAN identifier of the network the neighbor belongs to.
+        pub extended_pan_id: IeeeAddress,
+        /// The logical channel on which the neighbor is operating.
+        pub logical_channel: u8,
+        /// The tree depth of the neighbor device.
+        pub depth: u8,
+        /// Whether the neighbor is accepting join requests.
+        #[ctx = ()]
+        pub permit_joining: bool,
+        /// 0x00 = not a potential parent, 0x01 = potential parent.
+        pub potential_parent: u8,
+        /// Whether the neighbor can accept router-capable children.
+        #[ctx = ()]
+        pub router_capacity: bool,
+        /// Whether the neighbor can accept end-device children.
+        #[ctx = ()]
+        pub end_device_capacity: bool,
+        /// The nwkUpdateId from the beacon payload.
+        pub update_id: u8,
+        /// The 16-bit PAN identifier.
+        pub pan_id: u16,
     }
 }
 
@@ -186,7 +288,7 @@ pub(crate) enum RouteStatus {
     Active,
     DiscoveryUnderway,
     DiscoveryFailed,
-    Inavtive,
+    Inactive,
     ValidationUnderway,
     Reserved,
 }

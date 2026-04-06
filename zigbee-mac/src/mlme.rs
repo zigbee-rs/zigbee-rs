@@ -1,5 +1,7 @@
 use ieee802154::mac::Address;
 use ieee802154::mac::beacon::SuperframeSpecification;
+use ieee802154::mac::command::AssociationStatus;
+use ieee802154::mac::command::CapabilityInformation;
 use thiserror::Error;
 use zigbee_macros::impl_byte;
 use zigbee_types::ByteArray;
@@ -14,6 +16,11 @@ pub const A_BASE_SLOT_DURATION: u32 = 60;
 pub const A_NUM_SUPER_FRAME_SLOTS: u32 = 16;
 pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_FRAME_SLOTS;
 
+/// The maximum time, in symbols, a device shall wait for a response command
+/// to be available following a request command. See IEEE 802.15.4-2003 §7.4.2.
+/// aResponseWaitTime = 32 * aBaseSuperframeDuration = 32 * 960 = 30720 symbols.
+pub const A_RESPONSE_WAIT_TIME: u32 = 32 * A_BASE_SUPER_FRAME_DURATION;
+
 pub trait Mlme {
     async fn scan_network(
         &mut self,
@@ -21,6 +28,42 @@ pub trait Mlme {
         channels: impl Iterator<Item = u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError>;
+
+    async fn associate(
+        &mut self,
+        channel: u8,
+        dest: Address,
+        capabilities: CapabilityInformation,
+    ) -> Result<AssociationResponse, MacError>;
+
+    /// MLME-POLL.request + data reception (IEEE 802.15.4 §7.1.16.1).
+    ///
+    /// Sends a data request command to `coord_address`, then stays in
+    /// receive mode to capture both the ACK (with frame-pending check)
+    /// and the subsequent data frame in a single uninterrupted session.
+    ///
+    /// Returns `Ok((bytes_written, lqi))` on success, or
+    /// `Err(MacError::NoData)` if the ACK has frame-pending clear or
+    /// no data frame arrives within the timeout.
+    async fn poll_data(
+        &mut self,
+        coord_address: Address,
+        buf: &mut [u8],
+    ) -> Result<(usize, u8), MacError>;
+
+    /// Transmit a MAC data frame carrying the given NWK-layer payload.
+    ///
+    /// The implementation constructs the MAC header (frame control,
+    /// sequence number, addressing) and appends `payload` as the MAC
+    /// service data unit.
+    async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
+}
+
+#[derive(Debug)]
+pub struct AssociationResponse {
+    pub device_address: IeeeAddress,
+    pub association_address: ShortAddress,
+    pub status: AssociationStatus,
 }
 
 #[repr(u8)]
@@ -40,8 +83,21 @@ pub enum MacError {
     InvalidScanParams,
     #[error("read error")]
     ReadError(byte::Error),
+    #[error("invalid frame")]
+    InvalidFrame(byte::Error),
+    #[error("no data available from coordinator")]
+    NoData,
+    #[error("no acknowledgment received")]
+    NoAck,
+    #[cfg(feature = "esp32c6")]
     #[error("radio error")]
-    RadioError,
+    RadioError(#[from] esp_radio::ieee802154::Error),
+}
+
+impl From<byte::Error> for MacError {
+    fn from(e: byte::Error) -> Self {
+        Self::InvalidFrame(e)
+    }
 }
 
 #[cfg(feature = "alloc")]
