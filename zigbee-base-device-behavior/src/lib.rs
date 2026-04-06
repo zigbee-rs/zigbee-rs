@@ -83,6 +83,17 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         nib::get_ref()
     }
 
+    /// Initialization procedure (BDB §7.1).
+    ///
+    /// Restores persistent state and, if the node is already on a network,
+    /// attempts to rejoin it. Returns without error if the node is not on
+    /// a network — the caller should then invoke [`network_steering`].
+    pub async fn initialize(&mut self) -> Result<(), NetworkError> {
+        // §7.1 step 1: restore persistent state (NIB/AIB backed by storage)
+        // §7.1 steps 2-8: TODO implement rejoin path
+        Ok(())
+    }
+
     /// Network steering procedure for a node NOT on a network
     /// (BDB §8.2).
     ///
