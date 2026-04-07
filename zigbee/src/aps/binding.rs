@@ -1,4 +1,4 @@
-///! 2.2.8.2.1  Binding Table
+//! 2.2.8.2.1  Binding Table
 use heapless::Vec;
 use thiserror::Error;
 
@@ -46,7 +46,7 @@ impl ApsBindingTable {
 
         self.entries
             .push(Binding {
-                source: request.src_address.clone(),
+                source: request.src_address,
                 endpoint: request.dst_endpoint,
                 cluster_id: request.cluster_id,
             })

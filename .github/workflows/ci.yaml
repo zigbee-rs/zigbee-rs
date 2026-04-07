@@ -82,7 +82,7 @@ jobs:
         run: sed -i "s;$PWD/;;g" ./target/debug/lcov.info
 
       - name: Report code coverage
-        uses: zgosalvez/github-actions-report-lcov@hotfix/branch_coverage
+        uses: zgosalvez/github-actions-report-lcov@v7
         with:
           coverage-files: ./target/debug/lcov.info
           minimum-coverage: 14

@@ -47,7 +47,7 @@ impl UserDescriptor<'_> {
     fn value(&self) -> &str {
         // Safety: We verify that a user descriptor only contains valid ASCII characters
         // upon creation.
-        unsafe { str::from_utf8_unchecked(&self.0) }
+        unsafe { str::from_utf8_unchecked(self.0) }
     }
 }
 

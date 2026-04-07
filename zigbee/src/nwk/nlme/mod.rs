@@ -257,7 +257,7 @@ where
 
         let best_update_id = matching.map(|n| n.update_id).fold(first.update_id, |best, id| {
             // positive signed difference means id is newer
-            if (id.wrapping_sub(best) as i8) > 0 { id } else { best }
+            if id.wrapping_sub(best).cast_signed() > 0 { id } else { best }
         });
 
         // Collect indices of eligible parents.
@@ -382,13 +382,10 @@ where
                     depth: pd.zigbee_beacon.stack_profile.device_depth(),
                     permit_joining: pd.superframe_spec.association_permit,
                     // end devices cannot be parents (Table 3-64)
-                    potential_parent: if pd.zigbee_beacon.stack_profile.router_capacity()
-                        || short_address.0 == NWK_COORDINATOR_ADDRESS
-                    {
-                        1
-                    } else {
-                        0
-                    },
+                    potential_parent: u8::from(
+                        pd.zigbee_beacon.stack_profile.router_capacity()
+                            || short_address.0 == NWK_COORDINATOR_ADDRESS,
+                    ),
                     router_capacity: pd.zigbee_beacon.stack_profile.router_capacity(),
                     end_device_capacity: pd.zigbee_beacon.stack_profile.end_device_capacity(),
                     update_id: pd.zigbee_beacon.update_id,

@@ -17,6 +17,5 @@ edition = "2024"
 [dependencies]
 byte.workspace = true
 heapless.workspace = true
-log.workspace = true
 
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }

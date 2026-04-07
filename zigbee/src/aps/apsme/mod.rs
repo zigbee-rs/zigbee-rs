@@ -142,7 +142,7 @@ impl Apsme {
     /// Poll for an encrypted APS command, decrypt it, and return the parsed
     /// command (§4.4).
     pub(crate) async fn poll_command<N: NlmeSap>(
-        &mut self,
+        &self,
         nlme: &mut N,
         retries: u8,
     ) -> Result<Command, NetworkError> {
@@ -287,7 +287,7 @@ impl ApsmeSap for Apsme {
                     crate::aps::binding::BindingError::InvalidBinding => {
                         ApsmeUnbindRequestStatus::InvalidBinding
                     }
-                    _ => ApsmeUnbindRequestStatus::IllegalRequest,
+                    crate::aps::binding::BindingError::TableFull => ApsmeUnbindRequestStatus::IllegalRequest,
                 },
             }
         };

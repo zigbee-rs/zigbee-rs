@@ -33,7 +33,7 @@ pub enum GeneralCommand<'a> {
 }
 
 impl_byte! {
-    #[derive(Debug,PartialEq)]
+    #[derive(Debug, PartialEq, Eq)]
     pub struct ReadAttribute {
         pub attribute_id: u16,
     }

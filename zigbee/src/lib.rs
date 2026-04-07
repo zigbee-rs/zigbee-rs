@@ -43,6 +43,12 @@
     clippy::non_std_lazy_statics,
     static_mut_refs,
     clippy::needless_range_loop,
+    clippy::redundant_pub_crate,
+    clippy::too_many_arguments,
+    clippy::derive_partial_eq_without_eq,
+    clippy::too_long_first_doc_paragraph,
+    clippy::derivable_impls,
+    clippy::unused_self,
     async_fn_in_trait
 )]
 #![feature(macro_metavar_expr_concat)]

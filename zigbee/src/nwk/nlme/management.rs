@@ -1,6 +1,8 @@
 //! NLME service primitives (§3.2.2)
 //!
 //! Request, confirm, and indication types for all NLME-SAP primitives.
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use zigbee_mac::BeaconOrder;
 use zigbee_mac::SuperframeOrder;
 use zigbee_mac::mlme::PanDescriptor;
@@ -13,7 +15,7 @@ use crate::nwk::nib::CapabilityInformation;
 #[derive(Debug)]
 pub struct NlmeNetworkDiscoveryConfirm {
     #[cfg(feature = "alloc")]
-    pub network_descriptor: alloc::vec::Vec<NetworkDescriptor>,
+    pub network_descriptor: Vec<NetworkDescriptor>,
     #[cfg(not(feature = "alloc"))]
     pub network_descriptor:
         heapless::Vec<NetworkDescriptor, { zigbee_mac::mlme::MAX_IEEE802154_CHANNELS }>,

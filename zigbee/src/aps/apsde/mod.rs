@@ -27,7 +27,7 @@ use crate::aps::types;
 /// through a general set of services for use by both the ZDO (device object)
 /// and the application.
 pub trait ApsdeSap {
-    /// 2.2.4.1.1 - APSDE-DATA.request  
+    /// 2.2.4.1.1 - APSDE-DATA.request\
     /// Requests the transfer of a NHLE PDU from a local NHLE to one or more
     /// peer NHLE entities
     fn data_request(&self, request: ApsdeSapRequest) -> ApsdeSapConfirm;

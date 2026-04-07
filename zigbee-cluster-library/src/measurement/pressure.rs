@@ -19,6 +19,7 @@ pub struct PressureMeasurement {
 }
 
 impl PressureMeasurement {
+    #[allow(clippy::cast_possible_truncation)]
     pub fn new(
         pressure_kpa: f32,
         min_pressure: f32,

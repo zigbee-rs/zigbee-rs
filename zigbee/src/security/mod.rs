@@ -226,14 +226,15 @@ impl<'a> SecurityContext<'a> {
         let Some(source_address) = aux_hdr.source_address else {
             return Err(SecurityError::InvalidData);
         };
-        if let Some(inc_frame_counter) = sec_material
+        if sec_material
             .incoming_frame_counter_set
             .iter()
             .find(|i| source_address == i.sender_address)
+            .is_some_and(|inc_frame_counter| {
+                aux_hdr.frame_counter < inc_frame_counter.incoming_frame_counter
+            })
         {
-            if aux_hdr.frame_counter < inc_frame_counter.incoming_frame_counter {
-                return Err(SecurityError::InvalidData);
-            }
+            return Err(SecurityError::InvalidData);
         }
 
         // write back the security level from NIB to aux header

@@ -1,4 +1,4 @@
-//! Implements the ZigBee Cluster Library in `no-std` based on the [ZigBee Cluster Library Rev 8]
+//! Implements the `ZigBee` Cluster Library in `no-std` based on the [ZigBee Cluster Library Rev 8]
 //!
 //! This crate defines application-level behaviors, like reading attributes, reporting, and commands.
 //! It contains standard clusters like Temperature Measurement, Basic Identify, etc.
@@ -20,7 +20,7 @@
 )]
 #![allow(
     clippy::missing_errors_doc,
-    // clippy::missing_panics_doc,
+    clippy::missing_panics_doc,
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::needless_raw_string_hashes,
@@ -28,6 +28,10 @@
     clippy::missing_const_for_fn,
     clippy::future_not_send,
     clippy::ignored_unit_patterns,
+    clippy::redundant_pub_crate,
+    clippy::large_enum_variant,
+    clippy::derive_partial_eq_without_eq,
+    clippy::too_long_first_doc_paragraph,
     dead_code,
 )]
 
