@@ -13,17 +13,14 @@ authors.workspace = true
 repository.workspace = true
 edition.workspace = true
 
-[features]
-default = []
-mock = ["zigbee/mock", "dep:mockall"]
-
 [dependencies]
+embedded-storage.workspace = true
 thiserror.workspace = true
 log.workspace = true
 zigbee = { path = "../zigbee" }
+zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
-mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
-zigbee-base-device-behavior = { path = ".", features = ["mock"] }
+mockall.workspace = true
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }

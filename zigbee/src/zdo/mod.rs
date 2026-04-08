@@ -19,7 +19,7 @@ use crate::aps::frame::command::TransportKey;
 use crate::nwk::nib;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nlme::NetworkError;
-use crate::nwk::nlme::NlmeSap;
+use crate::nwk::nlme::Nlme;
 use crate::security::SecurityContext;
 
 /// Provides an interface between the application object, the device profile and
@@ -86,9 +86,9 @@ impl ZigbeeDevice {
     pub fn start_service_discovery(&self) {}
 
     /// Broadcast a ZDO Device_annce (§2.4.3.1.11).
-    pub async fn device_annce<N: NlmeSap>(
+    pub async fn device_annce<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         annce: device_annce::DeviceAnnce,
     ) -> Result<(), NetworkError> {
         self.zdp_seq = self.zdp_seq.wrapping_add(1);
@@ -97,9 +97,9 @@ impl ZigbeeDevice {
 
     /// Security Manager: poll for a Transport-Key command and install the
     /// network key and Trust Center link key entry (§4.4.10).
-    pub async fn poll_transport_key<N: NlmeSap>(
+    pub async fn poll_transport_key<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
     ) -> Result<(), NetworkError> {
         let mut buf = [0u8; 128];
         let mut nwk_data = nlme.poll_nwk_data(&mut buf, 5).await?;
@@ -165,9 +165,9 @@ impl ZigbeeDevice {
     /// Delegates to APSME which owns `apsCounter` (§4.4.11). When
     /// `aps_secure` is true the frame is APS-encrypted with the link key for
     /// `dest_ieee`; the NWK layer always applies network-key encryption.
-    pub async fn send_aps_command<N: NlmeSap>(
+    pub async fn send_aps_command<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         destination: ShortAddress,
         dest_ieee: IeeeAddress,
         command: Command,
@@ -181,9 +181,9 @@ impl ZigbeeDevice {
     /// Security Manager: poll for an incoming APS command (§4.4).
     ///
     /// Delegates to APSME which decrypts the NWK and APS layers.
-    pub async fn poll_aps_command<N: NlmeSap>(
+    pub async fn poll_aps_command<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         retries: u8,
     ) -> Result<Command, NetworkError> {
         self.apsme.poll_command(nlme, retries).await

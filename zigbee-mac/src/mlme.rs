@@ -25,7 +25,7 @@ pub trait Mlme {
     async fn scan_network(
         &mut self,
         ty: ScanType,
-        channels: impl Iterator<Item = u8>,
+        channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError>;
 

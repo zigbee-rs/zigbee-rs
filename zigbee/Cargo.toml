@@ -14,7 +14,6 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
-mock = ["dep:mockall"]
 alloc = []
 in-memory-nib = ["alloc"]
 
@@ -27,10 +26,12 @@ itertools.workspace = true
 embedded-storage.workspace = true
 spin.workspace = true
 heapless.workspace = true
-thiserror = { workspace = true, default-features = false } 
-mockall = { workspace = true, optional = true }
+thiserror = { workspace = true, default-features = false }
 log.workspace = true
 
 zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+
+[dev-dependencies]
+mockall.workspace = true

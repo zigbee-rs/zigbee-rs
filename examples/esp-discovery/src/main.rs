@@ -10,7 +10,6 @@ use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use heapless::Vec;
 use zigbee::nwk::nlme::Nlme;
-use zigbee::nwk::nlme::NlmeSap;
 use zigbee::nwk::nlme::management::NetworkDescriptor;
 use zigbee_mac::esp::EspMlme;
 

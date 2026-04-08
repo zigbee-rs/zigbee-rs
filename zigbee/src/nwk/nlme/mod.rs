@@ -30,10 +30,6 @@ use management::NlmePermitJoiningConfirm;
 use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
-#[cfg(feature = "mock")]
-use mockall::automock;
-#[cfg(feature = "mock")]
-use mockall::mock;
 use thiserror::Error;
 use zigbee_mac::Address;
 use zigbee_mac::AssociationStatus;
@@ -88,77 +84,11 @@ impl From<byte::Error> for NetworkError {
     }
 }
 
-/// Network management service - service access point
+/// Network Layer Management Entity (§3.2.2).
 ///
-/// 3.2.2
-///
-/// allows the transport of management commands between the next higher layer
-/// and the NLME.
-//#[cfg_attr(feature = "mock", automock)]
-pub trait NlmeSap {
-    /// 3.2.2.3
-    async fn network_discovery<C: Iterator<Item = u8> + 'static>(
-        &mut self,
-        channels: C,
-        duration: u8,
-    ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError>;
-    /// 3.2.2.5
-    async fn network_formation(
-        &self,
-        request: NlmeNetworkFormationRequest,
-    ) -> NlmeNetworkFormationConfirm;
-    /// 3.2.2.7
-    async fn permit_joining(&self, request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm;
-    /// 3.2.2.9
-    async fn start_router(&self, request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm;
-    /// 3.2.2.11
-    async fn ed_scan(&self, request: NlmeEdScanRequest) -> NlmeEdScanConfirm;
-    /// 3.2.2.13
-    async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm;
-
-    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin` (3.2.2.13).
-    async fn rejoin(&mut self) -> NlmeJoinConfirm;
-
-    /// Poll the coordinator for pending data, strip the NWK header, and
-    /// return the APS payload (§3.6.2).
-    async fn poll_nwk_data<'a>(
-        &mut self,
-        buf: &'a mut [u8],
-        retries: u8,
-    ) -> Result<NwkDataFrame<'a>, NetworkError>;
-
-    /// Broadcast an NWK data frame (§3.6.5).
-    ///
-    /// Wraps `payload` in a NWK header addressed to `destination` and
-    /// transmits it as a MAC broadcast. Common broadcast addresses:
-    /// - `0xFFFF` — all devices
-    /// - `0xFFFD` — all RxOnWhenIdle devices
-    /// - `0xFFFC` — all routers and coordinator
-    ///
-    /// When `secure` is true the NWK frame is encrypted with the
-    /// active network key.
-    async fn broadcast_data(
-        &mut self,
-        destination: ShortAddress,
-        secure: bool,
-        payload: &[u8],
-    ) -> Result<(), NetworkError>;
-
-    /// Send an NWK data frame to a specific destination (§3.6.3).
-    ///
-    /// Wraps `payload` in a NWK header addressed to `destination` and
-    /// transmits it via the parent (for end devices) or directly.
-    ///
-    /// When `secure` is true the NWK frame is encrypted with the
-    /// active network key.
-    async fn send_data(
-        &mut self,
-        destination: ShortAddress,
-        secure: bool,
-        payload: &[u8],
-    ) -> Result<(), NetworkError>;
-}
-
+/// Provides the management service access point (NLME-SAP) that allows
+/// the next higher layer to interact with the NWK layer: network
+/// discovery, formation, joining, rejoining, data transmission, etc.
 pub struct Nlme<M> {
     mac: M,
     nwk_seq: u8,
@@ -339,15 +269,11 @@ where
 
         Ok(data_frame)
     }
-}
 
-impl<M> NlmeSap for Nlme<M>
-where
-    M: Mlme,
-{
-    async fn network_discovery<C: Iterator<Item = u8>>(
+    /// 3.2.2.3
+    pub async fn network_discovery(
         &mut self,
-        channels: C,
+        channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError> {
         let scan_result = self
@@ -409,30 +335,38 @@ where
         })
     }
 
-    async fn network_formation(
+    /// 3.2.2.5
+    #[allow(clippy::unused_async)]
+    pub async fn network_formation(
         &self,
         _request: NlmeNetworkFormationRequest,
     ) -> NlmeNetworkFormationConfirm {
         todo!()
     }
 
-    // Permitting Devices to Join a Network
-    // Figure 3-39
-    async fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
+    /// 3.2.2.7
+    // figure 3-39
+    #[allow(clippy::unused_async)]
+    pub async fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
         NlmePermitJoiningConfirm {
             status: NlmeJoinStatus::InvalidRequest,
         }
     }
 
-    async fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
+    /// 3.2.2.9
+    #[allow(clippy::unused_async)]
+    pub async fn start_router(&self, _request: NlmeStartRouterRequest) -> NlmeStartRouterConfirm {
         todo!()
     }
 
-    async fn ed_scan(&self, _request: NlmeEdScanRequest) -> NlmeEdScanConfirm {
+    /// 3.2.2.11
+    #[allow(clippy::unused_async)]
+    pub async fn ed_scan(&self, _request: NlmeEdScanRequest) -> NlmeEdScanConfirm {
         todo!()
     }
 
-    async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
+    /// 3.2.2.13
+    pub async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
         let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
             status,
             network_address: ShortAddress(0xffff),
@@ -575,12 +509,16 @@ where
         fail(last_status)
     }
 
-    async fn rejoin(&mut self) -> NlmeJoinConfirm {
+    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin` (§3.2.2.13).
+    #[allow(clippy::unused_async)]
+    pub async fn rejoin(&mut self) -> NlmeJoinConfirm {
         // TODO: implement NWK rejoin procedure (§3.6.1.4.2)
         todo!()
     }
 
-    async fn poll_nwk_data<'a>(
+    /// Poll the coordinator for pending data, strip the NWK header, and
+    /// return the APS payload (§3.6.2).
+    pub async fn poll_nwk_data<'a>(
         &mut self,
         buf: &'a mut [u8],
         retries: u8,
@@ -602,7 +540,14 @@ where
         Err(NetworkError::MacError(MacError::NoData))
     }
 
-    async fn broadcast_data(
+    /// Broadcast an NWK data frame (§3.6.5).
+    ///
+    /// Wraps `payload` in a NWK header addressed to `destination` and
+    /// transmits it as a MAC broadcast.
+    ///
+    /// When `secure` is true the NWK frame is encrypted with the
+    /// active network key.
+    pub async fn broadcast_data(
         &mut self,
         destination: ShortAddress,
         secure: bool,
@@ -617,7 +562,14 @@ where
         Ok(())
     }
 
-    async fn send_data(
+    /// Send an NWK data frame to a specific destination (§3.6.3).
+    ///
+    /// Wraps `payload` in a NWK header addressed to `destination` and
+    /// transmits it via the parent (for end devices) or directly.
+    ///
+    /// When `secure` is true the NWK frame is encrypted with the
+    /// active network key.
+    pub async fn send_data(
         &mut self,
         destination: ShortAddress,
         secure: bool,
@@ -633,492 +585,458 @@ where
     }
 }
 
-//#[cfg(test)]
-//mod tests {
-//    use zigbee_mac::AssociationStatus;
-//    use zigbee_mac::CapabilityInformation as MacCapabilityInformation;
-//    use zigbee_mac::ExtendedAddress;
-//    use zigbee_mac::mlme::AssociationResponse;
-//    use zigbee_mac::mlme::ScanResult;
-//    use zigbee_mac::mlme::ScanType;
-//    use zigbee_types::ShortAddress as MacShortAddr;
-
-//    use super::*;
-//    use crate::nwk::nib::NibStorage;
-
-//    // tests share a global NIB singleton — serialize access
-//    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-//    // -------------------------------------------------------------------
-//    // Minimal async block_on — the mock futures resolve immediately so a
-//    // single poll is sufficient.
-//    // -------------------------------------------------------------------
-
-//    #[allow(clippy::panic)]
-//    fn block_on<F: Future>(f: F) -> F::Output {
-//        use core::pin::pin;
-//        use core::task::Context;
-//        use core::task::Poll;
-//        use core::task::RawWaker;
-//        use core::task::RawWakerVTable;
-//        use core::task::Waker;
-
-//        fn noop(_: *const ()) {}
-//        fn clone(p: *const ()) -> RawWaker {
-//            RawWaker::new(p, &VTABLE)
-//        }
-//        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop,
-// noop);
-
-//        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(),
-// &VTABLE)) };        let mut cx = Context::from_waker(&waker);
-//        let mut f = pin!(f);
-
-//        match f.as_mut().poll(&mut cx) {
-//            Poll::Ready(val) => val,
-//            Poll::Pending => panic!("block_on: future returned Pending"),
-//        }
-//    }
-
-//    // -------------------------------------------------------------------
-//    // A lightweight mock Mlme used exclusively by these tests.
-//    // -------------------------------------------------------------------
-
-//    /// Pre-canned response for a single `associate()` call.
-//    struct AssociateOutcome {
-//        result: Result<AssociationResponse, MacError>,
-//    }
-
-//    struct MockMlme {
-//        /// Queued responses for successive `associate()` calls, consumed
-//        /// in order.
-//        associate_outcomes: spin::Mutex<heapless::Vec<AssociateOutcome, 16>>,
-//    }
-
-//    impl MockMlme {
-//        fn new() -> Self {
-//            Self {
-//                associate_outcomes: spin::Mutex::new(heapless::Vec::new()),
-//            }
-//        }
-
-//        fn push_associate_ok(&mut self, addr: u16, status: AssociationStatus)
-// {            self.associate_outcomes
-//                .get_mut()
-//                .push(AssociateOutcome {
-//                    result: Ok(AssociationResponse {
-//                        device_address: IeeeAddress(0),
-//                        association_address: MacShortAddr(addr),
-//                        status,
-//                    }),
-//                })
-//                .ok();
-//        }
-
-//        fn push_associate_err(&mut self, err: MacError) {
-//            self.associate_outcomes
-//                .get_mut()
-//                .push(AssociateOutcome { result: Err(err) })
-//                .ok();
-//        }
-//    }
-
-//    impl Mlme for MockMlme {
-//        async fn scan_network(
-//            &mut self,
-//            _ty: ScanType,
-//            _channels: impl Iterator<Item = u8>,
-//            _duration: u8,
-//        ) -> Result<ScanResult, MacError> {
-//            unimplemented!("scan_network not needed in join tests")
-//        }
-
-//        async fn associate(
-//            &mut self,
-//            _channel: u8,
-//            _dest: Address,
-//            _capabilities: MacCapabilityInformation,
-//        ) -> Result<AssociationResponse, MacError> {
-//            let mut outcomes = self.associate_outcomes.lock();
-//            assert!(
-//                !outcomes.is_empty(),
-//                "MockMlme: no more associate outcomes queued"
-//            );
-//            // Remove the first element (shift left).
-//            let outcome = outcomes.remove(0);
-//            outcome.result
-//        }
-
-//        async fn poll_data(
-//            &mut self,
-//            _coord_address: Address,
-//            _buf: &mut [u8],
-//        ) -> Result<(usize, u8), MacError> {
-//            unimplemented!("poll_data not needed in join tests")
-//        }
-
-//        async fn transmit_data(&mut self, _dest: Address, _payload: &[u8]) ->
-// Result<(), MacError> {            unimplemented!("transmit_data not needed in
-// join tests")        }
-//    }
-
-//    // -------------------------------------------------------------------
-//    // Helpers
-//    // -------------------------------------------------------------------
-
-//    /// Create a default `NwkNeighbor` pre-filled for parent selection.
-//    fn make_neighbor(pan_id: u16, short_addr: u16, epid: u64, lqi: u8, depth:
-// u8) -> NwkNeighbor {        NwkNeighbor {
-//            network_address: ShortAddress(short_addr),
-//            device_type: if short_addr == 0 {
-//                DeviceType::Coordinator
-//            } else {
-//                DeviceType::Router
-//            },
-//            rx_on_when_idle: false,
-//            end_device_configuration: 0,
-//            relationship: 0x03,
-//            transmit_failure: 0,
-//            lqi,
-//            outgoing_cost: 0,
-//            age: 0,
-//            keepalive_received: false,
-//            extended_pan_id: IeeeAddress(epid),
-//            logical_channel: 11,
-//            depth,
-//            permit_joining: true,
-//            potential_parent: 1,
-//            router_capacity: true,
-//            end_device_capacity: true,
-//            update_id: 0,
-//            pan_id,
-//        }
-//    }
-
-//    fn make_nlme(mac: MockMlme) -> (std::sync::MutexGuard<'static, ()>,
-// Nlme<MockMlme>) {        let guard = TEST_MUTEX.lock().unwrap_or_else(|e|
-// e.into_inner());        use crate::nwk::nib;
-//        nib::try_init(NibStorage::default());
-//        nib::reset();
-//        (guard, Nlme::new(mac))
-//    }
-
-//    fn default_join_request(epid: u64) -> NlmeJoinRequest {
-//        NlmeJoinRequest {
-//            extended_pan_id: IeeeAddress(epid),
-//            rejoin_network: 0x00,
-//            scan_duration: 0x00,
-//            // End device, no special capabilities, allocate address.
-//            capability_information: CapabilityInformation(0x80),
-//            security_enabled: false,
-//        }
-//    }
-
-//    // -------------------------------------------------------------------
-//    // select_parent_candidates tests
-//    // -------------------------------------------------------------------
-
-//    #[test]
-//    fn select_parent_no_neighbors() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert!(candidates.is_empty());
-//    }
-
-//    #[test]
-//    fn select_parent_filters_by_extended_pan_id() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        // Neighbor on the correct network
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0))
-//            .unwrap();
-//        // Neighbor on a different network
-//        table
-//            .push(make_neighbor(0xBBBB, 0x0001, 0x9999, 200, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert_eq!(candidates.len(), 1);
-//        assert_eq!(candidates[0], 0); // first neighbor
-//    }
-
-//    #[test]
-//    fn select_parent_filters_by_link_cost() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        // Good LQI => low cost => eligible
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0))
-//            .unwrap();
-//        // Bad LQI => high cost => filtered out
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0001, 0x1234, 10, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert_eq!(candidates.len(), 1);
-//        assert_eq!(candidates[0], 0);
-//    }
-
-//    #[test]
-//    fn select_parent_filters_by_end_device_capacity() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-//        n.end_device_capacity = false; // no room for end devices
-//        table.push(n).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        // Joining as end device — should find no candidates.
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert!(candidates.is_empty());
-//    }
-
-//    #[test]
-//    fn select_parent_filters_by_router_capacity() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-//        n.router_capacity = false;
-//        table.push(n).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        // Joining as router — should find no candidates.
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// true);        assert!(candidates.is_empty());
-//    }
-
-//    #[test]
-//    fn select_parent_sorts_by_depth_for_stack_profile_1() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-//        // Set stack profile to 1.
-//        nlme.nib().set_stack_profile(1);
-
-//        let mut table = StorageVec::new();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 3))
-//            .unwrap();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0001, 0x1234, 200, 1))
-//            .unwrap();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0002, 0x1234, 200, 2))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert_eq!(candidates.len(), 3);
-//        // Should be sorted: depth 1 (idx 1), depth 2 (idx 2), depth 3 (idx 0)
-//        assert_eq!(candidates[0], 1);
-//        assert_eq!(candidates[1], 2);
-//        assert_eq!(candidates[2], 0);
-//    }
-
-//    #[test]
-//    fn select_parent_filters_not_permitting_join() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-//        n.permit_joining = false;
-//        table.push(n).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert!(candidates.is_empty());
-//    }
-
-//    #[test]
-//    fn select_parent_filters_non_potential_parent() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-//        n.potential_parent = 0; // previously rejected
-//        table.push(n).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert!(candidates.is_empty());
-//    }
-
-//    #[test]
-//    fn select_parent_prefers_most_recent_update_id() {
-//        let (_guard, nlme) = make_nlme(MockMlme::new());
-
-//        let mut table = StorageVec::new();
-//        let mut n1 = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-//        n1.update_id = 5;
-//        table.push(n1).unwrap();
-//        let mut n2 = make_neighbor(0xAAAA, 0x0001, 0x1234, 200, 0);
-//        n2.update_id = 3; // older update
-//        table.push(n2).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234),
-// false);        assert_eq!(candidates.len(), 1);
-//        assert_eq!(candidates[0], 0); // only the one with update_id=5
-//    }
-
-//    // -------------------------------------------------------------------
-//    // join() integration tests (using MockMlme)
-//    // -------------------------------------------------------------------
-
-//    #[test]
-//    fn join_successful_association() {
-//        let mut mac = MockMlme::new();
-//        mac.push_associate_ok(0x1234, AssociationStatus::Successful);
-
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut table = StorageVec::new();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-
-//        assert_eq!(confirm.status, NlmeJoinStatus::Success);
-//        assert_eq!(confirm.network_address.0, 0x1234);
-//        assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
-//        assert_eq!(confirm.channel, 11);
-
-//        // NIB should be updated.
-//        assert_eq!(nlme.nib().network_address(), 0x1234);
-//        assert_eq!(nlme.nib().extended_panid(), 0xDEAD);
-//        assert_eq!(nlme.nib().panid(), 0xAAAA);
-//        assert_eq!(nlme.nib().update_id(), 0); // make_neighbor defaults to
-// update_id=0
-
-//        // Neighbor relationship should be 0x00 (parent).
-//        let table = nlme.nib().neighbor_table();
-//        assert_eq!(table[0].relationship, 0x00);
-//    }
-
-//    #[test]
-//    fn join_sets_nwk_update_id_from_parent() {
-//        let mut mac = MockMlme::new();
-//        mac.push_associate_ok(0x1234, AssociationStatus::Successful);
-
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut n = make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0);
-//        n.update_id = 7;
-//        let mut table = StorageVec::new();
-//        table.push(n).unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::Success);
-//        // nwkUpdateId must be set from the parent's update_id (§3.6.1.4.1.1).
-//        assert_eq!(nlme.nib().update_id(), 7);
-//    }
-
-//    #[test]
-//    fn join_fails_when_no_candidates() {
-//        let mac = MockMlme::new();
-//        let (_guard, mut nlme) = make_nlme(mac);
-//        // ensure neighbor table is empty
-//        nlme.nib().set_neighbor_table(StorageVec::new());
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
-//    }
-
-//    #[test]
-//    fn join_fails_when_already_joined() {
-//        let mac = MockMlme::new();
-//        let (_guard, mut nlme) = make_nlme(mac);
-//        // Simulate already joined by setting a valid network address.
-//        nlme.nib().set_network_address(0x0001);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
-//    }
-
-//    #[test]
-//    fn join_skips_capacity_rejected_parent_tries_next() {
-//        let mut mac = MockMlme::new();
-//        // First candidate rejects with NetworkAtCapacity.
-//        mac.push_associate_ok(0, AssociationStatus::NetworkAtCapacity);
-//        // Second candidate accepts.
-//        mac.push_associate_ok(0x5678, AssociationStatus::Successful);
-
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut table = StorageVec::new();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
-//            .unwrap();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0001, 0xDEAD, 200, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::Success);
-//        assert_eq!(confirm.network_address.0, 0x5678);
-
-//        // After successful join, Table 3-64 fields are cleared.
-//        // First neighbor was marked potential_parent=0 before the second
-//        // attempt, then all optional fields were cleared on success.
-//        let table = nlme.nib().neighbor_table();
-//        assert_eq!(table[0].potential_parent, 0);
-//        // Second neighbor should be parent.
-//        assert_eq!(table[1].relationship, 0x00);
-//    }
-
-//    #[test]
-//    fn join_all_candidates_rejected() {
-//        let mut mac = MockMlme::new();
-//        mac.push_associate_ok(0, AssociationStatus::AccessDenied);
-
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut table = StorageVec::new();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::PanAccessDenied);
-//        assert_eq!(confirm.network_address.0, 0xffff);
-//    }
-
-//    #[test]
-//    fn join_mac_error_reported() {
-//        let mut mac = MockMlme::new();
-//        mac.push_associate_err(MacError::NoAck);
-
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut table = StorageVec::new();
-//        table
-//            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
-//            .unwrap();
-//        nlme.nib().set_neighbor_table(table);
-
-//        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
-//        assert_eq!(confirm.status, NlmeJoinStatus::MacError);
-//    }
-
-//    #[test]
-//    fn join_invalid_rejoin_network() {
-//        let mac = MockMlme::new();
-//        let (_guard, mut nlme) = make_nlme(mac);
-
-//        let mut req = default_join_request(0xDEAD);
-//        req.rejoin_network = 0x01; // orphan rejoin — not yet supported
-
-//        let confirm = block_on(nlme.join(req));
-//        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
-//    }
-//}
+#[cfg(test)]
+mod tests {
+    use core::future::Future;
+
+    use zigbee_mac::AssociationStatus;
+    use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacError;
+    use zigbee_mac::mlme::ScanResult;
+    use zigbee_mac::mlme::ScanType;
+
+    use super::*;
+    use crate::nwk::nib::NibStorage;
+
+    // tests share a global NIB singleton — serialize access
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // -------------------------------------------------------------------
+    // Minimal async block_on — the mock futures resolve immediately so a
+    // single poll is sufficient.
+    // -------------------------------------------------------------------
+
+    #[allow(clippy::panic)]
+    fn block_on<F: Future>(f: F) -> F::Output {
+        use core::pin::pin;
+        use core::task::Context;
+        use core::task::Poll;
+        use core::task::RawWaker;
+        use core::task::RawWakerVTable;
+        use core::task::Waker;
+
+        fn noop(_: *const ()) {}
+        fn clone(p: *const ()) -> RawWaker {
+            RawWaker::new(p, &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+
+        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut f = pin!(f);
+
+        match f.as_mut().poll(&mut cx) {
+            Poll::Ready(val) => val,
+            Poll::Pending => panic!("block_on: future returned Pending"),
+        }
+    }
+
+    mockall::mock! {
+        Mlme {}
+        impl Mlme for Mlme {
+            async fn scan_network(
+                &mut self,
+                ty: ScanType,
+                channels: core::ops::Range<u8>,
+                duration: u8,
+            ) -> Result<ScanResult, MacError>;
+            async fn associate(
+                &mut self,
+                channel: u8,
+                dest: Address,
+                capabilities: zigbee_mac::CapabilityInformation,
+            ) -> Result<AssociationResponse, MacError>;
+            async fn poll_data(
+                &mut self,
+                coord_address: Address,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn transmit_data(
+                &mut self,
+                dest: Address,
+                payload: &[u8],
+            ) -> Result<(), MacError>;
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------
+
+    /// Create a default `NwkNeighbor` pre-filled for parent selection.
+    fn make_neighbor(pan_id: u16, short_addr: u16, epid: u64, lqi: u8, depth: u8) -> NwkNeighbor {
+        NwkNeighbor {
+            network_address: ShortAddress(short_addr),
+            device_type: if short_addr == 0 {
+                DeviceType::Coordinator
+            } else {
+                DeviceType::Router
+            },
+            rx_on_when_idle: false,
+            end_device_configuration: 0,
+            relationship: 0x03,
+            transmit_failure: 0,
+            lqi,
+            outgoing_cost: 0,
+            age: 0,
+            keepalive_received: false,
+            extended_pan_id: IeeeAddress(epid),
+            logical_channel: 11,
+            depth,
+            permit_joining: true,
+            potential_parent: 1,
+            router_capacity: true,
+            end_device_capacity: true,
+            update_id: 0,
+            pan_id,
+        }
+    }
+
+    fn make_nlme(mac: MockMlme) -> (std::sync::MutexGuard<'static, ()>, Nlme<MockMlme>) {
+        let guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::nwk::nib;
+        nib::try_init(NibStorage::default());
+        nib::reset();
+        (guard, Nlme::new(mac))
+    }
+
+    fn default_join_request(epid: u64) -> NlmeJoinRequest {
+        NlmeJoinRequest {
+            extended_pan_id: IeeeAddress(epid),
+            rejoin_network: RejoinNetwork::Association,
+            capability_information: CapabilityInformation(0x80),
+            security_enabled: false,
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // select_parent_candidates tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn select_parent_no_neighbors() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_parent_filters_by_extended_pan_id() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        // neighbor on the correct network
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0))
+            .unwrap();
+        // neighbor on a different network
+        table
+            .push(make_neighbor(0xBBBB, 0x0001, 0x9999, 200, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], 0);
+    }
+
+    #[test]
+    fn select_parent_filters_by_link_cost() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        // good LQI => low cost => eligible
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0))
+            .unwrap();
+        // bad LQI => high cost => filtered out
+        table
+            .push(make_neighbor(0xAAAA, 0x0001, 0x1234, 10, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], 0);
+    }
+
+    #[test]
+    fn select_parent_filters_by_end_device_capacity() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        n.end_device_capacity = false;
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_parent_filters_by_router_capacity() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        n.router_capacity = false;
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), true);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_parent_sorts_by_depth_for_stack_profile_1() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        nlme.nib().set_stack_profile(1);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 3))
+            .unwrap();
+        table
+            .push(make_neighbor(0xAAAA, 0x0001, 0x1234, 200, 1))
+            .unwrap();
+        table
+            .push(make_neighbor(0xAAAA, 0x0002, 0x1234, 200, 2))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert_eq!(candidates.len(), 3);
+        // sorted: depth 1 (idx 1), depth 2 (idx 2), depth 3 (idx 0)
+        assert_eq!(candidates[0], 1);
+        assert_eq!(candidates[1], 2);
+        assert_eq!(candidates[2], 0);
+    }
+
+    #[test]
+    fn select_parent_filters_not_permitting_join() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        n.permit_joining = false;
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_parent_filters_non_potential_parent() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        n.potential_parent = 0;
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn select_parent_prefers_most_recent_update_id() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n1 = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        n1.update_id = 5;
+        table.push(n1).unwrap();
+        let mut n2 = make_neighbor(0xAAAA, 0x0001, 0x1234, 200, 0);
+        n2.update_id = 3;
+        table.push(n2).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], 0);
+    }
+
+    // -------------------------------------------------------------------
+    // join() integration tests (using MockMlme)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn join_successful_association() {
+        let mut mac = MockMlme::new();
+        mac.expect_associate().returning(|_, _, _| {
+            Ok(AssociationResponse {
+                device_address: IeeeAddress(0),
+                association_address: ShortAddress(0x1234),
+                status: AssociationStatus::Successful,
+            })
+        });
+
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(confirm.network_address.0, 0x1234);
+        assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
+        assert_eq!(confirm.channel, 11);
+
+        assert_eq!(nlme.nib().network_address(), 0x1234);
+        assert_eq!(nlme.nib().extended_panid(), 0xDEAD);
+        assert_eq!(nlme.nib().panid(), 0xAAAA);
+        assert_eq!(nlme.nib().update_id(), 0);
+
+        let table = nlme.nib().neighbor_table();
+        assert_eq!(table[0].relationship, 0x00);
+    }
+
+    #[test]
+    fn join_sets_nwk_update_id_from_parent() {
+        let mut mac = MockMlme::new();
+        mac.expect_associate().returning(|_, _, _| {
+            Ok(AssociationResponse {
+                device_address: IeeeAddress(0),
+                association_address: ShortAddress(0x1234),
+                status: AssociationStatus::Successful,
+            })
+        });
+
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut n = make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0);
+        n.update_id = 7;
+        let mut table = StorageVec::new();
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(nlme.nib().update_id(), 7);
+    }
+
+    #[test]
+    fn join_fails_when_no_candidates() {
+        let mac = MockMlme::new();
+        let (_guard, mut nlme) = make_nlme(mac);
+        nlme.nib().set_neighbor_table(StorageVec::new());
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
+    }
+
+    #[test]
+    fn join_fails_when_already_joined() {
+        let mac = MockMlme::new();
+        let (_guard, mut nlme) = make_nlme(mac);
+        nlme.nib().set_network_address(0x0001);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn join_skips_capacity_rejected_parent_tries_next() {
+        let mut mac = MockMlme::new();
+        let mut seq = mockall::Sequence::new();
+        mac.expect_associate()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_, _, _| {
+                Ok(AssociationResponse {
+                    device_address: IeeeAddress(0),
+                    association_address: ShortAddress(0),
+                    status: AssociationStatus::NetworkAtCapacity,
+                })
+            });
+        mac.expect_associate()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_, _, _| {
+                Ok(AssociationResponse {
+                    device_address: IeeeAddress(0),
+                    association_address: ShortAddress(0x5678),
+                    status: AssociationStatus::Successful,
+                })
+            });
+
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
+            .unwrap();
+        table
+            .push(make_neighbor(0xAAAA, 0x0001, 0xDEAD, 200, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(confirm.network_address.0, 0x5678);
+
+        let table = nlme.nib().neighbor_table();
+        assert_eq!(table[0].potential_parent, 0);
+        assert_eq!(table[1].relationship, 0x00);
+    }
+
+    #[test]
+    fn join_all_candidates_rejected() {
+        let mut mac = MockMlme::new();
+        mac.expect_associate().returning(|_, _, _| {
+            Ok(AssociationResponse {
+                device_address: IeeeAddress(0),
+                association_address: ShortAddress(0),
+                status: AssociationStatus::AccessDenied,
+            })
+        });
+
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::PanAccessDenied);
+        assert_eq!(confirm.network_address.0, 0xffff);
+    }
+
+    #[test]
+    fn join_mac_error_reported() {
+        let mut mac = MockMlme::new();
+        mac.expect_associate()
+            .returning(|_, _, _| Err(MacError::NoAck));
+
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
+            .unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::MacError);
+    }
+
+    #[test]
+    fn join_invalid_rejoin_network() {
+        let mac = MockMlme::new();
+        let (_guard, mut nlme) = make_nlme(mac);
+
+        let mut req = default_join_request(0xDEAD);
+        req.rejoin_network = RejoinNetwork::Orphan;
+
+        let confirm = block_on(nlme.join(req));
+        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+}

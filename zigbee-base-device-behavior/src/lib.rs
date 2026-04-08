@@ -18,6 +18,7 @@ const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
 const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
 const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
+use embedded_storage::ReadStorage;
 use types::BdbCommissioningStatus;
 use types::CommissioningMode;
 use zigbee::Config;
@@ -36,16 +37,17 @@ use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nib::Nib;
 use zigbee::nwk::nib::NibStorage;
 use zigbee::nwk::nlme::NetworkError;
-use zigbee::nwk::nlme::NlmeSap;
+use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::management::NlmeJoinConfirm;
 use zigbee::nwk::nlme::management::NlmeJoinRequest;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
-use zigbee::nwk::nlme::management::RejoinNetwork;
 use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
 use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
+use zigbee::nwk::nlme::management::RejoinNetwork;
 use zigbee::security::primitives::HmacAes128Mmo;
 use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdp::device_annce::DeviceAnnce;
+use zigbee_mac::mlme::Mlme;
 use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
@@ -55,17 +57,16 @@ use zigbee_types::ShortAddress;
 /// Orchestrates the standard commissioning procedures defined in the
 /// BDB specification: initialization, network steering, network
 /// formation, finding & binding, and touchlink.
-pub struct BaseDeviceBehavior<T: NlmeSap> {
+pub struct BaseDeviceBehavior<M: Mlme> {
     device: ZigbeeDevice,
-    nlme: T,
+    nlme: Nlme<M>,
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
-    capability: CapabilityInformation,
 }
 
-impl<T: NlmeSap> BaseDeviceBehavior<T> {
-    pub fn new(nlme: T, config: Config) -> Self {
+impl<M: Mlme> BaseDeviceBehavior<M> {
+    pub fn new<S: ReadStorage>(nlme: Nlme<M>, config: Config) -> Self {
         let device = ZigbeeDevice::new(config);
 
         Self {
@@ -74,7 +75,6 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
-            capability: CapabilityInformation(0),
         }
     }
 
@@ -88,7 +88,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
     /// Restores persistent state and, if the node is already on a network,
     /// attempts to rejoin it. Returns without error if the node is not on
     /// a network — the caller should then invoke [`network_steering`].
-    pub async fn initialize(&mut self) -> Result<(), NetworkError> {
+    pub async fn start_initialization_procedure(&mut self) -> Result<(), NetworkError> {
         // §7.1 step 1: restore persistent state (NIB/AIB backed by storage)
         // §7.1 steps 2-8: TODO implement rejoin path
         Ok(())
@@ -112,7 +112,6 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
             "[BDB] start network steering, EPID={extended_pan_id:?}, channels={channels:?}"
         );
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
-        self.capability = capability_information;
 
         // §8.2 step 1
         self.nlme.network_discovery(channels, scan_duration).await?;
@@ -134,7 +133,7 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
         self.device.poll_transport_key(&mut self.nlme).await?;
 
         // §8.2 step 11
-        self.device_annce().await?;
+        self.device_annce(capability_information).await?;
 
         // §8.2 step 12, §10.2.5
         self.tc_link_key_exchange().await?;
@@ -145,12 +144,15 @@ impl<T: NlmeSap> BaseDeviceBehavior<T> {
     }
 
     /// Broadcast a ZDO Device_annce (§2.4.3.1.11, BDB §8.2 step 11).
-    async fn device_annce(&mut self) -> Result<(), NetworkError> {
+    async fn device_annce(
+        &mut self,
+        capability_information: CapabilityInformation,
+    ) -> Result<(), NetworkError> {
         let nib = nib::get_ref();
         let annce = DeviceAnnce {
             nwk_addr: ShortAddress(nib.network_address()),
             ieee_addr: nib.ieee_address(),
-            capability: self.capability,
+            capability: capability_information,
         };
         self.device.device_annce(&mut self.nlme, annce).await
     }

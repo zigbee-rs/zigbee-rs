@@ -42,7 +42,7 @@ use super::frame::header::Header;
 use super::types::Address;
 use super::types::TxOptions;
 use crate::nwk::nlme::NetworkError;
-use crate::nwk::nlme::NlmeSap;
+use crate::nwk::nlme::Nlme;
 use crate::security::SecurityContext;
 
 pub mod basemgt;
@@ -99,9 +99,9 @@ impl Apsme {
     /// When `aps_secure` is true the APS frame is encrypted with the link key
     /// for `dest_ieee` before handing it to the NWK layer. The NWK layer
     /// always encrypts with the network key.
-    pub(crate) async fn send_command<N: NlmeSap>(
+    pub(crate) async fn send_command<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         destination: ShortAddress,
         dest_ieee: IeeeAddress,
         command: Command,
@@ -141,9 +141,9 @@ impl Apsme {
 
     /// Poll for an encrypted APS command, decrypt it, and return the parsed
     /// command (§4.4).
-    pub(crate) async fn poll_command<N: NlmeSap>(
+    pub(crate) async fn poll_command<M: zigbee_mac::mlme::Mlme>(
         &self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         retries: u8,
     ) -> Result<Command, NetworkError> {
         let mut buf = [0u8; 128];
@@ -162,9 +162,9 @@ impl Apsme {
     }
 
     /// Send a unicast APS data frame to a specific destination (§2.2.5.1).
-    pub(crate) async fn unicast_data<N: NlmeSap>(
+    pub(crate) async fn unicast_data<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         destination: ShortAddress,
         dst_endpoint: u8,
         cluster_id: u16,
@@ -205,9 +205,9 @@ impl Apsme {
     ///
     /// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
     /// RxOnWhenIdle devices).
-    pub(crate) async fn broadcast_data<N: NlmeSap>(
+    pub(crate) async fn broadcast_data<M: zigbee_mac::mlme::Mlme>(
         &mut self,
-        nlme: &mut N,
+        nlme: &mut Nlme<M>,
         nwk_broadcast: ShortAddress,
         dst_endpoint: u8,
         cluster_id: u16,

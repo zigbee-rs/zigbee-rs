@@ -267,7 +267,7 @@ impl Mlme for EspMlme<'_> {
     async fn scan_network(
         &mut self,
         scan_type: ScanType,
-        channels: impl Iterator<Item = u8>,
+        channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError> {
         if !matches!(scan_type, ScanType::Active) {

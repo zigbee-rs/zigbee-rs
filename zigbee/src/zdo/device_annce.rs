@@ -7,7 +7,7 @@ use byte::BytesExt;
 pub use crate::zdp::device_annce::DeviceAnnce;
 use crate::aps::apsme::Apsme;
 use crate::nwk::nlme::NetworkError;
-use crate::nwk::nlme::NlmeSap;
+use crate::nwk::nlme::Nlme;
 use crate::zdp::device_annce::CLUSTER_ID;
 
 /// ZigBee Device Profile identifier.
@@ -19,8 +19,8 @@ const ZDO_ENDPOINT: u8 = 0x00;
 ///
 /// Serializes the ZDP payload (transaction sequence number +
 /// [`DeviceAnnce`]) and hands it to the APS layer for broadcast.
-pub async fn broadcast<T: NlmeSap>(
-    nlme: &mut T,
+pub async fn broadcast<M: zigbee_mac::mlme::Mlme>(
+    nlme: &mut Nlme<M>,
     apsme: &mut Apsme,
     zdp_seq: u8,
     annce: DeviceAnnce,
