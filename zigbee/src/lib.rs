@@ -52,6 +52,9 @@
 )]
 #![feature(macro_metavar_expr_concat)]
 
+#[cfg(test)]
+extern crate std;
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
