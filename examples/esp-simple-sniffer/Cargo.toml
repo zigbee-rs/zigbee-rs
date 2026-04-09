@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "esp-simple-sniffer"
 version = "0.1.0"
@@ -19,7 +21,7 @@ esp-wifi-sys = { version = "0.7.0", features = ["esp32c6"] }
 hex = { version = "0.4.3", default-features = false }
 ieee802154 = "0.6.1"
 log = { version = "0.4.21" }
-zigbee = { path = "../.."}
+zigbee = { path = "../../zigbee" }
 
 [profile.dev]
 opt-level = "s"

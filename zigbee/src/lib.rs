@@ -6,6 +6,7 @@
 //! This crate contains the core network layer and security features.
 //! It deals with addressing, keys, trust center, formation and discovery
 //! mechanisms.
+#![no_std]
 #![deny(clippy::panic, unused_must_use)]
 #![warn(
     clippy::missing_safety_doc,

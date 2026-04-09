@@ -16,6 +16,9 @@ use zigbee::security::SecurityContext;
 #[entry]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+
+    zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
+    zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
     let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154, peripherals.RADIO_CLK);
 
     ieee802154.set_config(Config {
@@ -60,7 +63,7 @@ fn print_zigbee_nwk_frame(payload: &[u8]) -> Option<&[u8]> {
     hex::encode_to_slice(payload, &mut buf[0..(payload.len() * 2)]).unwrap();
     let s = unsafe { str::from_utf8_unchecked(&buf) };
 
-    let (nwk_frame, _) = NwkFrame::try_read(payload, SecurityContext::no_security()).unwrap();
+    let (nwk_frame, _) = NwkFrame::try_read(payload, SecurityContext::get()).unwrap();
     match nwk_frame {
         NwkFrame::Data(nwk_data_frame) => {
             //println!(

@@ -41,17 +41,6 @@ jobs:
         working-directory: ./examples/${{ matrix.example }}
         run: rustup show
 
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            examples/${{ matrix.example }}/target
-          key: ${{ runner.os }}-${{ matrix.example }}-${{ hashFiles(format('examples/{0}/Cargo.lock', matrix.example), format('examples/{0}/rust-toolchain.toml', matrix.example)) }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.example }}-
-
       - name: Build ${{ matrix.example }}
         working-directory: ./examples/${{ matrix.example }}
         env:

@@ -18,7 +18,6 @@ const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
 const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
 const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
-use embedded_storage::ReadStorage;
 use types::BdbCommissioningStatus;
 use types::CommissioningMode;
 use zigbee::Config;
@@ -66,7 +65,7 @@ pub struct BaseDeviceBehavior<M: Mlme> {
 }
 
 impl<M: Mlme> BaseDeviceBehavior<M> {
-    pub fn new<S: ReadStorage>(nlme: Nlme<M>, config: Config) -> Self {
+    pub fn new(nlme: Nlme<M>, config: Config) -> Self {
         let device = ZigbeeDevice::new(config);
 
         Self {
