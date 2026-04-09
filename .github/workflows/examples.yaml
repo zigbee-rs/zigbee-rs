@@ -10,50 +10,50 @@ on:
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
-  RUSTDOCFLAGS: -Cpanic=abort
 
 permissions:
-  contents: write
-  pull-requests: write 
+  contents: read
 
 jobs:
-  tests:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.list.outputs.examples }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: list
+        run: |
+          examples=$(find examples -mindepth 1 -maxdepth 1 -type d | xargs -I{} basename {} | sort | jq -R . | jq -sc .)
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        toolchain:
-          # - stable
-          # - beta
-          - nightly
+        example: ${{ fromJson(needs.discover.outputs.examples) }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }} 
-          override: true
-          components: llvm-tools-preview
+      - name: Install Rust toolchain
+        working-directory: ./examples/${{ matrix.example }}
+        run: rustup show
 
-      - name: Cache dependencies
+      - name: Cache
         uses: actions/cache@v4
-        env:
-          cache-name: cache-dependencies
         with:
           path: |
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            target
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+            examples/${{ matrix.example }}/target
+          key: ${{ runner.os }}-${{ matrix.example }}-${{ hashFiles(format('examples/{0}/Cargo.lock', matrix.example), format('examples/{0}/rust-toolchain.toml', matrix.example)) }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.example }}-
 
-      - name: Build esp-discovery
-        working-directory: ./examples/esp-discovery
+      - name: Build ${{ matrix.example }}
+        working-directory: ./examples/${{ matrix.example }}
         env:
           CARGO_INCREMENTAL: 0
         run: cargo build
-
