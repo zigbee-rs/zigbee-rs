@@ -1,6 +1,6 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use esp_hal::efuse::Efuse;
+use esp_hal::efuse;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Error as Ieee802154Error;
 use esp_radio::ieee802154::Ieee802154;
@@ -28,8 +28,12 @@ pub struct Ieee802154Driver<'a> {
 
 impl<'a> Ieee802154Driver<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
+        let mac_bytes: [u8; 6] = efuse::base_mac_address()
+            .as_bytes()
+            .try_into()
+            .expect("6-byte MAC");
         let ieee_address =
-            ieee802154::mac::ExtendedAddress(eui48_to_eui64(Efuse::mac_address()));
+            ieee802154::mac::ExtendedAddress(eui48_to_eui64(mac_bytes));
 
         let mut driver = Self {
             driver: ieee802154,
@@ -78,7 +82,7 @@ impl<'a> Ieee802154Driver<'a> {
     /// after transmission completes (`rx_when_idle = true`).
     pub async fn transmit(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
         TX_SIGNAL.reset();
-        self.driver.transmit_raw(frame)?;
+        self.driver.transmit_raw(frame, true)?;
         TX_SIGNAL.wait().await;
         Ok(())
     }

@@ -7,19 +7,22 @@ use core::str;
 use byte::TryRead;
 use esp_backtrace as _;
 use esp_hal::esp_riscv_rt::entry;
-use esp_ieee802154::*;
+use esp_radio::ieee802154::{Config, Ieee802154, ReceivedFrame};
 use esp_println::println;
 use ieee802154::mac::Address;
 use zigbee::nwk::frame::Frame as NwkFrame;
 use zigbee::security::SecurityContext;
 
+esp_bootloader_esp_idf::esp_app_desc!();
+
 #[entry]
 fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+    esp_alloc::heap_allocator!(size: 72 * 1024);
 
     zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
     zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
-    let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154, peripherals.RADIO_CLK);
+    let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154);
 
     ieee802154.set_config(Config {
         channel: 11,

@@ -29,17 +29,15 @@ jobs:
           - nightly
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }} 
-          override: true
+          toolchain: ${{ matrix.toolchain }}
           components: llvm-tools-preview
 
       - name: Download & Install grcov
@@ -99,21 +97,19 @@ jobs:
           - nightly
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }} 
-          override: true
+          toolchain: ${{ matrix.toolchain }}
           components: llvm-tools-preview
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         env:
           cache-name: cache-dependencies
         with:
