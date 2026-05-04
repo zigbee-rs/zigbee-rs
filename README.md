@@ -40,6 +40,14 @@ In this repository:
 
 ---
 
+📺 Examples
+- esp-discovery `[zigbee]` — scan channels 11–26 and list nearby Zigbee networks
+- esp-sensor `[zigbee]` — join a Zigbee network as an end device using network steering
+- nrf52-sensor `[zigbee]` — join a Zigbee network as an end device on nRF52 hardware (nRF52 support in progress)
+- esp-simple-sniffer `[debug]` — promiscuous IEEE 802.15.4 sniffer that prints NWK frames
+
+---
+
 ## 🏛️ License
 
 Licensed under either of:

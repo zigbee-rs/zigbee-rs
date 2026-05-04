@@ -20,7 +20,7 @@ jobs:
     outputs:
       examples: ${{ steps.list.outputs.examples }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - id: list
         run: |
@@ -35,7 +35,7 @@ jobs:
       matrix:
         example: ${{ fromJson(needs.discover.outputs.examples) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         working-directory: ./examples/${{ matrix.example }}
