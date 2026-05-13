@@ -80,14 +80,30 @@ impl TryWrite<byte::ctx::Endian> for CommandIdentifier {
     }
 }
 
+#[macro_export]
+macro_rules! test_branches_command_identifier {
+    ($($name:ident: $input:expr => $want:expr,)+) => {
+        $(
+            #[test]
+            fn $name() {
+                // when
+                let (command_identifier, _) = CommandIdentifier::try_read($input, byte::LE)
+                    .expect("Could not read CommandIdentifier in test");
+
+                // then
+                assert_eq!(command_identifier, $want);
+            }
+        )+
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use byte::TryRead;
 
     use super::*;
-    use crate::test_branches_command_identifier;
 
-    test_branches_command_identifier! {
+    crate::test_branches_command_identifier! {
         cmd_ident_read_attributes: &[0x00] => CommandIdentifier::ReadAttributes,
         cmd_ident_read_attributes_response: &[0x01] => CommandIdentifier::ReadAttributesResponse,
         cmd_ident_write_attributes: &[0x02] => CommandIdentifier::WriteAttributes,
@@ -112,21 +128,4 @@ mod tests {
         cmd_ident_discoverattributesextended: &[0x15] => CommandIdentifier::DiscoverAttributesExtended,
         cmd_ident_discoverattributesextendedresponse: &[0x16] => CommandIdentifier::DiscoverAttributesExtendedResponse,
     }
-}
-
-#[macro_export]
-macro_rules! test_branches_command_identifier {
-    ($($name:ident: $input:expr => $want:expr,)+) => {
-        $(
-            #[test]
-            fn $name() {
-                // when
-                let (command_identifier, _) = CommandIdentifier::try_read($input, byte::LE)
-                    .expect("Could not read CommandIdentifier in test");
-
-                // then
-                assert_eq!(command_identifier, $want);
-            }
-        )+
-    };
 }

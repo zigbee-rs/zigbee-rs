@@ -1,7 +1,6 @@
 //! Frame Control
 use core::fmt;
 use core::fmt::Debug;
-use core::mem;
 
 use zigbee_macros::impl_byte;
 
@@ -25,18 +24,19 @@ pub enum FrameType {
 
 impl FrameControl {
     /// See Section 2.4.1.1.1
-    ///
-    /// Returns `true` if command is global
     pub fn frame_type(self) -> FrameType {
-        // SAFETY: any 2 bit permutation is a valid FrameType
-        unsafe { mem::transmute((self.0 & mask::FRAME_TYPE) >> offset::FRAME_TYPE) }
+        match (self.0 & mask::FRAME_TYPE) >> offset::FRAME_TYPE {
+            0b00 => FrameType::GlobalCommand,
+            0b01 => FrameType::ClusterCommand,
+            _ => FrameType::Reserved,
+        }
     }
 
     /// The Manufacturer Specific field specifies whether this command refers to
     /// a manufacturer specific extension.
     ///
     /// If this value is set to 1, the manufacturer code field SHALL be present
-    /// in the ``ZCLframe``.
+    /// in the ``ZclFrame``.
     ///
     /// See Section 2.4.1.1.2
     pub fn is_manufacturer_specific(self) -> bool {
@@ -134,6 +134,15 @@ mod tests {
         assert!(frame_control.direction());
         assert!(frame_control.disable_default_response());
     }
+    #[test]
+    fn frame_type_reserved_covers_both_reserved_values() {
+        // Frame type bits 0b10 and 0b11 are both Reserved per spec.
+        let fc_10 = FrameControl(0b0000_0010);
+        let fc_11 = FrameControl(0b0000_0011);
+        assert_eq!(fc_10.frame_type(), FrameType::Reserved);
+        assert_eq!(fc_11.frame_type(), FrameType::Reserved);
+    }
+
     #[test]
     fn frame_control_with_direction_server_to_client() {
         // given

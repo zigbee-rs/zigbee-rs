@@ -1,7 +1,9 @@
-//! Implements the `ZigBee` Cluster Library in `no-std` based on the [ZigBee Cluster Library Rev 8]
+//! Implements the `ZigBee` Cluster Library in `no-std` based on the [ZigBee
+//! Cluster Library Rev 8]
 //!
-//! This crate defines application-level behaviors, like reading attributes, reporting, and commands.
-//! It contains standard clusters like Temperature Measurement, Basic Identify, etc.
+//! This crate defines application-level behaviors, like reading attributes,
+//! reporting, and commands. It contains standard clusters like Temperature
+//! Measurement, Basic Identify, etc.
 //!
 //! [ZigBee Cluster Library Rev 8]: https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf
 #![no_std]
@@ -32,16 +34,22 @@
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
     clippy::too_long_first_doc_paragraph,
-    dead_code,
+    dead_code
 )]
 
-pub(crate) mod common;
+macro_rules! bad_input {
+    ($msg:expr) => {
+        byte::Error::BadInput { err: $msg }
+    };
+}
+
+pub mod common;
 
 /// General ZCL Frame
-pub(crate) mod frame;
-pub(crate) mod payload;
+pub mod frame;
+pub mod payload;
 
-pub(crate) mod header;
+pub mod header;
 
 // Chapter 4
 pub mod measurement;
@@ -51,4 +59,3 @@ pub mod lighting;
 pub mod hvac;
 // Chapter 10
 pub mod energy;
-
