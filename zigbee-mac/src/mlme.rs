@@ -89,7 +89,7 @@ pub enum MacError {
     NoData,
     #[error("no acknowledgment received")]
     NoAck,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(any(feature = "esp32c6", feature = "esp32c5"))]
     #[error("radio error")]
     RadioError(#[from] esp_radio::ieee802154::Error),
 }
