@@ -282,14 +282,12 @@ impl ApsmeSap for Apsme {
             match res {
                 Ok(_) => ApsmeUnbindRequestStatus::Success,
                 Err(err) => match err {
-                    crate::aps::binding::BindingError::IllegalRequest => {
+                    crate::aps::binding::BindingError::IllegalRequest
+                    | crate::aps::binding::BindingError::TableFull => {
                         ApsmeUnbindRequestStatus::IllegalRequest
                     }
                     crate::aps::binding::BindingError::InvalidBinding => {
                         ApsmeUnbindRequestStatus::InvalidBinding
-                    }
-                    crate::aps::binding::BindingError::TableFull => {
-                        ApsmeUnbindRequestStatus::IllegalRequest
                     }
                 },
             }

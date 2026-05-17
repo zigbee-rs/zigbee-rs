@@ -38,7 +38,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: llvm-tools-preview
+          components: llvm-tools-preview, clippy, rustfmt
 
       - name: Download & Install grcov
         run: |
@@ -62,6 +62,12 @@ jobs:
             ~/.cargo/registry/cache
             target
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings --verbose
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       - name: Run tests
         env:

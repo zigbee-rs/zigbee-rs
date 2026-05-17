@@ -212,7 +212,7 @@ impl<'a> TryRead<'a, ()> for Status {
         let raw: u8 = bytes.read_with(offset, ctx::LE)?;
         // Errata: deprecated wire bytes are substituted for their replacements.
         let status = match raw {
-            0x82 | 0x83 | 0x84 => Self::UnsupCommand,
+            0x82..0x84 => Self::UnsupCommand,
             0x8a | 0xc4 => Self::Success,
             0x8f => Self::NotAuthorized,
             0x90 | 0x91 | 0x93 | 0xc0 | 0xc1 => Self::Failure,
