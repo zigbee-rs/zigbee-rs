@@ -260,45 +260,65 @@ mod tests {
         assert_eq!(node_descriptor.logical_type(), LogicalType::Router);
         assert!(node_descriptor.complex_descriptor_available());
         assert!(node_descriptor.user_descriptor_available());
-        assert!(node_descriptor
-            .frequency_bands()
-            .is_set(FrequencyBandFlag::High));
-        assert!(!node_descriptor
-            .frequency_bands()
-            .is_set(FrequencyBandFlag::EuropeanFSK));
-        assert!(node_descriptor
-            .mac_capabilities()
-            .is_set(MacCapabilityFlag::AllocateAddress));
-        assert!(node_descriptor
-            .mac_capabilities()
-            .is_set(MacCapabilityFlag::SecurityCapability));
-        assert!(!node_descriptor
-            .mac_capabilities()
-            .is_set(MacCapabilityFlag::PowerSource));
+        assert!(
+            node_descriptor
+                .frequency_bands()
+                .is_set(FrequencyBandFlag::High)
+        );
+        assert!(
+            !node_descriptor
+                .frequency_bands()
+                .is_set(FrequencyBandFlag::EuropeanFSK)
+        );
+        assert!(
+            node_descriptor
+                .mac_capabilities()
+                .is_set(MacCapabilityFlag::AllocateAddress)
+        );
+        assert!(
+            node_descriptor
+                .mac_capabilities()
+                .is_set(MacCapabilityFlag::SecurityCapability)
+        );
+        assert!(
+            !node_descriptor
+                .mac_capabilities()
+                .is_set(MacCapabilityFlag::PowerSource)
+        );
         assert_eq!(node_descriptor.manufacturer_code(), 42);
         assert_eq!(node_descriptor.maximum_buffer_size(), 8);
         assert_eq!(node_descriptor.maximum_incoming_transfer_size(), 500);
-        assert!(node_descriptor
-            .server_mask()
-            .is_set(ServerMaskFlag::PrimaryTrustCenter));
+        assert!(
+            node_descriptor
+                .server_mask()
+                .is_set(ServerMaskFlag::PrimaryTrustCenter)
+        );
         assert_eq!(
             node_descriptor
                 .server_mask()
                 .get_stack_compliance_revision(),
             22
         );
-        assert!(node_descriptor
-            .server_mask()
-            .is_set(ServerMaskFlag::BackupBindingTableCache));
-        assert!(!node_descriptor
-            .server_mask()
-            .is_set(ServerMaskFlag::NetworkManager));
+        assert!(
+            node_descriptor
+                .server_mask()
+                .is_set(ServerMaskFlag::BackupBindingTableCache)
+        );
+        assert!(
+            !node_descriptor
+                .server_mask()
+                .is_set(ServerMaskFlag::NetworkManager)
+        );
         assert_eq!(node_descriptor.maximum_outgoing_transfer_size(), 1000);
-        assert!(node_descriptor
-            .descriptor_capabilities()
-            .is_set(DescriptorCapabilityFlag::ExtendedActiveEndpontListAvailable));
-        assert!(!node_descriptor
-            .descriptor_capabilities()
-            .is_set(DescriptorCapabilityFlag::ExtendedSimpleDescriptorListAvailable));
+        assert!(
+            node_descriptor
+                .descriptor_capabilities()
+                .is_set(DescriptorCapabilityFlag::ExtendedActiveEndpontListAvailable)
+        );
+        assert!(
+            !node_descriptor
+                .descriptor_capabilities()
+                .is_set(DescriptorCapabilityFlag::ExtendedSimpleDescriptorListAvailable)
+        );
     }
 }

@@ -2,9 +2,10 @@
 //!
 //! See Section 4.5
 //!
-//! Provides an interface to pressure measurement functionality, including configuration and
-//! provision of notifications of pressure measurements.
+//! Provides an interface to pressure measurement functionality, including
+//! configuration and provision of notifications of pressure measurements.
 use core::convert::TryInto;
+
 use heapless::Vec;
 
 /// Pressure Measurement Information Attribute Set

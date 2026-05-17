@@ -871,7 +871,8 @@ mod tests {
         let (frame, len) = ZclFrame::try_read(input, ()).expect("default response parses");
         assert_eq!(len, input.len());
 
-        let ZclFramePayload::GeneralCommand(GeneralCommand::DefaultResponse(ref dr)) = frame.payload
+        let ZclFramePayload::GeneralCommand(GeneralCommand::DefaultResponse(ref dr)) =
+            frame.payload
         else {
             panic!("DefaultResponse expected");
         };

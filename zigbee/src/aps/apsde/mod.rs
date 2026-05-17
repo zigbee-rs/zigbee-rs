@@ -148,4 +148,3 @@ pub struct ApsdeSapIndication {
     link_quality: u8,
     rx_time: u8,
 }
-

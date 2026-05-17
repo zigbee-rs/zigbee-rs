@@ -2,8 +2,8 @@
 //!
 //! See Section 4.4
 //!
-//! Provides an interface to temperature measurement functionality, including configuration
-//! and provision of notifications of temperature measurements.
+//! Provides an interface to temperature measurement functionality, including
+//! configuration and provision of notifications of temperature measurements.
 use heapless::Vec;
 
 /// Temperature Measurement Attribute Set
@@ -34,7 +34,6 @@ pub enum TemperatureMeasurement {
 //     }
 // }
 
-
 impl TemperatureMeasurement {
     pub fn to_bytes(&self) -> Vec<u8, 8> {
         let bytes = Vec::new();
@@ -51,9 +50,12 @@ impl TemperatureMeasurement {
         }
 
         Err("TODO")
-        // let measured_value = i16::from_le_bytes(bytes[0..2].try_into().unwrap());
-        // let min_measured_value = i16::from_le_bytes(bytes[2..4].try_into().unwrap());
-        // let max_measured_value = i16::from_le_bytes(bytes[4..6].try_into().unwrap());
+        // let measured_value =
+        // i16::from_le_bytes(bytes[0..2].try_into().unwrap());
+        // let min_measured_value =
+        // i16::from_le_bytes(bytes[2..4].try_into().unwrap());
+        // let max_measured_value =
+        // i16::from_le_bytes(bytes[4..6].try_into().unwrap());
         // let tolerance = u16::from_le_bytes(bytes[6..8].try_into().unwrap());
         //
         // Ok(Self {
@@ -79,7 +81,8 @@ mod tests {
         let _data = [0x0b, 0x8a];
 
         // when
-        // let temperature = TemperatureMeasurement::unpack_from_slice(&data).unwrap();
+        // let temperature =
+        // TemperatureMeasurement::unpack_from_slice(&data).unwrap();
 
         // then
         // assert_eq!(temperature, 29.54);

@@ -35,8 +35,10 @@ where
 }
 
 /// Normalizes a WriteAttributesResponse for serialization:
-/// - If any failures present: emit only failure records (spec: no SUCCESS mixed in).
-/// - Otherwise (all success or empty): emit a single SUCCESS record with no attribute id.
+/// - If any failures present: emit only failure records (spec: no SUCCESS mixed
+///   in).
+/// - Otherwise (all success or empty): emit a single SUCCESS record with no
+///   attribute id.
 fn write_normalized_response<const N: usize>(
     bytes: &mut [u8],
     offset: &mut usize,
