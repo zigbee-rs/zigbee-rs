@@ -71,20 +71,3 @@ impl TemperatureMeasurement {
         Self::from_bytes(&bytes).ok()
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    // #[test]
-    fn test_binary_as_measured_value() {
-        // given
-        let _data = [0x0b, 0x8a];
-
-        // when
-        // let temperature =
-        // TemperatureMeasurement::unpack_from_slice(&data).unwrap();
-
-        // then
-        // assert_eq!(temperature, 29.54);
-    }
-}

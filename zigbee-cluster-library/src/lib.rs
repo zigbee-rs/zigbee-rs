@@ -33,8 +33,7 @@
     clippy::redundant_pub_crate,
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
-    clippy::too_long_first_doc_paragraph,
-    dead_code
+    clippy::too_long_first_doc_paragraph
 )]
 
 macro_rules! bad_input {
@@ -44,6 +43,7 @@ macro_rules! bad_input {
 }
 
 pub mod common;
+pub mod types;
 
 /// General ZCL Frame
 pub mod frame;

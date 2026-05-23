@@ -540,13 +540,38 @@ mod tests {
         let expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
         assert!(matches!(
             frame.payload,
-            ZclFramePayload::ClusterSpecificCommand(_)
+            ZclFramePayload::ClusterSpecificCommand { .. }
         ));
-        if let ZclFramePayload::ClusterSpecificCommand(cmd) = frame.payload {
-            assert_eq!(cmd, expected);
+        if let ZclFramePayload::ClusterSpecificCommand { command_id, data } = frame.payload {
+            assert_eq!(command_id.0, 0x01);
+            assert_eq!(data, expected);
         } else {
             panic!("ClusterSpecificCommand expected!");
         }
+    }
+
+    #[test]
+    fn cluster_specific_command_preserves_unknown_command_id() {
+        let input: &[u8] = &[
+            0x01, // frame control: cluster-specific
+            0x01, // sequence number
+            0x80, // cluster-specific command identifier
+        ];
+
+        let (frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
+
+        let ZclFramePayload::ClusterSpecificCommand { command_id, .. } = &frame.payload else {
+            panic!("ClusterSpecificCommand expected!");
+        };
+        assert_eq!(command_id.0, 0x80);
+        assert_eq!(frame.header.command_identifier.raw(), 0x80);
+
+        let mut buf = [0u8; 8];
+        let mut offset = 0usize;
+        buf.write_with(&mut offset, frame, ())
+            .expect("Failed to write ZclFrame");
+        assert_eq!(offset, input.len());
+        assert_eq!(&buf[..offset], input);
     }
 
     #[test]
