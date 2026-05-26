@@ -212,7 +212,7 @@ impl<'a> TryRead<'a, ()> for Status {
         let raw: u8 = bytes.read_with(offset, ctx::LE)?;
         // Errata: deprecated wire bytes are substituted for their replacements.
         let status = match raw {
-            0x82..0x84 => Self::UnsupCommand,
+            0x82..=0x84 => Self::UnsupCommand,
             0x8a | 0xc4 => Self::Success,
             0x8f => Self::NotAuthorized,
             0x90 | 0x91 | 0x93 | 0xc0 | 0xc1 => Self::Failure,
@@ -975,5 +975,202 @@ mod tests {
             value: Some(ZclDataType::UnsignedInt(UnsignedN::Uint8(0))),
         };
         assert!(spurious_value.try_write(&mut buf, ()).is_err());
+    }
+
+    // Status::TryRead
+    #[test]
+    fn status_try_read_canonical_bytes() {
+        let cases: &[(u8, Status)] = &[
+            (0x00, Status::Success),
+            (0x01, Status::Failure),
+            (0x7e, Status::NotAuthorized),
+            (0x7f, Status::Reserved),
+            (0x80, Status::MalformedCommand),
+            (0x81, Status::UnsupCommand),
+            (0x82, Status::UnsupCommand),
+            (0x83, Status::UnsupCommand),
+            (0x84, Status::UnsupCommand), // oops!
+            (0x85, Status::InvalidField),
+            (0x86, Status::UnsupportedAttribute),
+            (0x87, Status::InvalidValue),
+            (0x88, Status::ReadOnly),
+            (0x89, Status::InsufficientSpace),
+            (0x8b, Status::NotFound),
+            (0x8c, Status::UnreportableAttribute),
+            (0x8d, Status::InvalidDataType),
+            (0x8e, Status::InvalidSelector),
+            (0x92, Status::ReservedInconsistent),
+            (0x94, Status::Timeout),
+            (0x95, Status::Abort),
+            (0x96, Status::InvalidImage),
+            (0x97, Status::WaitForData),
+            (0x98, Status::NoImageAvailable),
+            (0x99, Status::RequireMoreImage),
+            (0x9a, Status::NotificationPending),
+            (0xc2, Status::ReservedCalibration),
+            (0xc3, Status::UnsupportedCluster),
+            // 0x8a (DuplicateExists) and 0xc4 (LimitReached) substitute to Success.
+            (0x8a, Status::Success),
+            (0xc4, Status::Success),
+            // 0x8f (WriteOnly) substitutes to NotAuthorized.
+            (0x8f, Status::NotAuthorized),
+            // 0x90 (InconsistentStartupState), 0x91 (DefinedOutOfBand), 0x93 (ActionDenied),
+            // 0xc0 (HardwareFailure), 0xc1 (SoftwareFailure) all substitute to Failure.
+            (0x90, Status::Failure),
+            (0x91, Status::Failure),
+            (0x93, Status::Failure),
+            (0xc0, Status::Failure),
+            (0xc1, Status::Failure),
+        ];
+        for &(byte, expected) in cases {
+            let (status, n) = Status::try_read(&[byte], ())
+                .unwrap_or_else(|_| panic!("byte 0x{byte:02x} should parse"));
+            assert_eq!(status, expected, "byte 0x{byte:02x}");
+            assert_eq!(n, 1);
+        }
+    }
+
+    #[test]
+    fn status_try_read_unknown_bytes_are_errors() {
+        for byte in [0x02u8, 0x7d, 0x9b, 0xbf, 0xfe, 0xff] {
+            assert!(
+                Status::try_read(&[byte], ()).is_err(),
+                "byte 0x{byte:02x} should be an error"
+            );
+        }
+    }
+
+    #[test]
+    fn status_try_read_empty_slice_is_error() {
+        assert!(Status::try_read(&[], ()).is_err());
+    }
+
+    // Status::TryWrite
+    #[allow(deprecated)]
+    #[test]
+    fn status_try_write_encodes_expected_byte() {
+        let cases: &[(Status, u8)] = &[
+            // non-deprecated variants encode as their discriminant
+            (Status::Success, 0x00),
+            (Status::Failure, 0x01),
+            (Status::NotAuthorized, 0x7e),
+            (Status::MalformedCommand, 0x80),
+            (Status::UnsupCommand, 0x81),
+            (Status::UnsupportedAttribute, 0x86),
+            (Status::Timeout, 0x94),
+            (Status::UnsupportedCluster, 0xc3),
+            // deprecated -> UnsupCommand (0x81)
+            (Status::UnsupGeneralCommand, 0x81),
+            (Status::UnsupManufClusterCommand, 0x81),
+            (Status::UnsupManufGeneralCommand, 0x81),
+            // deprecated -> Success (0x00)
+            (Status::DuplicateExists, 0x00),
+            (Status::LimitReached, 0x00),
+            // deprecated -> NotAuthorized (0x7e)
+            (Status::WriteOnly, 0x7e),
+            // deprecated -> Failure (0x01)
+            (Status::InconsistentStartupState, 0x01),
+            (Status::DefinedOutOfBand, 0x01),
+            (Status::ActionDenied, 0x01),
+            (Status::HardwareFailure, 0x01),
+            (Status::SoftwareFailure, 0x01),
+        ];
+        let mut buf = [0u8; 2];
+        for &(variant, expected_byte) in cases {
+            let n = variant
+                .try_write(&mut buf, ())
+                .unwrap_or_else(|_| panic!("{variant:?} should write"));
+            assert_eq!(n, 1);
+            assert_eq!(buf[0], expected_byte, "{variant:?}");
+        }
+    }
+
+    #[test]
+    fn status_try_write_unknown_is_error() {
+        let mut buf = [0u8; 2];
+        assert!(Status::Unknown.try_write(&mut buf, ()).is_err());
+    }
+
+    // WriteAttribute TryRead/TryWrite
+    #[test]
+    fn write_attribute_roundtrips() {
+        let input: &[u8] = &[
+            0x01, 0x00, // attribute id
+            0x10, // boolean type
+            0x01, // true
+        ];
+
+        let (attr, n) = WriteAttribute::try_read(input, ()).expect("WriteAttribute parses");
+        assert_eq!(n, input.len());
+        assert_eq!(attr.attribute_id, 0x0001);
+        assert_eq!(attr.value, ZclDataType::Bool(true));
+
+        let mut buf = [0u8; 8];
+        let written = attr.try_write(&mut buf, ()).expect("WriteAttribute writes");
+        assert_eq!(written, input.len());
+        assert_eq!(&buf[..written], input);
+    }
+
+    // WriteAttributeStatus TryWrite error branches
+
+    #[test]
+    fn write_attribute_status_success_with_attribute_id_is_error() {
+        let mut buf = [0u8; 8];
+        let record = WriteAttributeStatus {
+            status: Status::Success,
+            attribute_id: Some(0x0001),
+        };
+        assert!(record.try_write(&mut buf, ()).is_err());
+    }
+
+    #[test]
+    fn write_attribute_status_failure_without_attribute_id_is_error() {
+        let mut buf = [0u8; 8];
+        let record = WriteAttributeStatus {
+            status: Status::UnsupportedAttribute,
+            attribute_id: None,
+        };
+        assert!(record.try_write(&mut buf, ()).is_err());
+    }
+
+    // AttributeReport TryRead/TryWrite
+    #[test]
+    fn attribute_report_roundtrips() {
+        let input: &[u8] = &[
+            0x00, 0x00, // attribute id
+            0x29, 0xab, 0x03, // Int16 = 939
+        ];
+
+        let (report, n) = AttributeReport::try_read(input, ()).expect("AttributeReport parses");
+        assert_eq!(n, input.len());
+        assert_eq!(report.attribute_id, 0x0000);
+        assert_eq!(report.value, ZclDataType::SignedInt(SignedN::Int16(939)));
+
+        let mut buf = [0u8; 8];
+        let written = report.try_write(&mut buf, ()).expect("AttributeReport writes");
+        assert_eq!(written, input.len());
+        assert_eq!(&buf[..written], input);
+    }
+
+    // DefaultResponse TryRead/TryWrite
+    #[test]
+    fn default_response_direct_roundtrips() {
+        let input: &[u8] = &[0x02, 0x86]; // command_id=2, UnsupportedAttribute
+
+        let (dr, n) = DefaultResponse::try_read(input, ()).expect("DefaultResponse parses");
+        assert_eq!(n, 2);
+        assert_eq!(dr.command_identifier, 0x02);
+        assert_eq!(dr.status, Status::UnsupportedAttribute);
+
+        let mut buf = [0u8; 4];
+        let written = dr.try_write(&mut buf, ()).expect("DefaultResponse writes");
+        assert_eq!(written, 2);
+        assert_eq!(&buf[..written], input);
+    }
+
+    #[test]
+    fn default_response_rejects_unknown_status_byte_on_read() {
+        let input: &[u8] = &[0x00, 0x02]; // command_id=0, 0x02 is unknown
+        assert!(DefaultResponse::try_read(input, ()).is_err());
     }
 }
