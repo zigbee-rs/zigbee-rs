@@ -4,11 +4,11 @@
 
 use byte::BytesExt;
 
-pub use crate::zdp::device_annce::DeviceAnnce;
 use crate::aps::apsme::Apsme;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
 use crate::zdp::device_annce::CLUSTER_ID;
+pub use crate::zdp::device_annce::DeviceAnnce;
 
 /// ZigBee Device Profile identifier.
 const ZDP_PROFILE_ID: u16 = 0x0000;

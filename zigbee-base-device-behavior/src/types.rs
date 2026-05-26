@@ -15,7 +15,6 @@ pub enum CommissioningMode {
     Touchlink,
 }
 
-
 /// Status codes for BDB commissioning
 ///
 /// See Section 5.3.1
@@ -23,7 +22,8 @@ pub enum CommissioningMode {
 pub enum BdbCommissioningStatus {
     /// Commissioning was successful.
     Success,
-    /// One of the commissioning sub-procedures has started but is not yet complete.
+    /// One of the commissioning sub-procedures has started but is not yet
+    /// complete.
     InProgress,
     /// The initiator is not address assignment capable during touchlink.
     NotAaCapable,
@@ -33,22 +33,28 @@ pub enum BdbCommissioningStatus {
     TargetFailure,
     /// A network could not be formed during network formation.
     FormationFailure,
-    /// No response to an identify query command has been received during finding & binding.
+    /// No response to an identify query command has been received during
+    /// finding & binding.
     NoIdentifyQueryResponse,
-    /// A binding table entry could not be created due to insufficient space in the binding table during finding & binding.
+    /// A binding table entry could not be created due to insufficient space in
+    /// the binding table during finding & binding.
     BindingTableFull,
-    /// No response to a scan request inter-PAN command has been received during touchlink.
+    /// No response to a scan request inter-PAN command has been received during
+    /// touchlink.
     NoScanResponse,
-    /// A touchlink (steal) attempt was made when a node is already connected to a centralized security network.
+    /// A touchlink (steal) attempt was made when a node is already connected to
+    /// a centralized security network.
     NotPermitted,
-    /// The Trust Center link key exchange procedure has failed attempting to join a centralized security network.
+    /// The Trust Center link key exchange procedure has failed attempting to
+    /// join a centralized security network.
     TclkExFailure,
-    /// A commissioning procedure was forbidden since the node was not currently on a network.
+    /// A commissioning procedure was forbidden since the node was not currently
+    /// on a network.
     NotOnANetwork,
-    /// A commissioning procedure was forbidden since the node was currently on a network.
+    /// A commissioning procedure was forbidden since the node was currently on
+    /// a network.
     OnANetwork,
 }
-
 
 /// Events emitted during the network finding/joining process.
 pub enum NetworkSteeringEvent {
@@ -85,7 +91,6 @@ pub enum JoinError {
     /// Other or unknown error.
     Other(u8),
 }
-
 
 /// Trait for Zigbee Base Device Behavior: Network Steering (finding and joining
 /// a network).

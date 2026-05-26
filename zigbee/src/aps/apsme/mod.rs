@@ -52,7 +52,8 @@ pub mod groupmgt;
 ///
 /// 2.2.4.2
 ///
-/// Supports the transport of management commands between the NHLE and the APSME.
+/// Supports the transport of management commands between the NHLE and the
+/// APSME.
 pub trait ApsmeSap {
     /// 2.2.4.3.1 - request to bind two devices together, or to bind a device to
     /// a group
@@ -281,13 +282,13 @@ impl ApsmeSap for Apsme {
             match res {
                 Ok(_) => ApsmeUnbindRequestStatus::Success,
                 Err(err) => match err {
-                    crate::aps::binding::BindingError::IllegalRequest => {
+                    crate::aps::binding::BindingError::IllegalRequest
+                    | crate::aps::binding::BindingError::TableFull => {
                         ApsmeUnbindRequestStatus::IllegalRequest
                     }
                     crate::aps::binding::BindingError::InvalidBinding => {
                         ApsmeUnbindRequestStatus::InvalidBinding
                     }
-                    crate::aps::binding::BindingError::TableFull => ApsmeUnbindRequestStatus::IllegalRequest,
                 },
             }
         };

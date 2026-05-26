@@ -22,7 +22,6 @@ use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
 use management::NlmeJoinStatus;
-use management::RejoinNetwork;
 use management::NlmeNetworkDiscoveryConfirm;
 use management::NlmeNetworkFormationConfirm;
 use management::NlmeNetworkFormationRequest;
@@ -30,6 +29,7 @@ use management::NlmePermitJoiningConfirm;
 use management::NlmePermitJoiningRequest;
 use management::NlmeStartRouterConfirm;
 use management::NlmeStartRouterRequest;
+use management::RejoinNetwork;
 use thiserror::Error;
 use zigbee_mac::Address;
 use zigbee_mac::AssociationStatus;
@@ -52,11 +52,11 @@ use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
-use crate::nwk::nib::relationship;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NibStorage;
 use crate::nwk::nib::NwkNeighbor;
 use crate::nwk::nib::link_cost_from_lqi;
+use crate::nwk::nib::relationship;
 use crate::security::SecurityContext;
 
 /// Network management entity
@@ -185,10 +185,16 @@ where
             return heapless::Vec::new();
         };
 
-        let best_update_id = matching.map(|n| n.update_id).fold(first.update_id, |best, id| {
-            // positive signed difference means id is newer
-            if id.wrapping_sub(best).cast_signed() > 0 { id } else { best }
-        });
+        let best_update_id = matching
+            .map(|n| n.update_id)
+            .fold(first.update_id, |best, id| {
+                // positive signed difference means id is newer
+                if id.wrapping_sub(best).cast_signed() > 0 {
+                    id
+                } else {
+                    best
+                }
+            });
 
         // Collect indices of eligible parents.
         let mut candidates: heapless::Vec<usize, 16> = table
@@ -347,7 +353,10 @@ where
     /// 3.2.2.7
     // figure 3-39
     #[allow(clippy::unused_async)]
-    pub async fn permit_joining(&self, _request: NlmePermitJoiningRequest) -> NlmePermitJoiningConfirm {
+    pub async fn permit_joining(
+        &self,
+        _request: NlmePermitJoiningRequest,
+    ) -> NlmePermitJoiningConfirm {
         NlmePermitJoiningConfirm {
             status: NlmeJoinStatus::InvalidRequest,
         }
@@ -379,7 +388,8 @@ where
         // --- Validate the request (§3.2.2.13.3) ---
 
         // Only MAC association is handled here.
-        // Orphan (0x01), NWK rejoin (0x02), and channel change (0x03) are not yet implemented.
+        // Orphan (0x01), NWK rejoin (0x02), and channel change (0x03) are not yet
+        // implemented.
         if request.rejoin_network != RejoinNetwork::Association {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
@@ -509,7 +519,8 @@ where
         fail(last_status)
     }
 
-    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin` (§3.2.2.13).
+    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin`
+    /// (§3.2.2.13).
     #[allow(clippy::unused_async)]
     pub async fn rejoin(&mut self) -> NlmeJoinConfirm {
         // TODO: implement NWK rejoin procedure (§3.6.1.4.2)

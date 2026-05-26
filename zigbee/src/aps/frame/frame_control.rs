@@ -69,7 +69,8 @@ impl FrameControl {
         ((self.0 & mask::EXTENDED_HEADER_FLAG) >> offset::EXTENDED_HEADER_FLAG) != 0
     }
 
-    /// Whether the endpoint, cluster, and profile fields are present (§2.2.5.1).
+    /// Whether the endpoint, cluster, and profile fields are present
+    /// (§2.2.5.1).
     ///
     /// True for data frames and for ack frames with ack_format set.
     pub fn has_data_fields(&self) -> bool {

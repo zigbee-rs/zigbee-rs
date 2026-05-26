@@ -38,7 +38,7 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
             CurrentPowerSource::Reserved(_) => {
                 return Err(byte::Error::BadInput {
                     err: "CurrentPowerSourceNotAvailable: No curent power source set",
-                })
+                });
             }
         };
 
@@ -163,15 +163,21 @@ mod tests {
             node_power_descriptor.current_power_mode(),
             CurrentPowerMode::Synchronized
         );
-        assert!(node_power_descriptor
-            .available_power_sources()
-            .is_set(AvailablePowerSourcesFlag::DisposableBattery));
-        assert!(node_power_descriptor
-            .available_power_sources()
-            .is_set(AvailablePowerSourcesFlag::ConstantMainPower));
-        assert!(!node_power_descriptor
-            .available_power_sources()
-            .is_set(AvailablePowerSourcesFlag::RechargeableBattery));
+        assert!(
+            node_power_descriptor
+                .available_power_sources()
+                .is_set(AvailablePowerSourcesFlag::DisposableBattery)
+        );
+        assert!(
+            node_power_descriptor
+                .available_power_sources()
+                .is_set(AvailablePowerSourcesFlag::ConstantMainPower)
+        );
+        assert!(
+            !node_power_descriptor
+                .available_power_sources()
+                .is_set(AvailablePowerSourcesFlag::RechargeableBattery)
+        );
         assert_eq!(
             node_power_descriptor.current_power_source(),
             CurrentPowerSource::DisposableBattery
@@ -200,7 +206,7 @@ mod tests {
         assert!(node_power_descriptor.is_err());
         assert_eq!(
             node_power_descriptor.unwrap_err(),
-            byte::Error::BadInput{
+            byte::Error::BadInput {
                 err: "CurrentPowerSourceNotAvailable: Current power source not in available power sources",
             },
         );

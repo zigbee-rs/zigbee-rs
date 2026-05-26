@@ -25,7 +25,7 @@ fn read_int(bytes: &[u8], len: usize) -> Result<i64, byte::Error> {
 
     let value = read_uint(bytes, len)?;
     let shift = 64 - (len * 8);
-    Ok((value << shift) as i64 >> shift)
+    Ok((value << shift).cast_signed() >> shift)
 }
 
 fn write_uint(bytes: &mut [u8], value: u64, len: usize) -> Result<usize, byte::Error> {

@@ -8,10 +8,10 @@
 
 use core::cmp::min;
 
-use byte::ctx;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
+use byte::ctx;
 
 const USER_DESCRIPTOR_SIZE: usize = 16;
 

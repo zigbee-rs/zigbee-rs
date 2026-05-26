@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use heapless::Vec;
+use zigbee_types::IeeeAddress;
+use zigbee_types::ShortAddress;
 
 use crate::apl::descriptors::node_descriptor::MacCapabilities;
 use crate::apl::descriptors::node_descriptor::ServerMask;
 use crate::apl::descriptors::user_descriptor::UserDescriptor;
-use zigbee_types::IeeeAddress;
-use zigbee_types::ShortAddress;
 
 const CLUSTER_LIST_SIZE: usize = 2 * 0xffff;
 

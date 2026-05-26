@@ -3,6 +3,7 @@
 //! Request, confirm, and indication types for all NLME-SAP primitives.
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
+
 use zigbee_mac::BeaconOrder;
 use zigbee_mac::SuperframeOrder;
 use zigbee_mac::mlme::PanDescriptor;
@@ -143,7 +144,8 @@ pub struct NlmeJoinConfirm {
 pub enum NlmeJoinStatus {
     /// Join completed successfully.
     Success,
-    /// The request was invalid (e.g. device already joined, unsupported rejoin method).
+    /// The request was invalid (e.g. device already joined, unsupported rejoin
+    /// method).
     InvalidRequest,
     /// No suitable parent was found in the neighbor table.
     NotPermitted,

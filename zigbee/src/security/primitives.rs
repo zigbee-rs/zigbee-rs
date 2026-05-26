@@ -1,16 +1,16 @@
 use core::cmp::min;
 use core::ops::Deref;
 
-use aes::cipher::generic_array::GenericArray as AesGenericArray;
+use aes::Aes128;
 use aes::cipher::BlockEncrypt;
 use aes::cipher::KeyInit as AesKeyInit;
-use aes::Aes128;
-use ccm::aead::generic_array::GenericArray;
-use ccm::aead::AeadMutInPlace;
-use ccm::consts::U13;
-use ccm::consts::U4;
+use aes::cipher::generic_array::GenericArray as AesGenericArray;
 use ccm::Ccm;
 use ccm::KeyInit;
+use ccm::aead::AeadMutInPlace;
+use ccm::aead::generic_array::GenericArray;
+use ccm::consts::U4;
+use ccm::consts::U13;
 use itertools::Itertools;
 
 use crate::security::SecurityError;

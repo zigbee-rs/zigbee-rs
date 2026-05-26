@@ -7,7 +7,7 @@
 // 4.2 | 4.3
 pub mod illuminance;
 
-// 4.4 
+// 4.4
 pub mod temperature;
 
 // 4.5
@@ -24,4 +24,3 @@ pub mod occupancy;
 
 // 4.9
 pub mod electrical;
-

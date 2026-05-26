@@ -34,9 +34,11 @@ where
     Ok(records)
 }
 
-/// Normalizes a WriteAttributesResponse for serialization:
-/// - If any failures present: emit only failure records (spec: no SUCCESS mixed in).
-/// - Otherwise (all success or empty): emit a single SUCCESS record with no attribute id.
+/// Normalizes a `WriteAttributesResponse` for serialization:
+/// - If any failures present: emit only failure records (spec: no SUCCESS mixed
+///   in).
+/// - Otherwise (all success or empty): emit a single SUCCESS record with no
+///   attribute id.
 fn write_normalized_response<const N: usize>(
     bytes: &mut [u8],
     offset: &mut usize,
@@ -126,11 +128,11 @@ impl TryWrite<()> for ZclFramePayload<'_> {
             Self::GeneralCommand(command) => match command {
                 GeneralCommand::ReadAttributes(attrs) => write_records(bytes, offset, attrs)?,
                 GeneralCommand::ReadAttributesResponse(attrs) => {
-                    write_records(bytes, offset, attrs)?
+                    write_records(bytes, offset, attrs)?;
                 }
                 GeneralCommand::WriteAttributes(attrs) => write_records(bytes, offset, attrs)?,
                 GeneralCommand::WriteAttributesResponse(attrs) => {
-                    write_normalized_response(bytes, offset, attrs)?
+                    write_normalized_response(bytes, offset, attrs)?;
                 }
                 GeneralCommand::ReportAttributes(attrs) => write_records(bytes, offset, attrs)?,
                 GeneralCommand::DefaultResponse(response) => {
