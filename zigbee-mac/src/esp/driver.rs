@@ -32,8 +32,7 @@ impl<'a> Ieee802154Driver<'a> {
             .as_bytes()
             .try_into()
             .expect("6-byte MAC");
-        let ieee_address =
-            ieee802154::mac::ExtendedAddress(eui48_to_eui64(mac_bytes));
+        let ieee_address = ieee802154::mac::ExtendedAddress(eui48_to_eui64(mac_bytes));
 
         let mut driver = Self {
             driver: ieee802154,
