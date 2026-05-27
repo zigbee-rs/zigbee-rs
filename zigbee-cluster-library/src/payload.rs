@@ -9,11 +9,15 @@ use crate::frame::WriteAttributeStatus;
 use crate::header::ZclHeader;
 use crate::header::command_identifier::CommandIdentifier;
 use crate::header::frame_control::FrameType;
+use crate::types::ids::CommandId;
 
 #[derive(Debug, PartialEq)]
 pub enum ZclFramePayload<'a> {
     GeneralCommand(GeneralCommand<'a>),
-    ClusterSpecificCommand(&'a [u8]),
+    ClusterSpecificCommand {
+        command_id: CommandId,
+        data: &'a [u8],
+    },
     Reserved,
 }
 
@@ -110,7 +114,10 @@ impl<'a> TryRead<'a, &ZclHeader> for ZclFramePayload<'a> {
             }
             FrameType::ClusterCommand => {
                 *offset = bytes.len();
-                ZclFramePayload::ClusterSpecificCommand(bytes)
+                ZclFramePayload::ClusterSpecificCommand {
+                    command_id: CommandId(header.command_identifier.raw()),
+                    data: bytes,
+                }
             }
             FrameType::Reserved => {
                 return Err(bad_input!("reserved ZCL frame type"));
@@ -139,12 +146,12 @@ impl TryWrite<()> for ZclFramePayload<'_> {
                     bytes.write_with(offset, response, ())?;
                 }
             },
-            Self::ClusterSpecificCommand(payload) => {
-                let end = payload.len();
+            Self::ClusterSpecificCommand { data, .. } => {
+                let end = data.len();
                 bytes
                     .get_mut(..end)
                     .ok_or(byte::Error::Incomplete)?
-                    .copy_from_slice(payload);
+                    .copy_from_slice(data);
                 *offset = end;
             }
             Self::Reserved => {
