@@ -1147,7 +1147,9 @@ mod tests {
         assert_eq!(report.value, ZclDataType::SignedInt(SignedN::Int16(939)));
 
         let mut buf = [0u8; 8];
-        let written = report.try_write(&mut buf, ()).expect("AttributeReport writes");
+        let written = report
+            .try_write(&mut buf, ())
+            .expect("AttributeReport writes");
         assert_eq!(written, input.len());
         assert_eq!(&buf[..written], input);
     }
