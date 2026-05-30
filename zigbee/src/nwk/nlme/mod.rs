@@ -352,7 +352,7 @@ where
 
     /// 3.2.2.7
     // figure 3-39
-    #[allow(clippy::unused_async)]
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn permit_joining(
         &self,
         _request: NlmePermitJoiningRequest,
