@@ -142,6 +142,42 @@ impl<T: ZclBitmap64> ZclSchema for Bitmap64<T> {
     }
 }
 
+impl ZclBitmap8 for u8 {
+    fn from_bits(bits: u8) -> Self {
+        bits
+    }
+    fn into_bits(self) -> u8 {
+        self
+    }
+}
+
+impl ZclBitmap16 for u16 {
+    fn from_bits(bits: u16) -> Self {
+        bits
+    }
+    fn into_bits(self) -> u16 {
+        self
+    }
+}
+
+impl ZclBitmap32 for u32 {
+    fn from_bits(bits: u32) -> Self {
+        bits
+    }
+    fn into_bits(self) -> u32 {
+        self
+    }
+}
+
+impl ZclBitmap64 for u64 {
+    fn from_bits(bits: u64) -> Self {
+        bits
+    }
+    fn into_bits(self) -> u64 {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

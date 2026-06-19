@@ -127,6 +127,135 @@ impl<T: ZclEnum16> ZclHasNull for Enum16<T> {
     }
 }
 
+/// ZCL Illuminance Measurement cluster (0x0400) — `LightSensorType` attr
+/// 0x0004.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightSensorType {
+    Photodiode = 0x00,
+    Cmos = 0x01,
+}
+
+impl ZclEnum8 for LightSensorType {
+    fn from_raw(raw: u8) -> Result<Self, ZclError> {
+        match raw {
+            0x00 => Ok(Self::Photodiode),
+            0x01 => Ok(Self::Cmos),
+            _ => Err(ZclError::InvalidEnumValue),
+        }
+    }
+    fn into_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// ZCL Occupancy Sensing cluster (0x0406) — `OccupancySensorType` attr 0x0001.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OccupancySensorType {
+    Pir = 0x00,
+    Ultrasonic = 0x01,
+    PirAndUltrasonic = 0x02,
+    PhysicalContact = 0x03,
+}
+
+impl ZclEnum8 for OccupancySensorType {
+    fn from_raw(raw: u8) -> Result<Self, ZclError> {
+        match raw {
+            0x00 => Ok(Self::Pir),
+            0x01 => Ok(Self::Ultrasonic),
+            0x02 => Ok(Self::PirAndUltrasonic),
+            0x03 => Ok(Self::PhysicalContact),
+            _ => Err(ZclError::InvalidEnumValue),
+        }
+    }
+    fn into_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// ZCL Color Control cluster (0x0300) — `ColorMode` attr 0x0008.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorMode {
+    HueSaturation = 0x00,
+    XY = 0x01,
+    ColorTemperature = 0x02,
+}
+
+impl ZclEnum8 for ColorMode {
+    fn from_raw(raw: u8) -> Result<Self, ZclError> {
+        match raw {
+            0x00 => Ok(Self::HueSaturation),
+            0x01 => Ok(Self::XY),
+            0x02 => Ok(Self::ColorTemperature),
+            _ => Err(ZclError::InvalidEnumValue),
+        }
+    }
+    fn into_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// ZCL Thermostat cluster (0x0201) — `SystemMode` attr 0x001C.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThermostatSystemMode {
+    Off = 0x00,
+    Auto = 0x01,
+    Cool = 0x03,
+    Heat = 0x04,
+    EmergencyHeating = 0x05,
+    Precooling = 0x06,
+    FanOnly = 0x07,
+    Dry = 0x08,
+    Sleep = 0x09,
+}
+
+impl ZclEnum8 for ThermostatSystemMode {
+    fn from_raw(raw: u8) -> Result<Self, ZclError> {
+        match raw {
+            0x00 => Ok(Self::Off),
+            0x01 => Ok(Self::Auto),
+            0x03 => Ok(Self::Cool),
+            0x04 => Ok(Self::Heat),
+            0x05 => Ok(Self::EmergencyHeating),
+            0x06 => Ok(Self::Precooling),
+            0x07 => Ok(Self::FanOnly),
+            0x08 => Ok(Self::Dry),
+            0x09 => Ok(Self::Sleep),
+            _ => Err(ZclError::InvalidEnumValue),
+        }
+    }
+    fn into_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// ZCL Thermostat cluster (0x0201) — `ControlSequenceOfOperation` attr 0x001B.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThermostatControlSequence {
+    CoolingOnly = 0x00,
+    CoolingWithReheat = 0x01,
+    HeatingOnly = 0x02,
+    HeatingWithReheat = 0x03,
+    CoolingAndHeating = 0x04,
+    CoolingAndHeatingWithReheat = 0x05,
+}
+
+impl ZclEnum8 for ThermostatControlSequence {
+    fn from_raw(raw: u8) -> Result<Self, ZclError> {
+        match raw {
+            0x00 => Ok(Self::CoolingOnly),
+            0x01 => Ok(Self::CoolingWithReheat),
+            0x02 => Ok(Self::HeatingOnly),
+            0x03 => Ok(Self::HeatingWithReheat),
+            0x04 => Ok(Self::CoolingAndHeating),
+            0x05 => Ok(Self::CoolingAndHeatingWithReheat),
+            _ => Err(ZclError::InvalidEnumValue),
+        }
+    }
+    fn into_raw(self) -> u8 {
+        self as u8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +309,18 @@ mod tests {
         assert_eq!(
             Enum8::<TestMode>::decode(&[0x10]).unwrap_err(),
             ZclError::InvalidEnumValue
+        );
+    }
+
+    #[test]
+    fn occupancy_sensor_type_matches_zcl_values() {
+        assert_eq!(
+            OccupancySensorType::from_raw(0x02).unwrap(),
+            OccupancySensorType::PirAndUltrasonic
+        );
+        assert_eq!(
+            OccupancySensorType::from_raw(0x03).unwrap(),
+            OccupancySensorType::PhysicalContact
         );
     }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
