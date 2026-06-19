@@ -79,6 +79,13 @@ impl AccessFlags {
     }
 }
 
+impl core::ops::BitOr for AccessFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        self.union(rhs)
+    }
+}
+
 pub struct ClientToServer;
 pub struct ServerToClient;
 
@@ -270,9 +277,8 @@ impl ClusterKey {
 
 /// Attribute descriptor for gateways, bridges, and logging tools that process
 /// attributes without compile-time schema knowledge.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct AttributeDescriptor {
+pub struct AttributeDescriptor {
     pub cluster: ClusterId,
     pub manufacturer: Option<ManufacturerCode>,
     pub attribute: AttributeId,

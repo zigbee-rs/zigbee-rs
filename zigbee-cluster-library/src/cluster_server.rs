@@ -18,15 +18,12 @@ use crate::types::ids::CommandId;
 use crate::types::ids::ManufacturerCode;
 use crate::types::ids::TypeId;
 
-// ---------------------------------------------------------------------------
 // Dispatch context
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DispatchContext {
     pub delivery: DeliveryMode,
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryMode {
     Unicast,
@@ -39,9 +36,7 @@ impl DispatchContext {
     }
 }
 
-// ---------------------------------------------------------------------------
 // CommandResult
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
 pub enum CommandResult {
@@ -54,9 +49,7 @@ pub enum CommandResult {
     Suppress,
 }
 
-// ---------------------------------------------------------------------------
 // ClusterServer trait
-// ---------------------------------------------------------------------------
 
 pub trait ClusterServer {
     const CLUSTER_ID: ClusterId;
@@ -90,7 +83,7 @@ pub trait ClusterServer {
         Ok(CommandResult::DefaultResponse(Status::UnsupCommand))
     }
 
-    /// Visit attribute metadata for DiscoverAttributes in ascending id order.
+    /// Visit attribute metadata for `DiscoverAttributes` in ascending id order.
     fn visit_attributes(
         &self,
         visitor: &mut dyn FnMut(AttrInfo) -> Result<(), ZclError>,
@@ -112,9 +105,7 @@ pub trait ClusterServer {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Device trait
-// ---------------------------------------------------------------------------
 
 pub enum DispatchError {
     UnsupportedCluster,
@@ -140,9 +131,7 @@ pub trait Device {
     fn server_cluster_ids(&self) -> &'static [ClusterKey];
 }
 
-// ---------------------------------------------------------------------------
 // Public helpers
-// ---------------------------------------------------------------------------
 
 /// Build a non-manufacturer-specific `DefaultResponse` frame into `buf`.
 /// Returns bytes written.
@@ -215,9 +204,7 @@ pub fn should_send_default_response(
     true
 }
 
-// ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
 
 fn response_header_len(manufacturer_code: Option<ManufacturerCode>) -> usize {
     3 + if manufacturer_code.is_some() { 2 } else { 0 }
@@ -312,9 +299,7 @@ fn put_write_parse_failure(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Main dispatcher
-// ---------------------------------------------------------------------------
 
 pub fn zcl_cluster_dispatch<CS: ClusterServer>(
     server: &mut CS,
@@ -412,9 +397,7 @@ pub fn zcl_cluster_dispatch<CS: ClusterServer>(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Sub-dispatchers
-// ---------------------------------------------------------------------------
 
 fn dispatch_write_attributes<CS: ClusterServer>(
     server: &mut CS,
@@ -568,8 +551,8 @@ fn dispatch_unknown_global(
     ctx: DispatchContext,
     buf: &mut [u8],
 ) -> Result<usize, ZclError> {
-    if should_send_default_response(frame, ctx, Status::UnsupGeneralCommand) {
-        build_default_response_for_frame(frame, Status::UnsupGeneralCommand, buf)
+    if should_send_default_response(frame, ctx, Status::UnsupCommand) {
+        build_default_response_for_frame(frame, Status::UnsupCommand, buf)
     } else {
         Ok(0)
     }
@@ -765,9 +748,7 @@ mod tests {
         }
     }
 
-    // -------------------------------------------------------------------
     // ReadAttributes
-    // -------------------------------------------------------------------
 
     #[test]
     fn read_attributes_success_encodes_value() {
@@ -810,9 +791,7 @@ mod tests {
         assert_eq!(buf[5], Status::UnsupportedAttribute as u8);
     }
 
-    // -------------------------------------------------------------------
     // WriteAttributes
-    // -------------------------------------------------------------------
 
     #[test]
     fn write_attributes_success_returns_single_success_record() {
@@ -887,9 +866,7 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    // -------------------------------------------------------------------
     // WriteAttributesUndivided
-    // -------------------------------------------------------------------
 
     #[test]
     fn write_attributes_undivided_all_pass_writes_all() {
@@ -942,9 +919,7 @@ mod tests {
         assert_eq!(u16::from_le_bytes([rbuf[0], rbuf[1]]), 0u16);
     }
 
-    // -------------------------------------------------------------------
     // DefaultResponse (incoming)
-    // -------------------------------------------------------------------
 
     #[test]
     fn incoming_default_response_returns_ok_zero() {
@@ -998,9 +973,7 @@ mod tests {
         let _ = n;
     }
 
-    // -------------------------------------------------------------------
     // ClusterSpecific direction bit
-    // -------------------------------------------------------------------
 
     #[test]
     fn cluster_specific_server_to_client_returns_ok_zero() {
@@ -1034,9 +1007,7 @@ mod tests {
         assert_eq!(&buf[3..5], &[0xAA, 0xBB]);
     }
 
-    // -------------------------------------------------------------------
     // Default Response suppression rules
-    // -------------------------------------------------------------------
 
     #[test]
     fn unknown_global_broadcast_returns_ok_zero() {
@@ -1051,7 +1022,7 @@ mod tests {
 
     #[test]
     fn unknown_global_unicast_returns_default_response() {
-        // ConfigureReporting on unicast → DefaultResponse(UnsupGeneralCommand)
+        // ConfigureReporting on unicast → DefaultResponse(UnsupCommand)
         let req: &[u8] = &[0x00, 0x0d, 0x06];
         let (frame, _) = IncomingZclFrame::decode(req).unwrap();
         let mut buf = [0u8; 32];
@@ -1060,7 +1031,7 @@ mod tests {
         assert_eq!(n, 5);
         assert_eq!(buf[2], 0x0b); // DefaultResponse
         assert_eq!(buf[3], 0x06); // echoes ConfigureReporting command id
-        assert_eq!(buf[4], Status::UnsupGeneralCommand as u8);
+        assert_eq!(buf[4], Status::UnsupCommand as u8);
     }
 
     #[test]
@@ -1082,7 +1053,7 @@ mod tests {
         assert_eq!(buf[3], 0x55);
         assert_eq!(buf[4], 0x0b);
         assert_eq!(buf[5], 0x06);
-        assert_eq!(buf[6], Status::UnsupGeneralCommand as u8);
+        assert_eq!(buf[6], Status::UnsupCommand as u8);
     }
 
     #[test]
@@ -1098,9 +1069,7 @@ mod tests {
         assert_eq!(buf[1], 0xAB);
     }
 
-    // -------------------------------------------------------------------
     // build_default_response / should_send_default_response
-    // -------------------------------------------------------------------
 
     #[test]
     fn build_default_response_writes_correct_bytes() {
