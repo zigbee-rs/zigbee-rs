@@ -5,7 +5,9 @@ docs/spec
 docs/captures
 .idea
 Cargo.lock
-
+__pycache__/
+.venv/
+.vscode/
 
 # Debug and profiling cruft
 *.profraw
