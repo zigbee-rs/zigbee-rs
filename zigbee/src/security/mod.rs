@@ -43,7 +43,9 @@ use crate::aps::types::TxOptions;
 use crate::nwk::frame::Frame as NwkFrame;
 use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib;
+use crate::nwk::nib::IncomingFrameCounterDescriptor;
 use crate::nwk::nib::Nib;
+use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nib::NibStorage;
 use crate::security::frame::KeyIdentifier;
 use crate::security::primitives::Aes128Mmo;
@@ -253,6 +255,20 @@ impl<'a> SecurityContext<'a> {
         cipher
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
             .map_err(SecurityError::CcmError)?;
+
+        // 4) anti-replay tracking: now that the frame is authenticated, record
+        // its frame counter as the most recent accepted value for this sender,
+        // so a later replay of this (or an older) counter is rejected by the
+        // check above. Persisted through the NIB's interior mutability.
+        let mut sec_material_set = self.nib.security_material_set();
+        if let Some(material) = sec_material_set.iter_mut().find(|k| {
+            aux_hdr
+                .key_sequence_number
+                .is_some_and(|ksn| ksn == k.key_seq_number)
+        }) {
+            record_nwk_incoming_frame_counter(material, source_address, aux_hdr.frame_counter)?;
+            self.nib.set_security_material_set(sec_material_set);
+        }
 
         Ok(NwkFrame::from_payload(nwk_hdr, enc_data)?)
     }
@@ -508,6 +524,32 @@ impl<'a> SecurityContext<'a> {
     }
 }
 
+/// Records `frame_counter` as the most recently accepted incoming counter for
+/// `sender_address`, inserting a new entry when this is the first frame seen
+/// from that sender. Used by the NWK decrypt path for anti-replay tracking.
+fn record_nwk_incoming_frame_counter(
+    material: &mut NetworkSecurityMaterialDescriptor,
+    sender_address: IeeeAddress,
+    frame_counter: u32,
+) -> Result<(), SecurityError> {
+    if let Some(entry) = material
+        .incoming_frame_counter_set
+        .iter_mut()
+        .find(|i| i.sender_address == sender_address)
+    {
+        entry.incoming_frame_counter = frame_counter;
+        Ok(())
+    } else {
+        material
+            .incoming_frame_counter_set
+            .push(IncomingFrameCounterDescriptor {
+                sender_address,
+                incoming_frame_counter: frame_counter,
+            })
+            .map_err(|_| SecurityError::Unspecified)
+    }
+}
+
 // Figure 4-20
 #[allow(clippy::needless_range_loop)]
 fn create_nonce(aux_header: &AuxFrameHeader) -> Result<[u8; 13], SecurityError> {
@@ -758,6 +800,37 @@ mod tests {
             .unwrap();
 
         assert!(matches!(frame, NwkFrame::NwkCommand(_)));
+    }
+
+    // TDD (issue #61, NWK write-back) — currently RED. The decrypt path never
+    // records the accepted frame counter, so the sender's
+    // `incoming_frame_counter_set` stays empty and replay protection can never
+    // fire. Goes green once `decrypt_nwk_frame_in_place` inserts/updates the
+    // sender entry with `aux_hdr.frame_counter` after a successful decrypt.
+    #[test]
+    fn decrypt_nwk_frame_records_incoming_frame_counter() {
+        let nib = setup_nib();
+        let aib = setup_aib();
+        let security_context = SecurityContext::new(&nib, &aib);
+
+        // Fixture sender is 0xa4c1_389c_3830_01e5 with frame counter 1.
+        let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
+        security_context
+            .decrypt_nwk_frame_in_place(&mut frame_buffer)
+            .unwrap();
+
+        let material = nib.security_material_set();
+        let recorded = material[0]
+            .incoming_frame_counter_set
+            .iter()
+            .find(|i| i.sender_address == IeeeAddress(0xa4c1_389c_3830_01e5))
+            .map(|i| i.incoming_frame_counter);
+
+        assert_eq!(
+            recorded,
+            Some(1),
+            "decrypt must record the accepted frame counter for the sender"
+        );
     }
 
     #[test]
