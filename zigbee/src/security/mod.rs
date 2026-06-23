@@ -467,6 +467,12 @@ impl<'a> SecurityContext<'a> {
         // TODO: the spec says "using the source address in the APS frame as the index"
         // but the APS frame does not have a source field, only the security header
         let mut key_set = self.aib.device_key_pair_set();
+        // Whether a frame has already been accepted from this device. Only a
+        // known device carries a meaningful `incoming_frame_counter`; the first
+        // frame seen establishes it. This is the "seen-yet" sentinel that keeps
+        // a legitimate first frame (whose counter may be 0, the field's initial
+        // value) from being rejected by the anti-replay check below.
+        let known_device = key_set.iter().any(|k| k.device_address == source_address);
         let key_config = key_set.find_or_insert_with_mut(
             |k| k.device_address == source_address,
             // TODO: what do we set here if the source device is new and unknown?
@@ -494,12 +500,12 @@ impl<'a> SecurityContext<'a> {
             KeyIdentifier::Network => return Err(SecurityError::InvalidData),
         };
 
-        // step 4 - anti-replay: reject unless the frame counter is strictly
-        // greater than the last accepted one. `<=` rejects a replay of the
+        // step 4 - anti-replay. Applies to every link-key type, including the
+        // global trust-center key, not just UniqueLinkKey - global-key devices
+        // need replay protection too. Enforced only once a frame has previously
+        // been accepted from this device. `<=` rejects a replay of the
         // most-recently-accepted counter as well, not just older ones.
-        if matches!(key_config.link_key_type, LinkKeyType::UniqueLinkKey)
-            && aux_hdr.frame_counter <= key_config.incoming_frame_counter
-        {
+        if known_device && aux_hdr.frame_counter <= key_config.incoming_frame_counter {
             return Err(SecurityError::Unspecified);
         }
 
@@ -524,6 +530,13 @@ impl<'a> SecurityContext<'a> {
         cipher
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
             .map_err(SecurityError::CcmError)?;
+
+        // anti-replay tracking: now that the frame is authenticated, record its
+        // frame counter as the most recent accepted value for this device and
+        // persist it through the AIB's interior mutability, so a later replay of
+        // this (or an older) counter is rejected by the check above.
+        key_config.incoming_frame_counter = aux_hdr.frame_counter;
+        self.aib.set_device_key_pair_set(key_set);
 
         Ok(ApsFrame::from_payload(aps_hdr, enc_data)?)
     }
@@ -692,6 +705,44 @@ mod tests {
 
         assert_eq!(offset, frame_buffer.len());
         assert_eq!(frame_buffer, got_buffer);
+    }
+
+    // TDD (issue #61, APS write-back + GlobalLinkKey gate) — currently RED.
+    // An unknown sender is defaulted to a GlobalLinkKey device, and the decrypt
+    // path never persists the device key set, so the accepted counter is
+    // discarded with the local copy. Goes green once decrypt writes
+    // `incoming_frame_counter` back via `set_device_key_pair_set` (and the
+    // anti-replay gate covers GlobalLinkKey, not just UniqueLinkKey).
+    #[test]
+    fn decrypt_aps_frame_records_incoming_frame_counter() {
+        let nib = setup_nib();
+        let aib = setup_aib();
+        let security_context = SecurityContext::new(&nib, &aib);
+
+        // Same payload as `decrypt_aps_frame_data`: sender 0xa4c1_389c_3830_01e5,
+        // frame counter 4, KeyIdentifier::Data over the trust-center link key.
+        let mut buf = [
+            0x21, 0x66, // aps header
+            0x20, 0x4, 0x0, 0x0, 0x0, 0xe5, 0x1, 0x30, 0x38, 0x9c, 0x38, 0xc1,
+            0xa4, // aux header
+            0x1a, 0x31, // enc data
+            0xa4, 0xd7, 0xf4, 0xd7, // mic
+        ];
+        security_context
+            .decrypt_aps_frame_in_place(&mut buf)
+            .unwrap();
+
+        let recorded = aib
+            .device_key_pair_set()
+            .iter()
+            .find(|k| k.device_address == IeeeAddress(0xa4c1_389c_3830_01e5))
+            .map(|k| k.incoming_frame_counter);
+
+        assert_eq!(
+            recorded,
+            Some(4),
+            "decrypt must persist the accepted frame counter for the device"
+        );
     }
 
     #[test]
@@ -1104,6 +1155,16 @@ mod tests {
                 .outgoing_frame_counter,
             1
         );
+
+        // The first decrypt recorded the device's frame counter, so replaying
+        // the same captured frame would now be rejected. This test only
+        // exercises the outgoing counter, so reset the incoming counter to
+        // reuse the fixture for a second encrypt.
+        let mut key_set = aib.device_key_pair_set();
+        if let Some(k) = key_set.iter_mut().find(|k| k.device_address == dest) {
+            k.incoming_frame_counter = 0;
+        }
+        aib.set_device_key_pair_set(key_set);
 
         // second encryption — counter should be 2
         let mut dec_buf = frame_buffer;
