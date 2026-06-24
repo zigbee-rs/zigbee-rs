@@ -33,7 +33,9 @@
     clippy::redundant_pub_crate,
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
-    clippy::too_long_first_doc_paragraph
+    clippy::too_long_first_doc_paragraph,
+    clippy::unnested_or_patterns,
+    clippy::too_many_lines
 )]
 
 macro_rules! bad_input {
@@ -42,6 +44,8 @@ macro_rules! bad_input {
     };
 }
 
+pub(crate) mod attribute_store;
+pub mod cluster_server;
 pub mod common;
 pub mod types;
 

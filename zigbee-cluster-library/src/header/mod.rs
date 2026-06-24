@@ -31,6 +31,7 @@ impl_byte! {
 #[cfg(test)]
 mod tests {
     use byte::TryRead;
+    use byte::TryWrite;
 
     use super::*;
     use crate::header::frame_control::FrameType;
@@ -73,5 +74,18 @@ mod tests {
             header.command_identifier,
             CommandIdentifier::ReportAttributes
         );
+    }
+
+    #[test]
+    fn write_header_missing_required_manufacturer_code_returns_error() {
+        let header = ZclHeader {
+            frame_control: FrameControl(0x1c),
+            manufacturer_code: None,
+            sequence_number: 2,
+            command_identifier: CommandIdentifier::ReportAttributes,
+        };
+        let mut buf = [0u8; 5];
+
+        assert!(header.try_write(&mut buf, ()).is_err());
     }
 }

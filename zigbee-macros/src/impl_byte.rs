@@ -184,7 +184,9 @@ macro_rules! impl_byte {
                         let v = $field_name;
                         $(
                             let _ = $parse_if_hdr;
-                            let v = v.unwrap();
+                            let v = v.ok_or(::byte::Error::BadInput {
+                                err: "missing conditional field",
+                            })?;
                         )?
                         bytes.write_with(offset, v, ctx)?;
                     }
