@@ -4,6 +4,7 @@
 docs/spec
 docs/captures
 .idea
+.zed
 Cargo.lock
 
 
