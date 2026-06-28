@@ -18,6 +18,16 @@ fn eui48_to_eui64(mac: [u8; 6]) -> u64 {
     u64::from_be_bytes([mac[0], mac[1], mac[2], 0xFF, 0xFE, mac[3], mac[4], mac[5]])
 }
 
+/// Await the next RX-available signal.
+///
+/// Operates only on the module-global signal, so it can be awaited **without
+/// holding the driver lock** — letting a receive loop idle-wait while a
+/// concurrent transmit still acquires the lock. Does not reset beforehand, so a
+/// signal raised between a queue drain and this call is not lost.
+pub(crate) async fn wait_rx_signal() {
+    RX_SIGNAL.wait().await;
+}
+
 pub struct Ieee802154Driver<'a> {
     driver: Ieee802154<'a>,
     config: Config,
@@ -79,11 +89,32 @@ impl<'a> Ieee802154Driver<'a> {
 
     /// Transmit a frame. The radio automatically returns to RX mode
     /// after transmission completes (`rx_when_idle = true`).
+    ///
+    /// For an acknowledgment-requested frame the transmit-done signal fires
+    /// only after the ACK is received or the hardware ACK-wait times out, so
+    /// [`Self::last_tx_acked`] is valid once this returns.
     pub async fn transmit(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
         TX_SIGNAL.reset();
         self.driver.transmit_raw(frame, true)?;
         TX_SIGNAL.wait().await;
         Ok(())
+    }
+
+    /// Whether the most recent transmission was acknowledged. Only meaningful
+    /// for acknowledgment-requested frames.
+    pub fn last_tx_acked(&self) -> bool {
+        self.driver.get_ack_frame().is_some()
+    }
+
+    /// The frame-pending bit of the acknowledgment to the most recent
+    /// transmission, if one was received. `Some(true)` means the recipient has
+    /// data buffered for this device (IEEE 802.15.4 §7.2.1.1.3).
+    pub fn last_ack_frame_pending(&self) -> Option<bool> {
+        // data[0] is the PHR length; data[1] is the low byte of the MAC frame
+        // control field, whose bit 4 is the frame-pending flag
+        self.driver
+            .get_ack_frame()
+            .and_then(|ack| ack.data.get(1).map(|fcf| fcf & 0x10 != 0))
     }
 
     /// Poll the hardware RX queue for one frame (non-blocking).

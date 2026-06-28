@@ -14,6 +14,8 @@
 //! * routing
 
 use core::slice;
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::Ordering;
 
 use byte::BytesExt;
 use byte::TryRead;
@@ -91,8 +93,7 @@ impl From<byte::Error> for NetworkError {
 /// discovery, formation, joining, rejoining, data transmission, etc.
 pub struct Nlme<M> {
     mac: M,
-    nwk_seq: u8,
-    buf: [u8; 256],
+    nwk_seq: AtomicU8,
 }
 
 impl<M> Nlme<M>
@@ -102,25 +103,24 @@ where
     pub fn new(mac: M) -> Self {
         Self {
             mac,
-            nwk_seq: 0,
-            buf: [0u8; 256],
+            nwk_seq: AtomicU8::new(0),
         }
     }
 
-    fn next_nwk_seq(&mut self) -> u8 {
-        self.nwk_seq = self.nwk_seq.wrapping_add(1);
-        self.nwk_seq
+    fn next_nwk_seq(&self) -> u8 {
+        self.nwk_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
     }
 
-    /// Build a NWK data frame and write it into `self.buf`.
+    /// Build a NWK data frame into `buf`, returning the total frame length.
     ///
     /// When `secure` is true the frame is encrypted with the active
-    /// network key. Returns the total frame length.
+    /// network key.
     fn build_nwk_data_frame(
-        &mut self,
+        &self,
         destination: ShortAddress,
         secure: bool,
         payload: &[u8],
+        buf: &mut [u8],
     ) -> Result<usize, NetworkError> {
         let nib = self.nib();
         let frame_control = NwkFrameControl(0)
@@ -145,14 +145,14 @@ where
         if secure {
             let nwk_frame = NwkFrame::Data(NwkDataFrame { header, payload });
             let cx = SecurityContext::get();
-            let len = cx.encrypt_nwk_frame_in_place(nwk_frame, &mut self.buf)?;
+            let len = cx.encrypt_nwk_frame_in_place(nwk_frame, buf)?;
             Ok(len)
         } else {
             let offset = &mut 0;
-            self.buf.write_with(offset, header, ())?;
+            buf.write_with(offset, header, ())?;
             let hdr_len = *offset;
-            let payload_len = payload.len().min(self.buf.len() - hdr_len);
-            self.buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
+            let payload_len = payload.len().min(buf.len() - hdr_len);
+            buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
             Ok(hdr_len + payload_len)
         }
     }
@@ -169,6 +169,7 @@ where
         join_as_router: bool,
     ) -> heapless::Vec<usize, 16> {
         let table = self.nib().neighbor_table();
+        log::debug!("[NWK-JOIN] neighbor table: {table:#?}");
         let stack_profile = self.nib().stack_profile();
 
         // Determine the most recent update_id among all matching neighbors.
@@ -260,7 +261,7 @@ where
     }
 
     async fn poll_nwk_data_request<'a>(
-        &mut self,
+        &self,
         buf: &'a mut [u8],
     ) -> Result<NwkDataFrame<'a>, NetworkError> {
         let coord_addr = self.parent_address()?;
@@ -276,9 +277,77 @@ where
         Ok(data_frame)
     }
 
+    /// Passively receive and process one inbound NWK frame (no MLME-POLL).
+    ///
+    /// Awaits the next inbound MAC data frame via [`Mlme::receive`], strips and
+    /// decrypts the NWK header. A NWK data frame is returned to the caller; a NWK
+    /// command frame is processed internally and yields `Ok(None)` (no
+    /// application data). Intended for the steady-state receive loop after
+    /// joining.
+    pub async fn receive_nwk_frame<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
+        let (len, _lqi) = self.mac.receive(buf).await?;
+
+        let cx = SecurityContext::get();
+        let nwk_frame = cx.decrypt_nwk_frame_in_place(&mut buf[..len])?;
+
+        match nwk_frame {
+            NwkFrame::Data(data_frame) => Ok(Some(data_frame)),
+            // NWK command frames (link status, route requests, rejoin, ...) ride
+            // the same receive path; let the NWK layer process them, then report
+            // "no data" so the APS/ZDO caller skips this frame.
+            NwkFrame::NwkCommand(command_frame) => {
+                self.handle_nwk_command(&command_frame.command);
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Process an inbound NWK command frame (§3.4).
+    ///
+    /// Scaffolding extension point: every NWK command variant is matched so a
+    /// handler can be filled in. Most are not yet acted upon — they are logged
+    /// and ignored. Returning unit keeps the caller's receive loop simple; add a
+    /// result type here if a handler needs to surface failures.
+    fn handle_nwk_command(&self, command: &crate::nwk::frame::command::Command<'_>) {
+        use crate::nwk::frame::command::Command;
+
+        match command {
+            // routing (§3.4.1–3.4.2): a sleepy end device routes via its parent,
+            // so route discovery is currently a no-op.
+            Command::RouteRequest(_) => log::trace!("[NWK] route request (ignored)"),
+            Command::RouteReply(_) => log::trace!("[NWK] route reply (ignored)"),
+            Command::RouteRecord(_) => log::trace!("[NWK] route record (ignored)"),
+            // network maintenance (§3.4.3, §3.4.9, §3.4.10).
+            Command::NetworkStatus(_) => log::trace!("[NWK] network status (ignored)"),
+            Command::NetworkReport(_) => log::trace!("[NWK] network report (ignored)"),
+            Command::NetworkUpdate(_) => log::trace!("[NWK] network update (ignored)"),
+            // TODO: a Leave addressed to us should clear NIB state and re-commission.
+            Command::Leave(_) => log::trace!("[NWK] leave (ignored)"),
+            // rejoin (§3.4.6–3.4.7): handled inline by the join/rejoin procedures.
+            Command::RejoinRequest(_) => log::trace!("[NWK] rejoin request (ignored)"),
+            Command::RejoinResponse(_) => log::trace!("[NWK] rejoin response (ignored)"),
+            // link management (§3.4.8, §3.4.13).
+            Command::LinkStatus(_) => log::trace!("[NWK] link status (ignored)"),
+            Command::LinkPowerDelta(_) => log::trace!("[NWK] link power delta (ignored)"),
+            // end-device timeout (§3.4.11–3.4.12): TODO negotiate/refresh the
+            // parent's end-device timeout for this child.
+            Command::EndDeviceTimeoutRequest(_) => {
+                log::trace!("[NWK] end-device timeout request (ignored)");
+            }
+            Command::EndDeviceTimeoutResponse(_) => {
+                log::trace!("[NWK] end-device timeout response (ignored)");
+            }
+            Command::Reserved(id) => log::trace!("[NWK] reserved command {id:#04x} (ignored)"),
+        }
+    }
+
     /// 3.2.2.3
     pub async fn network_discovery(
-        &mut self,
+        &self,
         channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<NlmeNetworkDiscoveryConfirm, NetworkError> {
@@ -313,9 +382,12 @@ where
                     logical_channel: pd.channel,
                     depth: pd.zigbee_beacon.stack_profile.device_depth(),
                     permit_joining: pd.superframe_spec.association_permit,
-                    // end devices cannot be parents (Table 3-64)
+                    // a device is a potential parent if it can accept a child of
+                    // either type; select_parent_candidates applies the
+                    // join-type-specific capacity check (Table 3-64)
                     potential_parent: u8::from(
                         pd.zigbee_beacon.stack_profile.router_capacity()
+                            || pd.zigbee_beacon.stack_profile.end_device_capacity()
                             || short_address.0 == NWK_COORDINATOR_ADDRESS,
                     ),
                     router_capacity: pd.zigbee_beacon.stack_profile.router_capacity(),
@@ -375,7 +447,7 @@ where
     }
 
     /// 3.2.2.13
-    pub async fn join(&mut self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
+    pub async fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
         let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
             status,
             network_address: ShortAddress(0xffff),
@@ -410,8 +482,11 @@ where
         let candidates = self.select_parent_candidates(request.extended_pan_id, join_as_router);
 
         if candidates.is_empty() {
+            log::warn!("[NWK-JOIN] no suitable neighbors");
             return fail(NlmeJoinStatus::NotPermitted);
         }
+
+        log::debug!("[NWK-JOIN] neighbor candidates: {candidates:?}");
 
         // Build MAC CapabilityInformation from NWK CapabilityInformation
         // bitmap (Table 3-62).
@@ -522,7 +597,7 @@ where
     /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin`
     /// (§3.2.2.13).
     #[allow(clippy::unused_async)]
-    pub async fn rejoin(&mut self) -> NlmeJoinConfirm {
+    pub async fn rejoin(&self) -> NlmeJoinConfirm {
         // TODO: implement NWK rejoin procedure (§3.6.1.4.2)
         todo!()
     }
@@ -530,7 +605,7 @@ where
     /// Poll the coordinator for pending data, strip the NWK header, and
     /// return the APS payload (§3.6.2).
     pub async fn poll_nwk_data<'a>(
-        &mut self,
+        &self,
         buf: &'a mut [u8],
         retries: u8,
     ) -> Result<NwkDataFrame<'a>, NetworkError> {
@@ -543,7 +618,22 @@ where
                 Ok(data_frame) => {
                     return Ok(data_frame);
                 }
-                Err(NetworkError::MacError(MacError::NoData)) => (),
+                // Skip and keep polling on:
+                // - NoData: nothing buffered yet
+                // - SecurityError: before authorization the joiner has no network
+                //   key, so ambient network-key-secured traffic (e.g. link-status
+                //   or route-request broadcasts caught in the listen window) fails
+                //   NWK security
+                // - ParseError/InvalidFrame: a foreign/malformed frame picked up
+                //   in the listen window
+                // The real (NWK-unsecured, §4.6.3.7.2) transport-key stays buffered
+                // at the parent until a subsequent poll retrieves it.
+                Err(
+                    NetworkError::MacError(MacError::NoData)
+                    | NetworkError::SecurityError(_)
+                    | NetworkError::ParseError
+                    | NetworkError::InvalidFrame,
+                ) => (),
                 Err(e) => return Err(e),
             }
         }
@@ -559,17 +649,16 @@ where
     /// When `secure` is true the NWK frame is encrypted with the
     /// active network key.
     pub async fn broadcast_data(
-        &mut self,
+        &self,
         destination: ShortAddress,
         secure: bool,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
         let panid = self.nib().panid();
-        let total_len = self.build_nwk_data_frame(destination, secure, payload)?;
+        let mut buf = [0u8; 256];
+        let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
         let mac_dest = Address::Short(PanId(panid), MacShortAddress(destination.0));
-        self.mac
-            .transmit_data(mac_dest, &self.buf[..total_len])
-            .await?;
+        self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())
     }
 
@@ -581,17 +670,16 @@ where
     /// When `secure` is true the NWK frame is encrypted with the
     /// active network key.
     pub async fn send_data(
-        &mut self,
+        &self,
         destination: ShortAddress,
         secure: bool,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        let total_len = self.build_nwk_data_frame(destination, secure, payload)?;
+        let mut buf = [0u8; 256];
+        let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
         // end devices route via parent
         let mac_dest = self.parent_address()?;
-        self.mac
-            .transmit_data(mac_dest, &self.buf[..total_len])
-            .await?;
+        self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())
     }
 }
@@ -646,24 +734,28 @@ mod tests {
         Mlme {}
         impl Mlme for Mlme {
             async fn scan_network(
-                &mut self,
+                &self,
                 ty: ScanType,
                 channels: core::ops::Range<u8>,
                 duration: u8,
             ) -> Result<ScanResult, MacError>;
             async fn associate(
-                &mut self,
+                &self,
                 channel: u8,
                 dest: Address,
                 capabilities: zigbee_mac::CapabilityInformation,
             ) -> Result<AssociationResponse, MacError>;
             async fn poll_data(
-                &mut self,
+                &self,
                 coord_address: Address,
                 buf: &mut [u8],
             ) -> Result<(usize, u8), MacError>;
+            async fn receive(
+                &self,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
             async fn transmit_data(
-                &mut self,
+                &self,
                 dest: Address,
                 payload: &[u8],
             ) -> Result<(), MacError>;
@@ -800,6 +892,24 @@ mod tests {
     }
 
     #[test]
+    fn select_parent_end_device_accepts_router_without_router_capacity() {
+        // a router parent that accepts end devices but not routers
+        // (router_capacity == false, end_device_capacity == true) must remain a
+        // valid parent for an end-device join
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        let mut n = make_neighbor(0xAAAA, 0x1234, 0x1234, 200, 0);
+        n.router_capacity = false;
+        n.end_device_capacity = true;
+        table.push(n).unwrap();
+        nlme.nib().set_neighbor_table(table);
+
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
+        assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
     fn select_parent_sorts_by_depth_for_stack_profile_1() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         nlme.nib().set_stack_profile(1);
@@ -885,7 +995,7 @@ mod tests {
             })
         });
 
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut table = StorageVec::new();
         table
@@ -920,7 +1030,7 @@ mod tests {
             })
         });
 
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut n = make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0);
         n.update_id = 7;
@@ -936,7 +1046,7 @@ mod tests {
     #[test]
     fn join_fails_when_no_candidates() {
         let mac = MockMlme::new();
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
         nlme.nib().set_neighbor_table(StorageVec::new());
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
@@ -945,7 +1055,7 @@ mod tests {
     #[test]
     fn join_fails_when_already_joined() {
         let mac = MockMlme::new();
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
         nlme.nib().set_network_address(0x0001);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
@@ -977,7 +1087,7 @@ mod tests {
                 })
             });
 
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut table = StorageVec::new();
         table
@@ -1008,7 +1118,7 @@ mod tests {
             })
         });
 
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut table = StorageVec::new();
         table
@@ -1027,7 +1137,7 @@ mod tests {
         mac.expect_associate()
             .returning(|_, _, _| Err(MacError::NoAck));
 
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut table = StorageVec::new();
         table
@@ -1042,7 +1152,7 @@ mod tests {
     #[test]
     fn join_invalid_rejoin_network() {
         let mac = MockMlme::new();
-        let (_guard, mut nlme) = make_nlme(mac);
+        let (_guard, nlme) = make_nlme(mac);
 
         let mut req = default_join_request(0xDEAD);
         req.rejoin_network = RejoinNetwork::Orphan;

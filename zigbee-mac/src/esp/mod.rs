@@ -2,6 +2,8 @@ use alloc::vec::Vec;
 
 use byte::BytesExt;
 use embassy_futures::select::Either;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
@@ -18,6 +20,7 @@ use ieee802154::mac::security::SecurityContext;
 
 use crate::esp::driver::Ieee802154Driver;
 use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
+use crate::mlme::A_MAX_FRAME_RETRIES;
 use crate::mlme::A_RESPONSE_WAIT_TIME;
 use crate::mlme::AssociationResponse;
 use crate::mlme::MAX_IEEE802154_CHANNELS;
@@ -30,49 +33,81 @@ use crate::mlme::ScanType;
 
 mod driver;
 
-/// Wait for the first frame matching `$pat` within `$timeout_us` microseconds,
-/// skipping non-matching frames. Evaluates `$body` on match. Returns
-/// `Err(MacError::NoData)` if the timeout expires before a match.
-macro_rules! recv_frame {
-    ($self:expr, $timeout_us:expr, $($pat:pat => $body:expr),+ $(,)?) => {{
-        let timeout = Timer::after_micros($timeout_us);
-        let receive = async {
-            loop {
-                let frame = $self.next_frame().await?;
-                match frame {
-                    $($pat => return Ok($body),)+
-                    _ => {
-                        log::debug!("[MLME-POLL] received other frame");
-                        continue;
-                    },
-                }
-            }
-        };
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => Err(MacError::NoData),
-            Either::Second(result) => result,
-        }
-    }};
-}
+/// Higher-layer retries of the whole association handshake. Frame-level
+/// `aMaxFrameRetries` ack-retransmission already covers a lost request or poll;
+/// this is a safety net for a parent that accepts the request but is slow to
+/// make the response available.
+const ASSOCIATE_REQUEST_RETRIES: u8 = 3;
 
-pub struct EspMlme<'a> {
-    driver: Ieee802154Driver<'a>,
-    seq_number: u8,
-}
+/// Number of times the association response is polled per request attempt.
+const ASSOCIATE_POLL_RETRIES: u8 = 5;
 
-impl<'a> EspMlme<'a> {
-    pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
-        Self {
-            driver: Ieee802154Driver::new(ieee802154, config),
-            seq_number: 0,
+/// Formats an optional MAC address as `0x..` for consistent logging.
+struct AddrHex<'a>(&'a Option<Address>);
+
+impl core::fmt::Display for AddrHex<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(Address::Short(_, addr)) => write!(f, "0x{:04x}", addr.0),
+            Some(Address::Extended(_, addr)) => write!(f, "0x{:016x}", addr.0),
+            _ => write!(f, "none"),
         }
     }
 }
 
-impl EspMlme<'_> {
+/// ESP32-C6 [`Mlme`] implementation.
+///
+/// The radio is a single shared resource: the inner state is held behind an
+/// async mutex so the trait's `&self` methods can be driven concurrently from a
+/// receive task and a transmit path. The extended address is cached so it can be
+/// read without locking.
+pub struct EspMlme<'a> {
+    inner: Mutex<CriticalSectionRawMutex, EspMlmeInner<'a>>,
+    ieee_address: u64,
+}
+
+impl<'a> EspMlme<'a> {
+    pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
+        let inner = EspMlmeInner {
+            driver: Ieee802154Driver::new(ieee802154, config),
+            seq_number: 0,
+        };
+        let ieee_address = inner.driver.ieee_address().0;
+        Self {
+            inner: Mutex::new(inner),
+            ieee_address,
+        }
+    }
+
+    /// The device's IEEE 802.15.4 extended (EUI-64) address.
+    pub fn ieee_address(&self) -> u64 {
+        self.ieee_address
+    }
+}
+
+struct EspMlmeInner<'a> {
+    driver: Ieee802154Driver<'a>,
+    seq_number: u8,
+}
+
+impl EspMlmeInner<'_> {
     fn sequence_number(&mut self) -> u8 {
         self.seq_number = self.seq_number.wrapping_add(1);
         self.seq_number
+    }
+
+    /// Transmit an acknowledgment-requested frame, retransmitting up to
+    /// `aMaxFrameRetries` times if no acknowledgment is received
+    /// (IEEE 802.15.4 §7.5.6.4). Returns [`MacError::NoAck`] if every attempt
+    /// goes unacknowledged.
+    async fn transmit_acked(&mut self, frame: &[u8]) -> Result<(), MacError> {
+        for _ in 0..=A_MAX_FRAME_RETRIES {
+            self.driver.transmit(frame).await?;
+            if self.driver.last_tx_acked() {
+                return Ok(());
+            }
+        }
+        Err(MacError::NoAck)
     }
 
     /// Discard all buffered frames from the hardware RX queue.
@@ -80,14 +115,33 @@ impl EspMlme<'_> {
         while self.driver.poll_received().is_some() {}
     }
 
+    /// Take the next frame from the hardware RX queue (non-blocking), mapping a
+    /// radio error into [`MacError`]. Returns `None` when the queue is empty.
+    fn poll_frame(&mut self) -> Option<Result<ReceivedFrame, MacError>> {
+        self.driver
+            .poll_received()
+            .map(|r| r.map_err(MacError::RadioError))
+    }
+
     /// Wait for the next frame from the hardware RX queue (indefinite).
     async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
         loop {
-            if let Some(result) = self.driver.poll_received() {
-                return result.map_err(MacError::RadioError);
+            if let Some(result) = self.poll_frame() {
+                return result;
             }
             self.driver.wait_rx_available().await;
         }
+    }
+
+    /// Drain the hardware RX queue, returning the payload + LQI of the first
+    /// MAC data frame found (non-blocking). Non-data frames are discarded.
+    fn try_drain(&mut self, buf: &mut [u8]) -> Result<Option<(usize, u8)>, MacError> {
+        while let Some(result) = self.poll_frame() {
+            if let Some(received) = copy_data_payload(result?, buf) {
+                return Ok(Some(received));
+            }
+        }
+        Ok(None)
     }
 
     fn beacon_request_frame(&mut self) -> [u8; 10] {
@@ -258,12 +312,33 @@ impl EspMlme<'_> {
     }
 }
 
+/// Copy a MAC data frame's payload + LQI into `buf`, returning the byte count
+/// and LQI. Non-data frames (commands, beacons, acks) yield `None`.
+fn copy_data_payload(received: ReceivedFrame, buf: &mut [u8]) -> Option<(usize, u8)> {
+    let ReceivedFrame {
+        frame:
+            Frame {
+                content: FrameContent::Data,
+                payload,
+                ..
+            },
+        lqi,
+        ..
+    } = received
+    else {
+        return None;
+    };
+    let len = payload.len().min(buf.len());
+    buf[..len].copy_from_slice(&payload[..len]);
+    Some((len, lqi))
+}
+
 fn calculate_scan_duration_max_us(duration: u8) -> u32 {
     // we assume a symbol period of 16us (QPSK, 2.4Ghz)
     16 * A_BASE_SUPER_FRAME_DURATION * (2 * (duration as u32) + 1)
 }
 
-impl Mlme for EspMlme<'_> {
+impl EspMlmeInner<'_> {
     async fn scan_network(
         &mut self,
         scan_type: ScanType,
@@ -293,6 +368,8 @@ impl Mlme for EspMlme<'_> {
             }
         }
 
+        log::debug!("[MLME-SCAN] success");
+
         Ok(ScanResult {
             scan_type,
             pan_descriptor,
@@ -305,9 +382,10 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        // Use promiscuous mode during association since we don't have a
-        // short address yet and the hardware filter may not match on
-        // ext_addr alone.
+        // Use promiscuous mode during association: address filtering on this
+        // radio does not reliably deliver the association response (addressed to
+        // our extended address), and the parent/Trust Center completes the join
+        // from the association request regardless of our ack.
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
@@ -317,41 +395,92 @@ impl Mlme for EspMlme<'_> {
             config.promiscuous = true;
         });
 
-        // Step 1: Send association request command (IEEE 802.15.4 §7.5.3.1).
         let ext_addr = self.driver.ieee_address();
         let src = Address::Extended(dest.pan_id(), ext_addr);
-        let frame = self.association_request_frame(dest, Some(src), capabilities)?;
-        self.driver.transmit(&frame).await?;
-        log::debug!("[MLME-ASSOCIATE] request transmitted");
-
-        // Step 2: Wait aResponseWaitTime for the coordinator to prepare its
-        // association decision (IEEE 802.15.4 §7.5.3.1).
-        let wait_us: u64 = (A_RESPONSE_WAIT_TIME as u64) * 16;
-        Timer::after_micros(wait_us).await;
-        log::debug!("[MLME-ASSOCIATE] waited for {wait_us} us");
-
-        // Step 3: Poll the coordinator for the association response.
-        self.flush();
-        let data_req = self.data_request_frame(dest)?;
-        self.driver.transmit(&data_req).await?;
-
-        // Step 4: Wait for the association response command frame.
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
-        let response = recv_frame!(self, timeout_us,
-            ReceivedFrame {
-                frame: Frame {
-                    content: FrameContent::Command(
-                        Command::AssociationResponse(short_addr, status),
-                    ),
-                    ..
-                },
-                ..
-            } => AssociationResponse {
-                device_address: zigbee_types::IeeeAddress(self.driver.ieee_address().0),
-                association_address: zigbee_types::ShortAddress(short_addr.0),
-                status,
-            },
-        )?;
+
+        // Retry the full association handshake (IEEE 802.15.4 §7.5.3.1): the
+        // association request itself can be lost or go unacked, in which case the
+        // parent never buffers a response and polling alone cannot recover. Each
+        // round re-sends the request, then listens (to catch a direct send) and
+        // polls (to prompt indirect delivery). Do not flush — a directly-sent
+        // response may already be queued.
+        let mut response = None;
+        'association: for _ in 0..ASSOCIATE_REQUEST_RETRIES {
+            // Step 1: send the association request command. aMaxFrameRetries
+            // ack-retransmissions are applied; if it is still never acked the
+            // parent did not receive it, so resend the whole request.
+            let frame = self.association_request_frame(dest, Some(src), capabilities)?;
+            match self.transmit_acked(&frame).await {
+                Ok(()) => {}
+                Err(MacError::NoAck) => {
+                    log::debug!("[MLME-ASSOCIATE] request not acked, retrying");
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+            log::debug!(
+                "[MLME-ASSOCIATE] request acked, ack_pending={:?}",
+                self.driver.last_ack_frame_pending()
+            );
+
+            // Steps 2-4: extract the (indirect) association response by polling
+            // with a data request (IEEE 802.15.4 §7.5.6.4); a missing ack just
+            // means the parent has nothing buffered yet, so keep trying.
+            for _ in 0..ASSOCIATE_POLL_RETRIES {
+                let data_req = self.data_request_frame(dest)?;
+                match self.transmit_acked(&data_req).await {
+                    Ok(()) | Err(MacError::NoAck) => {}
+                    Err(e) => return Err(e),
+                }
+
+                let timeout = Timer::after_micros(timeout_us);
+                let receive = async {
+                    loop {
+                        let received = self.next_frame().await?;
+                        // log every frame seen in the window to diagnose missed
+                        // responses (collision loss vs. an unmatched format)
+                        log::debug!(
+                            "[MLME-ASSOCIATE] rx frame type={:?} pending={} src={} dst={}",
+                            received.frame.header.frame_type,
+                            received.frame.header.frame_pending,
+                            AddrHex(&received.frame.header.source),
+                            AddrHex(&received.frame.header.destination),
+                        );
+                        if let ReceivedFrame {
+                            frame:
+                                Frame {
+                                    content:
+                                        FrameContent::Command(Command::AssociationResponse(
+                                            short_addr,
+                                            status,
+                                        )),
+                                    ..
+                                },
+                            ..
+                        } = received
+                        {
+                            return Ok(AssociationResponse {
+                                device_address: zigbee_types::IeeeAddress(
+                                    self.driver.ieee_address().0,
+                                ),
+                                association_address: zigbee_types::ShortAddress(short_addr.0),
+                                status,
+                            });
+                        }
+                    }
+                };
+                match embassy_futures::select::select(timeout, receive).await {
+                    Either::First(_) => continue,
+                    Either::Second(Ok(r)) => {
+                        response = Some(r);
+                        break 'association;
+                    }
+                    Either::Second(Err(e)) => return Err(e),
+                }
+            }
+        }
+        let response = response.ok_or(MacError::NoData)?;
 
         log::debug!(
             "[MLME-ASSOCIATE] success, short_addr={:?}",
@@ -377,26 +506,60 @@ impl Mlme for EspMlme<'_> {
     ) -> Result<(usize, u8), MacError> {
         self.flush();
         let data_req = self.data_request_frame(coord_address)?;
-        self.driver.transmit(&data_req).await?;
+        // a missing ack means the parent has nothing buffered; still listen
+        match self.transmit_acked(&data_req).await {
+            Ok(()) | Err(MacError::NoAck) => {}
+            Err(e) => return Err(e),
+        }
         log::debug!("[MLME-POLL] tx data req");
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
-        recv_frame!(self, timeout_us,
-            ReceivedFrame {
-                frame: Frame { content: FrameContent::Data, payload, .. },
-                lqi,
-                ..
-            } => {
-                let len = payload.len().min(buf.len());
-                log::debug!("[MLME-POLL] rx data len={len}");
-                buf[..len].copy_from_slice(&payload[..len]);
-                (len, lqi)
-            },
-        )
+        let timeout = Timer::after_micros(timeout_us);
+        let receive = async {
+            loop {
+                let received = self.next_frame().await?;
+                log::debug!(
+                    "[MLME-POLL] rx frame type={:?} pending={} src={} dst={}",
+                    received.frame.header.frame_type,
+                    received.frame.header.frame_pending,
+                    AddrHex(&received.frame.header.source),
+                    AddrHex(&received.frame.header.destination),
+                );
+                // ignore ambient broadcasts (link-status, route-request, etc.)
+                // sharing the listen window: a poll response is always a unicast
+                // addressed to this device. Returning early on a broadcast would
+                // let the next flush() discard the still-buffered unicast.
+                if matches!(
+                    received.frame.header.destination,
+                    Some(Address::Short(_, ieee802154::mac::ShortAddress(d))) if d >= 0xfff8
+                ) {
+                    log::debug!("[MLME-POLL] skip broadcast in poll window");
+                    continue;
+                }
+                if let Some((len, lqi)) = copy_data_payload(received, buf) {
+                    log::debug!("[MLME-POLL] rx data len={len}");
+                    return Ok((len, lqi));
+                }
+            }
+        };
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => Err(MacError::NoData),
+            Either::Second(result) => result,
+        }
     }
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
         let seq = self.sequence_number();
+
+        // NWK broadcast addresses (0xfff8-0xffff) map to the MAC broadcast
+        // address 0xffff, which is never acknowledged (IEEE 802.15.4 §7.2.1.1.2)
+        let is_broadcast = matches!(dest, Address::Short(_, sa) if sa.0 >= 0xfff8);
+        let dest = if is_broadcast {
+            Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(0xffff))
+        } else {
+            dest
+        };
+
         let source = Some(match self.driver.short_address() {
             Some(short) => Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(short)),
             None => Address::Extended(dest.pan_id(), self.driver.ieee_address()),
@@ -405,7 +568,7 @@ impl Mlme for EspMlme<'_> {
         let frame_header = Header {
             frame_type: FrameType::Data,
             frame_pending: false,
-            ack_request: true,
+            ack_request: !is_broadcast,
             pan_id_compress: source.is_some(),
             seq_no_suppress: false,
             ie_present: false,
@@ -435,5 +598,51 @@ impl Mlme for EspMlme<'_> {
         log::debug!("[MLME] tx data, len={total_len}");
 
         Ok(())
+    }
+}
+
+impl Mlme for EspMlme<'_> {
+    async fn scan_network(
+        &self,
+        ty: ScanType,
+        channels: core::ops::Range<u8>,
+        duration: u8,
+    ) -> Result<ScanResult, MacError> {
+        self.inner.lock().await.scan_network(ty, channels, duration).await
+    }
+
+    async fn associate(
+        &self,
+        channel: u8,
+        dest: Address,
+        capabilities: CapabilityInformation,
+    ) -> Result<AssociationResponse, MacError> {
+        self.inner.lock().await.associate(channel, dest, capabilities).await
+    }
+
+    async fn poll_data(
+        &self,
+        coord_address: Address,
+        buf: &mut [u8],
+    ) -> Result<(usize, u8), MacError> {
+        self.inner.lock().await.poll_data(coord_address, buf).await
+    }
+
+    async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
+        loop {
+            // drain under a brief lock, then idle-wait lock-free so a concurrent
+            // transmit can acquire the radio while we wait for the next frame
+            {
+                let mut inner = self.inner.lock().await;
+                if let Some(received) = inner.try_drain(buf)? {
+                    return Ok(received);
+                }
+            }
+            driver::wait_rx_signal().await;
+        }
+    }
+
+    async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
+        self.inner.lock().await.transmit_data(dest, payload).await
     }
 }
