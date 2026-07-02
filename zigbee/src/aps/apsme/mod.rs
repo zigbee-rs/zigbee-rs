@@ -175,7 +175,8 @@ impl Apsme {
         Ok(command)
     }
 
-    /// Passively receive and process one inbound APS frame.
+    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved APS
+    /// frame.
     ///
     /// An APS **data** frame is surfaced as an APSDE-DATA.indication
     /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4)
@@ -183,22 +184,6 @@ impl Apsme {
     /// coordinator is NWK-encrypted only, so only APS-unsecured data frames
     /// produce an indication. `src_address` carries the NWK source so the
     /// caller can address a response back to the requester.
-    pub(crate) async fn receive_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
-        &self,
-        nlme: &Nlme<M>,
-        buf: &'a mut [u8],
-    ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
-        // no application data: a NWK command frame (handled by the NWK layer) or
-        // other non-data frame shared the receive path
-        let Some(nwk_data) = nlme.receive_nwk_frame(buf).await? else {
-            return Ok(None);
-        };
-        self.process_nwk_data(nlme, nwk_data)
-    }
-
-    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved APS
-    /// frame — the sleepy-end-device counterpart of
-    /// [`Self::receive_aps_frame`].
     pub(crate) async fn poll_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,

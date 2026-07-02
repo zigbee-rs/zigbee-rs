@@ -260,36 +260,16 @@ where
         Ok(addr)
     }
 
-    async fn poll_nwk_data_request<'a>(
-        &self,
-        buf: &'a mut [u8],
-    ) -> Result<NwkDataFrame<'a>, NetworkError> {
-        let coord_addr = self.parent_address()?;
-        let (len, _lqi) = self.mac.poll_data(coord_addr, buf).await?;
-
-        let cx = SecurityContext::get();
-        let nwk_frame = cx.decrypt_nwk_frame_in_place(&mut buf[..len])?;
-
-        let NwkFrame::Data(data_frame) = nwk_frame else {
-            return Err(NetworkError::InvalidFrame);
-        };
-
-        Ok(data_frame)
-    }
-
-    /// Passively receive and process one inbound NWK frame (no MLME-POLL).
+    /// Issue one MLME-POLL to the parent (§3.6.6).
     ///
-    /// Awaits the next inbound MAC data frame via [`Mlme::receive`], strips and
-    /// decrypts the NWK header. A NWK data frame is returned to the caller; a
-    /// NWK command frame is processed internally and yields `Ok(None)` (no
-    /// application data). Intended for the steady-state receive loop after
-    /// joining.
-    pub async fn receive_nwk_frame<'a>(
-        &self,
-        buf: &'a mut [u8],
-    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
-        let (len, _lqi) = self.mac.receive(buf).await?;
-        self.process_received_nwk_frame(&mut buf[..len])
+    /// Returns the raw MAC payload length, or `None` when nothing was buffered.
+    async fn poll_parent(&self, buf: &mut [u8]) -> Result<Option<usize>, NetworkError> {
+        let coord_addr = self.parent_address()?;
+        match self.mac.poll_data(coord_addr, buf).await {
+            Ok((len, _lqi)) => Ok(Some(len)),
+            Err(MacError::NoData) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved NWK
@@ -302,11 +282,8 @@ where
         &self,
         buf: &'a mut [u8],
     ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
-        let coord_addr = self.parent_address()?;
-        let (len, _lqi) = match self.mac.poll_data(coord_addr, buf).await {
-            Ok(result) => result,
-            Err(MacError::NoData) => return Ok(None),
-            Err(e) => return Err(e.into()),
+        let Some(len) = self.poll_parent(buf).await? else {
+            return Ok(None);
         };
         self.process_received_nwk_frame(&mut buf[..len])
     }
@@ -640,19 +617,15 @@ where
             // need to get rid of the 'a lifetime in the loop
             // &mut buf is still guaranteed within 'a
             let buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
-            match self.poll_nwk_data_request(buf).await {
-                Ok(data_frame) => {
+            match self.poll_nwk_frame(buf).await {
+                Ok(Some(data_frame)) => {
                     return Ok(data_frame);
                 }
-                // keep polling: NoData (nothing buffered), or ambient traffic the
-                // pre-key joiner cannot decode (SecurityError/ParseError/InvalidFrame).
-                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a later poll
-                Err(
-                    NetworkError::MacError(MacError::NoData)
-                    | NetworkError::SecurityError(_)
-                    | NetworkError::ParseError
-                    | NetworkError::InvalidFrame,
-                ) => (),
+                // keep polling: nothing buffered, a NWK command frame, or ambient
+                // traffic the pre-key joiner cannot decode (SecurityError/ParseError).
+                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a
+                // later poll
+                Ok(None) | Err(NetworkError::SecurityError(_) | NetworkError::ParseError) => (),
                 Err(e) => return Err(e),
             }
         }
