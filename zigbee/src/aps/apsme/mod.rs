@@ -196,11 +196,8 @@ impl Apsme {
         self.process_nwk_data(nlme, nwk_data)
     }
 
-    /// Poll the parent once (MLME-POLL) and process the retrieved APS frame.
-    ///
-    /// The sleepy-end-device counterpart of [`Self::receive_aps_frame`]: a
-    /// device with rxOnWhenIdle = FALSE only receives unicast frames its
-    /// parent buffered by explicitly polling for them (§3.6.6).
+    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved APS
+    /// frame — the sleepy-end-device counterpart of [`Self::receive_aps_frame`].
     pub(crate) async fn poll_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,

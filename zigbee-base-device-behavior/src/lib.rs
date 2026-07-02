@@ -67,12 +67,9 @@ pub struct BaseDeviceBehavior {
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
-    /// Whether network steering performs the TC link key exchange
-    /// (BDB §8.2 step 12). While the exchange runs, its poll windows consume
-    /// and drop any other frames buffered at the parent — including the
-    /// coordinator's device-interview requests. Disable it to hand control
-    /// back to the application immediately after Device_annce and keep using
-    /// the default global TC link key.
+    /// Whether network steering performs the TC link key exchange (BDB §8.2
+    /// step 12). Disable to keep the default global TC link key and return
+    /// to the application right after Device_annce.
     pub tc_link_key_exchange_enabled: bool,
 }
 
@@ -157,10 +154,8 @@ impl BaseDeviceBehavior {
         // §8.2 step 12, §10.2.5
         if self.tc_link_key_exchange_enabled {
             log::debug!("[BDB] step 12: TC link key exchange");
-            // A Trust Center running with default policies (e.g. Z-Stack with
-            // legacy devices allowed) may never answer the REQUEST-KEY. Keep
-            // operating with the default global TC link key in that case — the
-            // node descriptor advertises a pre-r21 stack revision accordingly.
+            // non-fatal: a TC allowing legacy devices may never answer the
+            // REQUEST-KEY, keep the default global TC link key then
             match self.tc_link_key_exchange(device).await {
                 Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
                 Err(e) => log::warn!(

@@ -295,10 +295,9 @@ where
     /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved NWK
     /// frame, if any.
     ///
-    /// A sleepy end device (rxOnWhenIdle = FALSE) never receives unicast
-    /// frames passively: its parent buffers them for indirect transmission
-    /// and only delivers on a MAC data request. Returns `Ok(None)` when the
-    /// parent has nothing buffered or the frame carried no application data.
+    /// A sleepy end device only receives buffered unicasts by polling.
+    /// Returns `Ok(None)` when nothing was buffered or the frame carried no
+    /// application data.
     pub async fn poll_nwk_frame<'a>(
         &self,
         buf: &'a mut [u8],
@@ -676,11 +675,8 @@ where
     ) -> Result<(), NetworkError> {
         let mut buf = [0u8; 256];
         let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
-        // §3.6.5: an end device with rxOnWhenIdle = FALSE does not transmit
-        // broadcasts itself — it unicasts the frame to its parent, which
-        // relays it into the network on its behalf. (A MAC destination equal
-        // to the NWK broadcast address would pass no receiver's address
-        // filter: only the own short address and 0xFFFF are accepted.)
+        // §3.6.5: a sleepy end device unicasts broadcasts to its parent,
+        // which relays them into the network on its behalf
         let mac_dest = self.parent_address()?;
         self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())

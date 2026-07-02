@@ -450,14 +450,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
     /// Run the poll/dispatch loop forever (the steady-state RX task).
     ///
-    /// Each iteration issues one MLME-POLL to the parent and answers the
-    /// retrieved frame. Intended to be spawned as a dedicated task with
-    /// `&'static self`; the application's transmit path may call other
-    /// `&self` methods concurrently.
-    ///
-    /// Back-to-back iterations poll the parent as fast as it answers "no
-    /// data" — prefer calling [`Self::poll_and_dispatch`] from your own loop
-    /// with a sleep in between to pace the data requests.
+    /// Polls the parent back-to-back — prefer calling
+    /// [`Self::poll_and_dispatch`] from your own loop with a sleep in
+    /// between to pace the data requests.
     pub async fn rx_loop(
         &self,
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
