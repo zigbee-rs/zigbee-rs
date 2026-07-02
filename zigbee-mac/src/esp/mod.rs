@@ -43,19 +43,6 @@ const ASSOCIATE_REQUEST_RETRIES: u8 = 3;
 /// Number of times the association response is polled per request attempt.
 const ASSOCIATE_POLL_RETRIES: u8 = 5;
 
-/// Formats an optional MAC address as `0x..` for consistent logging.
-struct AddrHex<'a>(&'a Option<Address>);
-
-impl core::fmt::Display for AddrHex<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            Some(Address::Short(_, addr)) => write!(f, "0x{:04x}", addr.0),
-            Some(Address::Extended(_, addr)) => write!(f, "0x{:016x}", addr.0),
-            _ => write!(f, "none"),
-        }
-    }
-}
-
 /// ESP32-C6 [`Mlme`] implementation.
 ///
 /// The radio is a single shared resource: the inner state is held behind an
