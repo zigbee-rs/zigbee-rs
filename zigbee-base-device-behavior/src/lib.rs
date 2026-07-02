@@ -119,7 +119,10 @@ impl BaseDeviceBehavior {
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
 
         // §8.2 step 1
-        device.nlme().network_discovery(channels, scan_duration).await?;
+        device
+            .nlme()
+            .network_discovery(channels, scan_duration)
+            .await?;
 
         // §8.2 step 5
         let request = NlmeJoinRequest {

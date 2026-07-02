@@ -618,15 +618,9 @@ where
                 Ok(data_frame) => {
                     return Ok(data_frame);
                 }
-                // Skip and keep polling on:
-                // - NoData: nothing buffered yet
-                // - SecurityError: before authorization the joiner has no network key, so ambient
-                //   network-key-secured traffic (e.g. link-status or route-request broadcasts
-                //   caught in the listen window) fails NWK security
-                // - ParseError/InvalidFrame: a foreign/malformed frame picked up in the listen
-                //   window
-                // The real (NWK-unsecured, §4.6.3.7.2) transport-key stays buffered
-                // at the parent until a subsequent poll retrieves it.
+                // keep polling: NoData (nothing buffered), or ambient traffic the
+                // pre-key joiner cannot decode (SecurityError/ParseError/InvalidFrame).
+                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a later poll
                 Err(
                     NetworkError::MacError(MacError::NoData)
                     | NetworkError::SecurityError(_)
@@ -799,6 +793,9 @@ mod tests {
         use crate::nwk::nib;
         nib::try_init(NibStorage::default());
         nib::reset();
+        // reset() only rewrites fields with a declared default; StorageVec fields
+        // (no default) persist across tests in the global NIB, so clear explicitly
+        nib::get_ref().set_neighbor_table(StorageVec::new());
         (guard, Nlme::new(mac))
     }
 

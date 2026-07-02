@@ -101,7 +101,9 @@ impl Apsme {
 
     /// Next APS counter value (§4.4.11), wrapping.
     fn next_aps_counter(&self) -> u8 {
-        self.aps_counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
+        self.aps_counter
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
     }
 
     fn is_joined(&self) -> bool {
@@ -176,11 +178,11 @@ impl Apsme {
     /// Passively receive and process one inbound APS frame.
     ///
     /// An APS **data** frame is surfaced as an APSDE-DATA.indication
-    /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4) and
-    /// yields `Ok(None)`. ZDO/ZCL traffic from a centralized coordinator is
-    /// NWK-encrypted only, so only APS-unsecured data frames produce an
-    /// indication. `src_address` carries the NWK source so the caller can address
-    /// a response back to the requester.
+    /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4)
+    /// and yields `Ok(None)`. ZDO/ZCL traffic from a centralized
+    /// coordinator is NWK-encrypted only, so only APS-unsecured data frames
+    /// produce an indication. `src_address` carries the NWK source so the
+    /// caller can address a response back to the requester.
     pub(crate) async fn receive_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -241,8 +243,8 @@ impl Apsme {
     /// Process an inbound APS command frame (§4.4).
     ///
     /// Scaffolding extension point: every APS command variant is matched so a
-    /// handler can be filled in. During commissioning these commands are handled
-    /// inline by the security manager ([`Self::poll_command`] /
+    /// handler can be filled in. During commissioning these commands are
+    /// handled inline by the security manager ([`Self::poll_command`] /
     /// `ZigbeeDevice::poll_transport_key`); here, in the steady-state receive
     /// loop, they are logged and ignored until a handler is needed.
     fn handle_aps_command(&self, command: &Command) {

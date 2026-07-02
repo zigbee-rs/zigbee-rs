@@ -43,19 +43,6 @@ const ASSOCIATE_REQUEST_RETRIES: u8 = 3;
 /// Number of times the association response is polled per request attempt.
 const ASSOCIATE_POLL_RETRIES: u8 = 5;
 
-/// Formats an optional MAC address as `0x..` for consistent logging.
-struct AddrHex<'a>(&'a Option<Address>);
-
-impl core::fmt::Display for AddrHex<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            Some(Address::Short(_, addr)) => write!(f, "0x{:04x}", addr.0),
-            Some(Address::Extended(_, addr)) => write!(f, "0x{:016x}", addr.0),
-            _ => write!(f, "none"),
-        }
-    }
-}
-
 /// ESP32-C6 [`Mlme`] implementation.
 ///
 /// The radio is a single shared resource: the inner state is held behind an
@@ -69,11 +56,8 @@ pub struct EspMlme<'a> {
 
 impl<'a> EspMlme<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
-        // Seed the MAC sequence number randomly (IEEE 802.15.4 §7.2.1.2). A fixed
-        // start means every reboot re-uses the same low numbers, which a parent's
-        // duplicate-frame filter (keyed by source + last-seen sequence) treats as
-        // stale: it MAC-acks the frame in hardware but silently drops it before
-        // the NWK layer, so an association request never gets a response.
+        // seed the MAC seq number randomly (§7.2.1.2): a fixed start re-uses low
+        // numbers each reboot, which a parent's duplicate filter drops as stale
         let inner = EspMlmeInner {
             driver: Ieee802154Driver::new(ieee802154, config),
             seq_number: (esp_hal::rng::Rng::new().random() & 0xff) as u8,
@@ -132,14 +116,9 @@ impl EspMlmeInner<'_> {
     /// Wait for the next frame from the hardware RX queue (indefinite).
     async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
         loop {
-            // Wait for the radio to signal a fully-received, queued frame BEFORE
-            // draining. Draining goes through the radio's `received()`, which
-            // re-issues `RxStart`; doing that while a frame is still on the air
-            // aborts it — this is how a fast indirect response (~2 ms after a
-            // poll ack) was being dropped. RX stays armed via rx-on-when-idle, so
-            // we never need to drain mid-reception. The signal is level-held, so
-            // once set we keep draining until the queue is empty, then reset and
-            // wait for the next signal.
+            // wait for a fully-received frame before draining: draining re-issues
+            // RxStart and aborts a frame still on the air (dropped a fast ~2ms
+            // indirect response). signal is level-held, so drain until empty then reset
             self.driver.wait_rx_available().await;
             if let Some(result) = self.poll_frame() {
                 return result;
@@ -307,16 +286,10 @@ impl EspMlmeInner<'_> {
         &mut self,
         timeout_us: u64,
     ) -> Result<Option<AssociationResponse>, MacError> {
-        // Poll the RX queue on a fixed interval, WAITING before each drain. The
-        // indirect response lands ~2 ms after the poll ack; the radio's RX is
-        // already armed (rx-on-when-idle re-arm in the ack ISR), so waiting lets
-        // it receive the response into the queue, and we then drain it. We must
-        // not drain (which goes through `received()` and re-issues `RxStart`)
-        // while a frame is still on the air — that aborts it — so the wait comes
-        // first and the interval (~4 ms) exceeds a frame's ~0.8 ms air time. Time
-        // based rather than signal based: the RX-available signal is not raised
-        // if the auto-ack path does not complete, but the frame is still queued.
-        // No logging in the loop — the UART critical section stalls the RX ISR.
+        // wait ~4ms before each drain (> a frame's ~0.8ms air time): draining
+        // mid-reception re-issues RxStart and aborts the frame. time-based, not
+        // signal-based: the RX signal may not fire even when the frame is queued.
+        // no logging in the loop — the UART critical section stalls the RX ISR
         let timeout = Timer::after_micros(timeout_us);
         let receive = async {
             loop {
@@ -456,11 +429,9 @@ impl EspMlmeInner<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        // Filter on our extended address (forced into the hw filter): the
-        // association response is an indirect transmission addressed to it
-        // (IEEE 802.15.4 §7.5.6.4). auto_ack_rx must stay on so we ack the
-        // response — promiscuous mode suppresses that ack and drowns the RX
-        // queue in ambient broadcast traffic, dropping the response.
+        // filter on our extended address: the association response is an indirect
+        // tx addressed to it (§7.5.6.4). auto_ack_rx must stay on to ack it —
+        // promiscuous suppresses the ack and floods the RX queue with broadcasts
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
@@ -469,26 +440,19 @@ impl EspMlmeInner<'_> {
             config.auto_ack_rx = true;
             config.promiscuous = false;
         });
-        // arm the receiver after the channel/config change (as the scan path
-        // does): otherwise general RX is not enabled until a TX later triggers
-        // rx-on-when-idle, and the indirect association response that arrives
-        // right after the poll ack is never received
+        // arm RX after the config change: otherwise general RX is off until a
+        // later TX triggers rx-on-when-idle and the response is missed
         self.driver.start_receive();
 
         let ext_addr = self.driver.ieee_address();
-        // IEEE 802.15.4 §7.3.1.1: the association request source PAN identifier
-        // shall be the broadcast PAN (0xffff); the device is not yet a member of
-        // the target PAN. Source address is the extended address.
+        // §7.3.1.1: source PAN is the broadcast PAN (0xffff), source is the ext addr
         let src = Address::Extended(PanId::broadcast(), ext_addr);
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
-        // Retry the full association handshake (IEEE 802.15.4 §7.5.3.1). The
-        // request itself can be lost or go unacked, in which case the parent
-        // never buffers a response and polling cannot recover, so re-send the
-        // whole request each round. Within a round, listen first — an
-        // rx-on-when-idle parent sends the response directly, right after acking
-        // the request — then poll (data request) to prompt indirect delivery.
-        // Never flush: a directly-sent response may already be queued.
+        // retry the full handshake (§7.5.3.1): a lost/unacked request leaves the
+        // parent with nothing to buffer, so re-send each round. within a round
+        // listen first (rx-on-when-idle parent replies directly) then poll for
+        // indirect delivery. never flush — a direct response may already be queued
         let mut response = None;
         'association: for _ in 0..ASSOCIATE_REQUEST_RETRIES {
             let frame = self.association_request_frame(dest, Some(src), capabilities)?;
@@ -517,13 +481,9 @@ impl EspMlmeInner<'_> {
                     Ok(()) | Err(MacError::NoAck) => {}
                     Err(e) => return Err(e),
                 }
-                // Arm RX for the buffered (indirect) response, which arrives
-                // ~2-3 ms after the poll ack. start_receive() is safe here: it is
-                // a no-op if the radio is already receiving and never aborts an
-                // in-flight frame (unlike draining via received(), which forces
-                // RxStart). Do not log in this window — the UART writer runs in a
-                // critical section and stalls the RX ISR. A TI/Z-Stack parent
-                // sends the response only once, so a single miss fails the round.
+                // arm RX for the indirect response (~2-3ms after the poll ack);
+                // start_receive is a no-op if already receiving. no log here — the
+                // UART critical section stalls the RX ISR and a TI parent replies once
                 self.driver.start_receive();
                 if let Some(r) = self.recv_association_response(timeout_us).await? {
                     response = Some(r);
@@ -538,9 +498,7 @@ impl EspMlmeInner<'_> {
             response.association_address
         );
 
-        // Step 5: Configure the assigned short address on the driver and
-        // disable promiscuous mode so the hardware filter accepts
-        // unicast frames addressed to us.
+        // set the assigned short address so the hw filter accepts our unicasts
         let short = response.association_address.0;
         self.driver.update_driver_config(|config| {
             config.promiscuous = false;
@@ -562,9 +520,8 @@ impl EspMlmeInner<'_> {
             Ok(()) | Err(MacError::NoAck) => {}
             Err(e) => return Err(e),
         }
-        // arm RX for the response (safe no-op if already receiving); no log in
-        // this window — the UART writer's critical section stalls the RX ISR and
-        // the response arrives ~2 ms after the poll ack
+        // arm RX for the response (~2ms after the poll ack); no log here — the
+        // UART critical section stalls the RX ISR
         self.driver.start_receive();
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
@@ -572,10 +529,8 @@ impl EspMlmeInner<'_> {
         let receive = async {
             loop {
                 let received = self.next_frame().await?;
-                // ignore ambient broadcasts (link-status, route-request, etc.)
-                // sharing the listen window: a poll response is always a unicast
-                // addressed to this device. Returning early on a broadcast would
-                // let the next flush() discard the still-buffered unicast.
+                // ignore ambient broadcasts in the listen window: a poll response
+                // is always a unicast, and returning early would let flush() drop it
                 if matches!(
                     received.frame.header.destination,
                     Some(Address::Short(_, ieee802154::mac::ShortAddress(d))) if d >= 0xfff8

@@ -95,8 +95,9 @@ pub struct EndpointDescriptor<'a> {
 }
 
 impl EndpointDescriptor<'_> {
-    /// Serialize the simple descriptor (§2.3.2.5): cluster counts are the number
-    /// of clusters, each cluster id transmitted as a little-endian `u16`.
+    /// Serialize the simple descriptor (§2.3.2.5): cluster counts are the
+    /// number of clusters, each cluster id transmitted as a little-endian
+    /// `u16`.
     fn write(&self, out: &mut [u8]) -> Result<usize, byte::Error> {
         let offset = &mut 0;
         out.write_with(offset, self.endpoint, ctx::LE)?;

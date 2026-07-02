@@ -213,6 +213,9 @@ mod tests {
     fn ignores_other_clusters() {
         let request = [0x00, 0x01, 0x00, 0x00, 0x00];
         let mut out = [0u8; 32];
-        assert_eq!(SERVER.handle(0x0104, 0x0402, 1, 1, &request, &mut out), None);
+        assert_eq!(
+            SERVER.handle(0x0104, 0x0402, 1, 1, &request, &mut out),
+            None
+        );
     }
 }

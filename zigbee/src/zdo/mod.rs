@@ -32,10 +32,10 @@ use crate::security::SecurityContext;
 
 /// Number of MAC poll attempts when waiting for the Trust Center to deliver the
 /// network key (§4.4.10). When the parent is a router (not the coordinator) the
-/// key must travel router -> Trust Center -> router before the parent can buffer
-/// it for a sleepy child, so the window must be wide enough to cover that
-/// round-trip. Each empty poll already costs ~aResponseWaitTime, which paces the
-/// retries.
+/// key must travel router -> Trust Center -> router before the parent can
+/// buffer it for a sleepy child, so the window must be wide enough to cover
+/// that round-trip. Each empty poll already costs ~aResponseWaitTime, which
+/// paces the retries.
 const TRANSPORT_KEY_POLL_RETRIES: u8 = 20;
 
 /// Provides an interface between the application object, the device profile and
@@ -68,8 +68,8 @@ const ZDO_ENDPOINT: u8 = 0x00;
 /// requests delivered to the [`ZigbeeDevice::rx_loop`]. Takes `&self` so it can
 /// be shared with the receive task.
 pub trait ClusterRequestHandler {
-    /// Build a response ASDU for an application-profile request, writing it into
-    /// `out` and returning its length, or `None` for no reply.
+    /// Build a response ASDU for an application-profile request, writing it
+    /// into `out` and returning its length, or `None` for no reply.
     fn handle(
         &self,
         profile_id: u16,
@@ -95,14 +95,24 @@ impl<A: ClusterRequestHandler, B: ClusterRequestHandler> ClusterRequestHandler f
         asdu: &[u8],
         out: &mut [u8],
     ) -> Option<usize> {
-        if let Some(len) =
-            self.0
-                .handle(profile_id, cluster_id, src_endpoint, dst_endpoint, asdu, out)
-        {
+        if let Some(len) = self.0.handle(
+            profile_id,
+            cluster_id,
+            src_endpoint,
+            dst_endpoint,
+            asdu,
+            out,
+        ) {
             return Some(len);
         }
-        self.1
-            .handle(profile_id, cluster_id, src_endpoint, dst_endpoint, asdu, out)
+        self.1.handle(
+            profile_id,
+            cluster_id,
+            src_endpoint,
+            dst_endpoint,
+            asdu,
+            out,
+        )
     }
 }
 
@@ -212,10 +222,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     pub fn start_service_discovery(&self) {}
 
     /// Broadcast a ZDO Device_annce (§2.4.3.1.11).
-    pub async fn device_annce(
-        &self,
-        annce: device_annce::DeviceAnnce,
-    ) -> Result<(), NetworkError> {
+    pub async fn device_annce(&self, annce: device_annce::DeviceAnnce) -> Result<(), NetworkError> {
         device_annce::broadcast(&self.nlme, &self.apsme, self.next_zdp_seq(), annce).await
     }
 
