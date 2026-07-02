@@ -8,6 +8,21 @@ use core::convert::TryInto;
 
 use heapless::Vec;
 
+/// Cluster identifier (ZCL §4.5).
+pub const CLUSTER_ID: u16 = 0x0403;
+
+/// Attribute identifiers (ZCL §4.5.2.2.1).
+pub mod attribute {
+    /// `MeasuredValue` (`Int16`, kPa × 10).
+    pub const MEASURED_VALUE: u16 = 0x0000;
+    /// `MinMeasuredValue` (`Int16`).
+    pub const MIN_MEASURED_VALUE: u16 = 0x0001;
+    /// `MaxMeasuredValue` (`Int16`).
+    pub const MAX_MEASURED_VALUE: u16 = 0x0002;
+    /// `Tolerance` (`Uint16`).
+    pub const TOLERANCE: u16 = 0x0003;
+}
+
 /// Pressure Measurement Information Attribute Set
 ///
 /// See Section 4.5.2.2.1

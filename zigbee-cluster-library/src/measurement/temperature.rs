@@ -6,6 +6,21 @@
 //! configuration and provision of notifications of temperature measurements.
 use heapless::Vec;
 
+/// Cluster identifier (ZCL §4.4).
+pub const CLUSTER_ID: u16 = 0x0402;
+
+/// Attribute identifiers (ZCL §4.4.2.2.1).
+pub mod attribute {
+    /// `MeasuredValue` (`Int16`, hundredths of a degree Celsius).
+    pub const MEASURED_VALUE: u16 = 0x0000;
+    /// `MinMeasuredValue` (`Int16`).
+    pub const MIN_MEASURED_VALUE: u16 = 0x0001;
+    /// `MaxMeasuredValue` (`Int16`).
+    pub const MAX_MEASURED_VALUE: u16 = 0x0002;
+    /// `Tolerance` (`Uint16`).
+    pub const TOLERANCE: u16 = 0x0003;
+}
+
 /// Temperature Measurement Attribute Set
 ///
 /// See Section 4.4.2.2.1

@@ -18,4 +18,6 @@ edition = "2024"
 byte.workspace = true
 heapless.workspace = true
 
+zigbee = { version = "0.1.0-alpha.3", path = "../zigbee" }
+zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }

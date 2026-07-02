@@ -21,16 +21,26 @@ pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_
 /// aResponseWaitTime = 32 * aBaseSuperframeDuration = 32 * 960 = 30720 symbols.
 pub const A_RESPONSE_WAIT_TIME: u32 = 32 * A_BASE_SUPER_FRAME_DURATION;
 
+/// The maximum number of retries allowed after a transmission failure (i.e. a
+/// missing acknowledgment). See IEEE 802.15.4-2003 §7.4.2 (aMaxFrameRetries).
+pub const A_MAX_FRAME_RETRIES: u8 = 3;
+
+/// MAC sub-layer management entity.
+///
+/// All methods take `&self`: an implementation is expected to provide its own
+/// interior mutability (the radio is a single shared resource). This lets the
+/// upper layers hold the MAC by shared reference and drive receive and transmit
+/// concurrently from separate tasks.
 pub trait Mlme {
     async fn scan_network(
-        &mut self,
+        &self,
         ty: ScanType,
         channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError>;
 
     async fn associate(
-        &mut self,
+        &self,
         channel: u8,
         dest: Address,
         capabilities: CapabilityInformation,
@@ -46,17 +56,27 @@ pub trait Mlme {
     /// `Err(MacError::NoData)` if the ACK has frame-pending clear or
     /// no data frame arrives within the timeout.
     async fn poll_data(
-        &mut self,
+        &self,
         coord_address: Address,
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError>;
+
+    /// Passively wait for and return the next inbound MAC data frame.
+    ///
+    /// Unlike [`Self::poll_data`], this sends nothing — it relies on the radio
+    /// being in receive mode (rx-on-when-idle) and simply yields the next data
+    /// frame addressed to this device (or a relevant broadcast). Intended for
+    /// the steady-state receive loop after joining.
+    ///
+    /// Returns `Ok((bytes_written, lqi))` for the received frame's payload.
+    async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError>;
 
     /// Transmit a MAC data frame carrying the given NWK-layer payload.
     ///
     /// The implementation constructs the MAC header (frame control,
     /// sequence number, addressing) and appends `payload` as the MAC
     /// service data unit.
-    async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
+    async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
 }
 
 #[derive(Debug)]
@@ -237,8 +257,8 @@ mod offset {
 }
 
 mod mask {
-    // stack_profile: bits 0-4 (5 bits)
-    pub const STACK_PROFILE: u16 = 0x1F;
+    // stack_profile: bits 0-3 (4 bits)
+    pub const STACK_PROFILE: u16 = 0x0F;
     // protocol_version: bits 4-7 (4 bits)
     pub const PROTOCOL_VERSION: u16 = 0xF0;
     // route_capacity: bit 10 (1 bit)

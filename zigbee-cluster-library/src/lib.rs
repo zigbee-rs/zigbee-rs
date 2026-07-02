@@ -33,7 +33,8 @@
     clippy::redundant_pub_crate,
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
-    clippy::too_long_first_doc_paragraph
+    clippy::too_long_first_doc_paragraph,
+    async_fn_in_trait
 )]
 
 macro_rules! bad_input {
@@ -42,12 +43,15 @@ macro_rules! bad_input {
     };
 }
 
+pub mod basic;
 pub mod common;
+pub mod profile;
 pub mod types;
 
 /// General ZCL Frame
 pub mod frame;
 pub mod payload;
+pub mod reporting;
 
 pub mod header;
 
@@ -59,3 +63,5 @@ pub mod lighting;
 pub mod hvac;
 // Chapter 10
 pub mod energy;
+
+pub mod sender;

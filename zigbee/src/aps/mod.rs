@@ -6,7 +6,7 @@
 //! `Network layer` and the `Application layer`.
 
 pub(crate) mod error;
-pub(crate) mod types;
+pub mod types;
 
 /// The APS data entity provides the data transmission service between two or
 /// more application entities located on the same network.

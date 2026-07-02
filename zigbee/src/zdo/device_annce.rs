@@ -20,8 +20,8 @@ const ZDO_ENDPOINT: u8 = 0x00;
 /// Serializes the ZDP payload (transaction sequence number +
 /// [`DeviceAnnce`]) and hands it to the APS layer for broadcast.
 pub async fn broadcast<M: zigbee_mac::mlme::Mlme>(
-    nlme: &mut Nlme<M>,
-    apsme: &mut Apsme,
+    nlme: &Nlme<M>,
+    apsme: &Apsme,
     zdp_seq: u8,
     annce: DeviceAnnce,
 ) -> Result<(), NetworkError> {
