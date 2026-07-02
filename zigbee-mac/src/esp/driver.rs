@@ -122,9 +122,18 @@ impl<'a> Ieee802154Driver<'a> {
         self.driver.received()
     }
 
-    /// Wait until the hardware signals a frame is available in the RX queue.
-    pub async fn wait_rx_available(&self) {
+    /// Clear the RX-available signal. Call this *before* draining the queue so
+    /// a frame that arrives after the drain still leaves the signal set and
+    /// wakes the next wait (avoids a lost-wakeup race).
+    pub fn reset_rx_signal(&self) {
         RX_SIGNAL.reset();
+    }
+
+    /// Wait until the hardware signals a frame is available in the RX queue.
+    /// Does not reset the signal — the caller resets via
+    /// [`Self::reset_rx_signal`] before draining, so a signal raised
+    /// between the drain and this wait is not lost.
+    pub async fn wait_rx_available(&self) {
         RX_SIGNAL.wait().await;
     }
 

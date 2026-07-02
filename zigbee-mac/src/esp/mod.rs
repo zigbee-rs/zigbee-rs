@@ -14,6 +14,7 @@ use ieee802154::mac::FrameContent;
 use ieee802154::mac::FrameType;
 use ieee802154::mac::FrameVersion;
 use ieee802154::mac::Header;
+use ieee802154::mac::PanId;
 use ieee802154::mac::command::CapabilityInformation;
 use ieee802154::mac::command::Command;
 use ieee802154::mac::security::SecurityContext;
@@ -59,8 +60,8 @@ impl core::fmt::Display for AddrHex<'_> {
 ///
 /// The radio is a single shared resource: the inner state is held behind an
 /// async mutex so the trait's `&self` methods can be driven concurrently from a
-/// receive task and a transmit path. The extended address is cached so it can be
-/// read without locking.
+/// receive task and a transmit path. The extended address is cached so it can
+/// be read without locking.
 pub struct EspMlme<'a> {
     inner: Mutex<CriticalSectionRawMutex, EspMlmeInner<'a>>,
     ieee_address: u64,
@@ -68,9 +69,14 @@ pub struct EspMlme<'a> {
 
 impl<'a> EspMlme<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
+        // Seed the MAC sequence number randomly (IEEE 802.15.4 §7.2.1.2). A fixed
+        // start means every reboot re-uses the same low numbers, which a parent's
+        // duplicate-frame filter (keyed by source + last-seen sequence) treats as
+        // stale: it MAC-acks the frame in hardware but silently drops it before
+        // the NWK layer, so an association request never gets a response.
         let inner = EspMlmeInner {
             driver: Ieee802154Driver::new(ieee802154, config),
-            seq_number: 0,
+            seq_number: (esp_hal::rng::Rng::new().random() & 0xff) as u8,
         };
         let ieee_address = inner.driver.ieee_address().0;
         Self {
@@ -126,10 +132,19 @@ impl EspMlmeInner<'_> {
     /// Wait for the next frame from the hardware RX queue (indefinite).
     async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
         loop {
+            // Wait for the radio to signal a fully-received, queued frame BEFORE
+            // draining. Draining goes through the radio's `received()`, which
+            // re-issues `RxStart`; doing that while a frame is still on the air
+            // aborts it — this is how a fast indirect response (~2 ms after a
+            // poll ack) was being dropped. RX stays armed via rx-on-when-idle, so
+            // we never need to drain mid-reception. The signal is level-held, so
+            // once set we keep draining until the queue is empty, then reset and
+            // wait for the next signal.
+            self.driver.wait_rx_available().await;
             if let Some(result) = self.poll_frame() {
                 return result;
             }
-            self.driver.wait_rx_available().await;
+            self.driver.reset_rx_signal();
         }
     }
 
@@ -244,7 +259,14 @@ impl EspMlmeInner<'_> {
     /// Uses the assigned short address as source when available (i.e.
     /// after a successful association), otherwise falls back to the
     /// extended address.
-    fn data_request_frame(&mut self, dest: Address) -> Result<[u8; 20], MacError> {
+    /// Build a data request command. Returns the buffer and the on-air length:
+    /// the written bytes plus 2 for the FCS the radio appends (the PHR length
+    /// must cover the FCS). The source address mode varies (extended before a
+    /// short address is assigned, short after), so the length is not fixed and
+    /// the caller must transmit exactly `&buf[..len]` — transmitting the whole
+    /// fixed-size array would append junk bytes and the parent would reject the
+    /// data request, never delivering the buffered (indirect) response.
+    fn data_request_frame(&mut self, dest: Address) -> Result<([u8; 20], usize), MacError> {
         let seq = self.sequence_number();
         let source = match self.driver.short_address() {
             Some(short) => Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(short)),
@@ -274,7 +296,59 @@ impl EspMlmeInner<'_> {
         )?;
         buf.write_with(offset, frame_content, ())?;
 
-        Ok(buf)
+        Ok((buf, *offset + 2))
+    }
+
+    /// Listen up to `timeout_us` for a MAC association response, draining and
+    /// discarding any other frame. Returns `None` on timeout. Does not flush,
+    /// so a response already queued (a parent that sent it directly) is not
+    /// lost.
+    async fn recv_association_response(
+        &mut self,
+        timeout_us: u64,
+    ) -> Result<Option<AssociationResponse>, MacError> {
+        // Poll the RX queue on a fixed interval, WAITING before each drain. The
+        // indirect response lands ~2 ms after the poll ack; the radio's RX is
+        // already armed (rx-on-when-idle re-arm in the ack ISR), so waiting lets
+        // it receive the response into the queue, and we then drain it. We must
+        // not drain (which goes through `received()` and re-issues `RxStart`)
+        // while a frame is still on the air — that aborts it — so the wait comes
+        // first and the interval (~4 ms) exceeds a frame's ~0.8 ms air time. Time
+        // based rather than signal based: the RX-available signal is not raised
+        // if the auto-ack path does not complete, but the frame is still queued.
+        // No logging in the loop — the UART critical section stalls the RX ISR.
+        let timeout = Timer::after_micros(timeout_us);
+        let receive = async {
+            loop {
+                Timer::after_micros(4000).await;
+                while let Some(result) = self.poll_frame() {
+                    if let ReceivedFrame {
+                        frame:
+                            Frame {
+                                content:
+                                    FrameContent::Command(Command::AssociationResponse(
+                                        short_addr,
+                                        status,
+                                    )),
+                                ..
+                            },
+                        ..
+                    } = result?
+                    {
+                        return Ok::<_, MacError>(AssociationResponse {
+                            device_address: zigbee_types::IeeeAddress(self.driver.ieee_address().0),
+                            association_address: zigbee_types::ShortAddress(short_addr.0),
+                            status,
+                        });
+                    }
+                }
+            }
+        };
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => Ok(None),
+            Either::Second(Ok(r)) => Ok(Some(r)),
+            Either::Second(Err(e)) => Err(e),
+        }
     }
 
     fn association_request_frame(
@@ -382,34 +456,41 @@ impl EspMlmeInner<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        // Use promiscuous mode during association: address filtering on this
-        // radio does not reliably deliver the association response (addressed to
-        // our extended address), and the parent/Trust Center completes the join
-        // from the association request regardless of our ack.
+        // Filter on our extended address (forced into the hw filter): the
+        // association response is an indirect transmission addressed to it
+        // (IEEE 802.15.4 §7.5.6.4). auto_ack_rx must stay on so we ack the
+        // response — promiscuous mode suppresses that ack and drowns the RX
+        // queue in ambient broadcast traffic, dropping the response.
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
             config.pan_id = Some(dest.pan_id().0);
             config.auto_ack_tx = true;
             config.auto_ack_rx = true;
-            config.promiscuous = true;
+            config.promiscuous = false;
         });
+        // arm the receiver after the channel/config change (as the scan path
+        // does): otherwise general RX is not enabled until a TX later triggers
+        // rx-on-when-idle, and the indirect association response that arrives
+        // right after the poll ack is never received
+        self.driver.start_receive();
 
         let ext_addr = self.driver.ieee_address();
-        let src = Address::Extended(dest.pan_id(), ext_addr);
+        // IEEE 802.15.4 §7.3.1.1: the association request source PAN identifier
+        // shall be the broadcast PAN (0xffff); the device is not yet a member of
+        // the target PAN. Source address is the extended address.
+        let src = Address::Extended(PanId::broadcast(), ext_addr);
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
-        // Retry the full association handshake (IEEE 802.15.4 §7.5.3.1): the
-        // association request itself can be lost or go unacked, in which case the
-        // parent never buffers a response and polling alone cannot recover. Each
-        // round re-sends the request, then listens (to catch a direct send) and
-        // polls (to prompt indirect delivery). Do not flush — a directly-sent
-        // response may already be queued.
+        // Retry the full association handshake (IEEE 802.15.4 §7.5.3.1). The
+        // request itself can be lost or go unacked, in which case the parent
+        // never buffers a response and polling cannot recover, so re-send the
+        // whole request each round. Within a round, listen first — an
+        // rx-on-when-idle parent sends the response directly, right after acking
+        // the request — then poll (data request) to prompt indirect delivery.
+        // Never flush: a directly-sent response may already be queued.
         let mut response = None;
         'association: for _ in 0..ASSOCIATE_REQUEST_RETRIES {
-            // Step 1: send the association request command. aMaxFrameRetries
-            // ack-retransmissions are applied; if it is still never acked the
-            // parent did not receive it, so resend the whole request.
             let frame = self.association_request_frame(dest, Some(src), capabilities)?;
             match self.transmit_acked(&frame).await {
                 Ok(()) => {}
@@ -424,59 +505,29 @@ impl EspMlmeInner<'_> {
                 self.driver.last_ack_frame_pending()
             );
 
-            // Steps 2-4: extract the (indirect) association response by polling
-            // with a data request (IEEE 802.15.4 §7.5.6.4); a missing ack just
-            // means the parent has nothing buffered yet, so keep trying.
+            // catch a directly-sent response before spending a poll round-trip
+            if let Some(r) = self.recv_association_response(timeout_us).await? {
+                response = Some(r);
+                break 'association;
+            }
+
             for _ in 0..ASSOCIATE_POLL_RETRIES {
-                let data_req = self.data_request_frame(dest)?;
-                match self.transmit_acked(&data_req).await {
+                let (data_req, len) = self.data_request_frame(dest)?;
+                match self.transmit_acked(&data_req[..len]).await {
                     Ok(()) | Err(MacError::NoAck) => {}
                     Err(e) => return Err(e),
                 }
-
-                let timeout = Timer::after_micros(timeout_us);
-                let receive = async {
-                    loop {
-                        let received = self.next_frame().await?;
-                        // log every frame seen in the window to diagnose missed
-                        // responses (collision loss vs. an unmatched format)
-                        log::debug!(
-                            "[MLME-ASSOCIATE] rx frame type={:?} pending={} src={} dst={}",
-                            received.frame.header.frame_type,
-                            received.frame.header.frame_pending,
-                            AddrHex(&received.frame.header.source),
-                            AddrHex(&received.frame.header.destination),
-                        );
-                        if let ReceivedFrame {
-                            frame:
-                                Frame {
-                                    content:
-                                        FrameContent::Command(Command::AssociationResponse(
-                                            short_addr,
-                                            status,
-                                        )),
-                                    ..
-                                },
-                            ..
-                        } = received
-                        {
-                            return Ok(AssociationResponse {
-                                device_address: zigbee_types::IeeeAddress(
-                                    self.driver.ieee_address().0,
-                                ),
-                                association_address: zigbee_types::ShortAddress(short_addr.0),
-                                status,
-                            });
-                        }
-                    }
-                };
-                match embassy_futures::select::select(timeout, receive).await {
-                    Either::First(_) => continue,
-                    Either::Second(Ok(r)) => {
-                        response = Some(r);
-                        break 'association;
-                    }
-                    Either::Second(Err(e)) => return Err(e),
+                // Arm RX for the buffered (indirect) response, which arrives
+                // ~2-3 ms after the poll ack. start_receive() is safe here: it is
+                // a no-op if the radio is already receiving and never aborts an
+                // in-flight frame (unlike draining via received(), which forces
+                // RxStart). Do not log in this window — the UART writer runs in a
+                // critical section and stalls the RX ISR. A TI/Z-Stack parent
+                // sends the response only once, so a single miss fails the round.
+                self.driver.start_receive();
+                if let Some(r) = self.recv_association_response(timeout_us).await? {
+                    response = Some(r);
+                    break 'association;
                 }
             }
         }
@@ -505,26 +556,22 @@ impl EspMlmeInner<'_> {
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError> {
         self.flush();
-        let data_req = self.data_request_frame(coord_address)?;
+        let (data_req, len) = self.data_request_frame(coord_address)?;
         // a missing ack means the parent has nothing buffered; still listen
-        match self.transmit_acked(&data_req).await {
+        match self.transmit_acked(&data_req[..len]).await {
             Ok(()) | Err(MacError::NoAck) => {}
             Err(e) => return Err(e),
         }
-        log::debug!("[MLME-POLL] tx data req");
+        // arm RX for the response (safe no-op if already receiving); no log in
+        // this window — the UART writer's critical section stalls the RX ISR and
+        // the response arrives ~2 ms after the poll ack
+        self.driver.start_receive();
 
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
         let timeout = Timer::after_micros(timeout_us);
         let receive = async {
             loop {
                 let received = self.next_frame().await?;
-                log::debug!(
-                    "[MLME-POLL] rx frame type={:?} pending={} src={} dst={}",
-                    received.frame.header.frame_type,
-                    received.frame.header.frame_pending,
-                    AddrHex(&received.frame.header.source),
-                    AddrHex(&received.frame.header.destination),
-                );
                 // ignore ambient broadcasts (link-status, route-request, etc.)
                 // sharing the listen window: a poll response is always a unicast
                 // addressed to this device. Returning early on a broadcast would
@@ -608,7 +655,11 @@ impl Mlme for EspMlme<'_> {
         channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError> {
-        self.inner.lock().await.scan_network(ty, channels, duration).await
+        self.inner
+            .lock()
+            .await
+            .scan_network(ty, channels, duration)
+            .await
     }
 
     async fn associate(
@@ -617,7 +668,11 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        self.inner.lock().await.associate(channel, dest, capabilities).await
+        self.inner
+            .lock()
+            .await
+            .associate(channel, dest, capabilities)
+            .await
     }
 
     async fn poll_data(

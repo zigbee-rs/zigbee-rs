@@ -280,8 +280,8 @@ where
     /// Passively receive and process one inbound NWK frame (no MLME-POLL).
     ///
     /// Awaits the next inbound MAC data frame via [`Mlme::receive`], strips and
-    /// decrypts the NWK header. A NWK data frame is returned to the caller; a NWK
-    /// command frame is processed internally and yields `Ok(None)` (no
+    /// decrypts the NWK header. A NWK data frame is returned to the caller; a
+    /// NWK command frame is processed internally and yields `Ok(None)` (no
     /// application data). Intended for the steady-state receive loop after
     /// joining.
     pub async fn receive_nwk_frame<'a>(
@@ -310,8 +310,8 @@ where
     ///
     /// Scaffolding extension point: every NWK command variant is matched so a
     /// handler can be filled in. Most are not yet acted upon — they are logged
-    /// and ignored. Returning unit keeps the caller's receive loop simple; add a
-    /// result type here if a handler needs to surface failures.
+    /// and ignored. Returning unit keeps the caller's receive loop simple; add
+    /// a result type here if a handler needs to surface failures.
     fn handle_nwk_command(&self, command: &crate::nwk::frame::command::Command<'_>) {
         use crate::nwk::frame::command::Command;
 
@@ -620,12 +620,11 @@ where
                 }
                 // Skip and keep polling on:
                 // - NoData: nothing buffered yet
-                // - SecurityError: before authorization the joiner has no network
-                //   key, so ambient network-key-secured traffic (e.g. link-status
-                //   or route-request broadcasts caught in the listen window) fails
-                //   NWK security
-                // - ParseError/InvalidFrame: a foreign/malformed frame picked up
-                //   in the listen window
+                // - SecurityError: before authorization the joiner has no network key, so ambient
+                //   network-key-secured traffic (e.g. link-status or route-request broadcasts
+                //   caught in the listen window) fails NWK security
+                // - ParseError/InvalidFrame: a foreign/malformed frame picked up in the listen
+                //   window
                 // The real (NWK-unsecured, §4.6.3.7.2) transport-key stays buffered
                 // at the parent until a subsequent poll retrieves it.
                 Err(

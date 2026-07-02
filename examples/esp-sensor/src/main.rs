@@ -37,8 +37,7 @@ use zigbee_types::ShortAddress;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 /// Extended PAN ID of the network to join.
-//const EXTENDED_PAN_ID: u64 = 0xf4ce36c17d3852e1;
-const EXTENDED_PAN_ID: u64 = 0x00124b002a9a7166;
+const EXTENDED_PAN_ID: u64 = 0x0000000000000000;
 
 /// Channel to scan on (must match the coordinator's channel).
 const CHANNEL: u8 = 11;
@@ -52,9 +51,12 @@ const SENSOR_ENDPOINT: u8 = 1;
 /// Coordinator-side endpoint to deliver reports to.
 const COORDINATOR_ENDPOINT: u8 = 1;
 
-/// rx-on-when-idle (bit 3) + allocate address (bit 7): an always-listening end
-/// device the coordinator delivers to directly.
-const CAPABILITY: u8 = 0x88;
+/// allocate address (bit 7), rx-on-when-idle (bit 3) cleared: a polling end
+/// device. TI Z-Stack delivers the association response (and all downstream
+/// traffic) via indirect transmission extracted by data-request polls; with
+/// rx-on-when-idle set it treats the device as always-on and never delivers the
+/// association response on the poll path, so the join stalls.
+const CAPABILITY: u8 = 0x80;
 
 /// Clusters served on [`SENSOR_ENDPOINT`] (input/server side).
 static INPUT_CLUSTERS: [u16; 2] = [basic::CLUSTER_ID, temperature::CLUSTER_ID];
