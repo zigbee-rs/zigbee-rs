@@ -289,9 +289,36 @@ where
         buf: &'a mut [u8],
     ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
         let (len, _lqi) = self.mac.receive(buf).await?;
+        self.process_received_nwk_frame(&mut buf[..len])
+    }
 
+    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved NWK
+    /// frame, if any.
+    ///
+    /// A sleepy end device (rxOnWhenIdle = FALSE) never receives unicast
+    /// frames passively: its parent buffers them for indirect transmission
+    /// and only delivers on a MAC data request. Returns `Ok(None)` when the
+    /// parent has nothing buffered or the frame carried no application data.
+    pub async fn poll_nwk_frame<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
+        let coord_addr = self.parent_address()?;
+        let (len, _lqi) = match self.mac.poll_data(coord_addr, buf).await {
+            Ok(result) => result,
+            Err(MacError::NoData) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        self.process_received_nwk_frame(&mut buf[..len])
+    }
+
+    /// Decrypt one inbound NWK frame and hand NWK commands to the NWK layer.
+    fn process_received_nwk_frame<'a>(
+        &self,
+        frame_buf: &'a mut [u8],
+    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
         let cx = SecurityContext::get();
-        let nwk_frame = cx.decrypt_nwk_frame_in_place(&mut buf[..len])?;
+        let nwk_frame = cx.decrypt_nwk_frame_in_place(frame_buf)?;
 
         match nwk_frame {
             NwkFrame::Data(data_frame) => Ok(Some(data_frame)),
@@ -647,10 +674,14 @@ where
         secure: bool,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        let panid = self.nib().panid();
         let mut buf = [0u8; 256];
         let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
-        let mac_dest = Address::Short(PanId(panid), MacShortAddress(destination.0));
+        // §3.6.5: an end device with rxOnWhenIdle = FALSE does not transmit
+        // broadcasts itself — it unicasts the frame to its parent, which
+        // relays it into the network on its behalf. (A MAC destination equal
+        // to the NWK broadcast address would pass no receiver's address
+        // filter: only the own short address and 0xFFFF are accepted.)
+        let mac_dest = self.parent_address()?;
         self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())
     }

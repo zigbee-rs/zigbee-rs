@@ -190,9 +190,35 @@ impl Apsme {
     ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
         // no application data: a NWK command frame (handled by the NWK layer) or
         // other non-data frame shared the receive path
-        let Some(mut nwk_data) = nlme.receive_nwk_frame(buf).await? else {
+        let Some(nwk_data) = nlme.receive_nwk_frame(buf).await? else {
             return Ok(None);
         };
+        self.process_nwk_data(nlme, nwk_data)
+    }
+
+    /// Poll the parent once (MLME-POLL) and process the retrieved APS frame.
+    ///
+    /// The sleepy-end-device counterpart of [`Self::receive_aps_frame`]: a
+    /// device with rxOnWhenIdle = FALSE only receives unicast frames its
+    /// parent buffered by explicitly polling for them (§3.6.6).
+    pub(crate) async fn poll_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        buf: &'a mut [u8],
+    ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
+        let Some(nwk_data) = nlme.poll_nwk_frame(buf).await? else {
+            return Ok(None);
+        };
+        self.process_nwk_data(nlme, nwk_data)
+    }
+
+    /// Process one inbound NWK data frame into an APSDE-DATA.indication
+    /// (§2.2.4.1.3); APS command frames are handled internally (§4.4).
+    fn process_nwk_data<'a, M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        mut nwk_data: crate::nwk::frame::DataFrame<'a>,
+    ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
         let src_short = nwk_data.header.source.0;
         let local_addr = nlme.nib().network_address();
         let aps_bytes = nwk_data.payload;
@@ -338,7 +364,7 @@ impl Apsme {
         let payload_len = payload.len().min(buf.len() - hdr_len);
         buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-        nlme.broadcast_data(nwk_broadcast, false, &buf[..hdr_len + payload_len])
+        nlme.broadcast_data(nwk_broadcast, true, &buf[..hdr_len + payload_len])
             .await
     }
 }

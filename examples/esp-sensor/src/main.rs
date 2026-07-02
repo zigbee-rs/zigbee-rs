@@ -107,13 +107,25 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
     }
 }
 
+/// How often the sleepy end device polls its parent for buffered frames.
+/// Must stay well below the parent's ~7.68 s indirect-transaction
+/// persistence time so interview requests are retrieved before they expire.
+const POLL_INTERVAL_MS: u64 = 500;
+
 /// Steady-state receive loop: answers ZDP discovery, Basic-cluster reads, and
-/// Configure Reporting requests.
+/// Configure Reporting requests. Each iteration polls the parent (MLME-POLL) —
+/// as a sleepy end device we only receive unicasts by asking for them — and
+/// then sleeps to pace the data requests.
 #[embassy_executor::task]
 async fn rx_task(device: &'static ZigbeeDevice<EspMlme<'static>>) {
-    device
-        .rx_loop(&descriptor_config(), &(BASIC, ConfigureReportingServer))
-        .await
+    let cfg = descriptor_config();
+    let handler = (BASIC, ConfigureReportingServer);
+    loop {
+        if let Err(e) = device.poll_and_dispatch(&cfg, &handler).await {
+            println!("Rx dispatch error: {e:?}");
+        }
+        Timer::after_millis(POLL_INTERVAL_MS).await;
+    }
 }
 
 #[esp_rtos::main]
@@ -142,6 +154,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let device: &'static ZigbeeDevice<EspMlme<'static>> =
         DEVICE.init(ZigbeeDevice::new(config, nlme));
     let mut bdb = BaseDeviceBehavior::new(config);
+    // The TC link key exchange polls would consume (and drop) the
+    // coordinator's interview requests right after joining, and this Trust
+    // Center does not answer REQUEST-KEY anyway. Skip it and start the
+    // receive loop immediately so the interview can complete.
+    bdb.tc_link_key_exchange_enabled = false;
 
     println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
     let join = bdb

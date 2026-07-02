@@ -330,7 +330,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let mut rx = [0u8; 256];
         let mut out = [0u8; 128];
 
-        let indication = match self.apsme.receive_aps_frame(&self.nlme, &mut rx).await {
+        let indication = match self.apsme.poll_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
             // ambient traffic we cannot decode (foreign or pre-key frames caught
             // in the receive window) — normal, not a fault.
@@ -448,11 +448,16 @@ impl<M: Mlme> ZigbeeDevice<M> {
         Some(result)
     }
 
-    /// Run the receive/dispatch loop forever (the steady-state RX task).
+    /// Run the poll/dispatch loop forever (the steady-state RX task).
     ///
-    /// Each iteration passively receives one frame and answers it. Intended to
-    /// be spawned as a dedicated task with `&'static self`; the application's
-    /// transmit path may call other `&self` methods concurrently.
+    /// Each iteration issues one MLME-POLL to the parent and answers the
+    /// retrieved frame. Intended to be spawned as a dedicated task with
+    /// `&'static self`; the application's transmit path may call other
+    /// `&self` methods concurrently.
+    ///
+    /// Back-to-back iterations poll the parent as fast as it answers "no
+    /// data" — prefer calling [`Self::poll_and_dispatch`] from your own loop
+    /// with a sleep in between to pace the data requests.
     pub async fn rx_loop(
         &self,
         cfg: &descriptor::DeviceDescriptorConfig<'_>,

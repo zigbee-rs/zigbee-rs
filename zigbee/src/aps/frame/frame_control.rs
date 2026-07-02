@@ -72,10 +72,12 @@ impl FrameControl {
     /// Whether the endpoint, cluster, and profile fields are present
     /// (§2.2.5.1).
     ///
-    /// True for data frames and for ack frames with ack_format set.
+    /// True for data frames and for data-frame acknowledgements. An ack
+    /// format sub-field of 1 marks an APS *command* frame acknowledgement,
+    /// which carries no addressing fields (§2.2.5.1.1.4).
     pub fn has_data_fields(&self) -> bool {
         matches!(self.frame_type(), FrameType::Data | FrameType::InterPan)
-            || (self.frame_type() == FrameType::Acknowledgement && self.ack_format_flag())
+            || (self.frame_type() == FrameType::Acknowledgement && !self.ack_format_flag())
     }
 
     /// Whether the destination endpoint field is present (§2.2.5.1.2).
