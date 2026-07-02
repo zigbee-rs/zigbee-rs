@@ -1,7 +1,13 @@
 #![no_std]
 #![no_main]
 
+mod persist;
+
+use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_time::Timer;
+use esp_storage::FlashStorage;
+use persist::Persist;
+use persist::Region;
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -136,8 +142,25 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
-    zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
+    // application owns the flash; the library only ever sees the RAM mirror
+    let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
+    let mut store = Persist::new(flash, persist::ZIGBEE_FLASH_RANGE);
+
+    // restore the information bases from flash, falling back to defaults on
+    // first boot (nothing persisted yet)
+    match store.load(Region::Nib).await {
+        Some(blob) => zigbee::nwk::nib::init_restore(Default::default(), blob),
+        None => zigbee::nwk::nib::init(Default::default()),
+    }
+    match store.load(Region::Aib).await {
+        Some(blob) => zigbee::aps::aib::init_restore(Default::default(), blob),
+        None => zigbee::aps::aib::init(Default::default()),
+    }
+
+    // frame counters advance on every secured frame but we only flush
+    // periodically; jump the outgoing counter ahead on boot so a value that
+    // may already have gone out since the last flush is never reused
+    bump_nwk_frame_counter(FRAME_COUNTER_HEADROOM);
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
     let mac = EspMlme::new(ieee802154, Default::default());
@@ -204,9 +227,14 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // Spawn the receive loop so the interview (Node_Desc / Active_EP /
     // Simple_Desc / Basic reads) is answered while the report loop runs.
     spawner.spawn(rx_task(device).expect("spawn rx_task"));
+    //
+    // persist the freshly negotiated keys and addressing so a reset rejoins
+    // instead of re-commissioning
+    persist_all(&mut store).await;
 
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths
+    let mut since_flush: u32 = 0;
     loop {
         zcl_seq = zcl_seq.wrapping_add(1);
 
@@ -240,7 +268,56 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             Err(e) => println!("Encode error: {:?}", e),
         }
 
+        // flush only every N reports: each flush rewrites the whole IB blob,
+        // so flushing per frame would burn flash erase cycles. the boot-time
+        // headroom bump covers the counters not yet persisted between flushes.
+        since_flush += 1;
+        if since_flush >= FLUSH_EVERY {
+            persist_all(&mut store).await;
+            since_flush = 0;
+        }
+
         sample = sample.wrapping_add(10);
         Timer::after_secs(30).await;
     }
+}
+
+/// outgoing frame counter values to skip on boot to cover frames sent since the
+/// last flush (see [`FLUSH_EVERY`]).
+const FRAME_COUNTER_HEADROOM: u32 = 1024;
+
+/// number of reports between flushes.
+const FLUSH_EVERY: u32 = 16;
+
+/// scratch large enough for whichever IB blob is bigger.
+const MAX_BLOB: usize = {
+    let n = zigbee::nwk::nib::NibId::BUFFER_SIZE;
+    let a = zigbee::aps::aib::AibId::BUFFER_SIZE;
+    if n > a { n } else { a }
+};
+
+/// snapshots both information bases to flash.
+async fn persist_all(store: &mut Persist<BlockingAsync<FlashStorage<'static>>>) {
+    let mut buf = [0u8; MAX_BLOB];
+
+    zigbee::nwk::nib::get_ref().export(&mut buf);
+    if let Err(e) = store.save(Region::Nib, &buf[..zigbee::nwk::nib::NibId::BUFFER_SIZE]).await {
+        println!("NIB persist failed: {e:?}");
+    }
+
+    zigbee::aps::aib::get_ref().export(&mut buf);
+    if let Err(e) = store.save(Region::Aib, &buf[..zigbee::aps::aib::AibId::BUFFER_SIZE]).await {
+        println!("AIB persist failed: {e:?}");
+    }
+}
+
+/// advances the active network key's outgoing frame counter.
+fn bump_nwk_frame_counter(by: u32) {
+    let nib = zigbee::nwk::nib::get_ref();
+    let mut set = nib.security_material_set();
+    let Some(first) = set.first_mut() else {
+        return; // no key yet (first boot)
+    };
+    first.outgoing_frame_counter = first.outgoing_frame_counter.saturating_add(by);
+    nib.set_security_material_set(set);
 }
