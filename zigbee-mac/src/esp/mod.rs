@@ -43,6 +43,9 @@ const ASSOCIATE_REQUEST_RETRIES: u8 = 3;
 /// Number of times the association response is polled per request attempt.
 const ASSOCIATE_POLL_RETRIES: u8 = 5;
 
+/// Number of poll rounds per steady-state MLME-POLL before reporting no data.
+const POLL_DATA_RETRIES: u8 = 5;
+
 /// ESP32-C6 [`Mlme`] implementation.
 ///
 /// The radio is a single shared resource: the inner state is held behind an
@@ -92,9 +95,14 @@ impl EspMlmeInner<'_> {
     /// goes unacknowledged.
     async fn transmit_acked(&mut self, frame: &[u8]) -> Result<(), MacError> {
         for _ in 0..=A_MAX_FRAME_RETRIES {
-            self.driver.transmit(frame).await?;
-            if self.driver.last_tx_acked() {
-                return Ok(());
+            match self.driver.transmit(frame).await {
+                Ok(()) if self.driver.last_tx_acked() => return Ok(()),
+                Ok(()) => {}
+                // no ack / channel busy: retransmit (§7.5.6.4)
+                Err(MacError::TxFailed) => {}
+                // a lost radio interrupt: retry rather than wedge the caller
+                Err(MacError::TxTimeout) => log::warn!("[MLME] tx-done timeout, retrying"),
+                Err(e) => return Err(e),
             }
         }
         Err(MacError::NoAck)
@@ -324,6 +332,51 @@ impl EspMlmeInner<'_> {
         }
     }
 
+    /// Drain the RX queue for one unicast data frame (non-blocking), discarding
+    /// broadcasts and non-data frames. An indirect (poll) response is always a
+    /// unicast, so ambient broadcasts never shadow it.
+    fn take_unicast_data(&mut self, buf: &mut [u8]) -> Result<Option<(usize, u8)>, MacError> {
+        while let Some(result) = self.poll_frame() {
+            let received = result?;
+            if matches!(
+                received.frame.header.destination,
+                Some(Address::Short(_, ieee802154::mac::ShortAddress(d))) if d >= 0xfff8
+            ) {
+                continue;
+            }
+            if let Some(data) = copy_data_payload(received, buf) {
+                return Ok(Some(data));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Wait up to `timeout_us` for one buffered unicast data frame.
+    ///
+    /// Shares [`Self::recv_association_response`]'s timing discipline: it waits
+    /// ~4 ms before each drain (the RX signal may not fire even when a frame is
+    /// queued) and never logs in the loop (the UART critical section stalls the
+    /// RX ISR). Returns `Ok(None)` when the window elapses with nothing for us.
+    async fn recv_data_response(
+        &mut self,
+        timeout_us: u64,
+        buf: &mut [u8],
+    ) -> Result<Option<(usize, u8)>, MacError> {
+        let timeout = Timer::after_micros(timeout_us);
+        let receive = async {
+            loop {
+                Timer::after_micros(4000).await;
+                if let Some(data) = self.take_unicast_data(buf)? {
+                    return Ok::<_, MacError>(Some(data));
+                }
+            }
+        };
+        match embassy_futures::select::select(timeout, receive).await {
+            Either::First(_) => Ok(None),
+            Either::Second(result) => result,
+        }
+    }
+
     fn association_request_frame(
         &mut self,
         dest: Address,
@@ -513,41 +566,31 @@ impl EspMlmeInner<'_> {
         coord_address: Address,
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError> {
-        self.flush();
-        let (data_req, len) = self.data_request_frame(coord_address)?;
-        // a missing ack means the parent has nothing buffered; still listen
-        match self.transmit_acked(&data_req[..len]).await {
-            Ok(()) | Err(MacError::NoAck) => {}
-            Err(e) => return Err(e),
+        // a response elicited by an earlier poll may have landed after its
+        // listen window closed; deliver it instead of flushing it away
+        if let Some((len, lqi)) = self.take_unicast_data(buf)? {
+            log::debug!("[MLME-POLL] rx buffered data len={len}");
+            return Ok((len, lqi));
         }
-        // arm RX for the response (~2ms after the poll ack); no log here — the
-        // UART critical section stalls the RX ISR
-        self.driver.start_receive();
-
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
-        let timeout = Timer::after_micros(timeout_us);
-        let receive = async {
-            loop {
-                let received = self.next_frame().await?;
-                // ignore ambient broadcasts in the listen window: a poll response
-                // is always a unicast, and returning early would let flush() drop it
-                if matches!(
-                    received.frame.header.destination,
-                    Some(Address::Short(_, ieee802154::mac::ShortAddress(d))) if d >= 0xfff8
-                ) {
-                    log::debug!("[MLME-POLL] skip broadcast in poll window");
-                    continue;
-                }
-                if let Some((len, lqi)) = copy_data_payload(received, buf) {
-                    log::debug!("[MLME-POLL] rx data len={len}");
-                    return Ok((len, lqi));
-                }
+
+        // retry the poll handshake (§7.5.6.3)
+        for _ in 0..POLL_DATA_RETRIES {
+            let (data_req, len) = self.data_request_frame(coord_address)?;
+            match self.transmit_acked(&data_req[..len]).await {
+                // no ack after retries: the parent may be busy; keep listening
+                Ok(()) | Err(MacError::NoAck) => {}
+                Err(e) => return Err(e),
             }
-        };
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => Err(MacError::NoData),
-            Either::Second(result) => result,
+            // arm RX for the indirect response (~2-3ms after the poll ack);
+            // start_receive is a no-op if already receiving
+            self.driver.start_receive();
+            if let Some((len, lqi)) = self.recv_data_response(timeout_us, buf).await? {
+                log::debug!("[MLME-POLL] rx data len={len}");
+                return Ok((len, lqi));
+            }
         }
+        Err(MacError::NoData)
     }
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
@@ -596,7 +639,14 @@ impl EspMlmeInner<'_> {
         // bytes during transmission
         let total_len = hdr_len + payload_len + 2;
 
-        self.driver.transmit(&frame_buf[..total_len]).await?;
+        // retransmit unicasts per §7.5.6.4: a single CCA-busy or lost ack must
+        // not drop a ZDO/APS response — the coordinator treats the silence as
+        // an interview failure
+        if is_broadcast {
+            self.driver.transmit(&frame_buf[..total_len]).await?;
+        } else {
+            self.transmit_acked(&frame_buf[..total_len]).await?;
+        }
         log::debug!("[MLME] tx data, len={total_len}");
 
         Ok(())
