@@ -38,6 +38,10 @@ pub enum Region {
 /// NIB is the larger of the two; bump this if the IB grows.
 const SCRATCH: usize = 2048;
 
+// a growing neighbor table would otherwise only surface as a runtime save error
+const _: () = assert!(SCRATCH >= zigbee::nwk::nib::NibId::BUFFER_SIZE);
+const _: () = assert!(SCRATCH >= zigbee::aps::aib::AibId::BUFFER_SIZE);
+
 /// key-value persistence over a NOR flash region.
 pub struct Persist<F: NorFlash> {
     map: MapStorage<u8, F, NoCache>,
