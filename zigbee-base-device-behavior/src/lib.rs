@@ -67,6 +67,10 @@ pub struct BaseDeviceBehavior {
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
+    /// Whether network steering performs the TC link key exchange (BDB §8.2
+    /// step 12). Disable to keep the default global TC link key and return
+    /// to the application right after Device_annce.
+    pub tc_link_key_exchange_enabled: bool,
 }
 
 impl BaseDeviceBehavior {
@@ -76,6 +80,7 @@ impl BaseDeviceBehavior {
             bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
+            tc_link_key_exchange_enabled: true,
         }
     }
 
@@ -147,9 +152,19 @@ impl BaseDeviceBehavior {
         Self::device_annce(device, capability_information).await?;
 
         // §8.2 step 12, §10.2.5
-        log::debug!("[BDB] step 12: TC link key exchange");
-        self.tc_link_key_exchange(device).await?;
-        log::debug!("[BDB] step 12: TC link key exchange complete");
+        if self.tc_link_key_exchange_enabled {
+            log::debug!("[BDB] step 12: TC link key exchange");
+            // non-fatal: a TC allowing legacy devices may never answer the
+            // REQUEST-KEY, keep the default global TC link key then
+            match self.tc_link_key_exchange(device).await {
+                Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
+                Err(e) => log::warn!(
+                    "[BDB] step 12: TC link key exchange failed ({e:?}), continuing with default TC link key"
+                ),
+            }
+        } else {
+            log::debug!("[BDB] step 12: TC link key exchange disabled, skipping");
+        }
 
         self.bdb_node_is_on_a_network = true;
         self.bdb_commissioning_status = BdbCommissioningStatus::Success;
@@ -207,7 +222,7 @@ impl BaseDeviceBehavior {
                     log::debug!("[BDB] received new TC link key");
                     break key_desc.key;
                 }
-                _ if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
+                _ if attempts >= BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS => {
                     log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);

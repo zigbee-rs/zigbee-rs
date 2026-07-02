@@ -260,38 +260,41 @@ where
         Ok(addr)
     }
 
-    async fn poll_nwk_data_request<'a>(
-        &self,
-        buf: &'a mut [u8],
-    ) -> Result<NwkDataFrame<'a>, NetworkError> {
+    /// Issue one MLME-POLL to the parent (§3.6.6).
+    ///
+    /// Returns the raw MAC payload length, or `None` when nothing was buffered.
+    async fn poll_parent(&self, buf: &mut [u8]) -> Result<Option<usize>, NetworkError> {
         let coord_addr = self.parent_address()?;
-        let (len, _lqi) = self.mac.poll_data(coord_addr, buf).await?;
-
-        let cx = SecurityContext::get();
-        let nwk_frame = cx.decrypt_nwk_frame_in_place(&mut buf[..len])?;
-
-        let NwkFrame::Data(data_frame) = nwk_frame else {
-            return Err(NetworkError::InvalidFrame);
-        };
-
-        Ok(data_frame)
+        match self.mac.poll_data(coord_addr, buf).await {
+            Ok((len, _lqi)) => Ok(Some(len)),
+            Err(MacError::NoData) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
-    /// Passively receive and process one inbound NWK frame (no MLME-POLL).
+    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved NWK
+    /// frame, if any.
     ///
-    /// Awaits the next inbound MAC data frame via [`Mlme::receive`], strips and
-    /// decrypts the NWK header. A NWK data frame is returned to the caller; a
-    /// NWK command frame is processed internally and yields `Ok(None)` (no
-    /// application data). Intended for the steady-state receive loop after
-    /// joining.
-    pub async fn receive_nwk_frame<'a>(
+    /// A sleepy end device only receives buffered unicasts by polling.
+    /// Returns `Ok(None)` when nothing was buffered or the frame carried no
+    /// application data.
+    pub async fn poll_nwk_frame<'a>(
         &self,
         buf: &'a mut [u8],
     ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
-        let (len, _lqi) = self.mac.receive(buf).await?;
+        let Some(len) = self.poll_parent(buf).await? else {
+            return Ok(None);
+        };
+        self.process_received_nwk_frame(&mut buf[..len])
+    }
 
+    /// Decrypt one inbound NWK frame and hand NWK commands to the NWK layer.
+    fn process_received_nwk_frame<'a>(
+        &self,
+        frame_buf: &'a mut [u8],
+    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
         let cx = SecurityContext::get();
-        let nwk_frame = cx.decrypt_nwk_frame_in_place(&mut buf[..len])?;
+        let nwk_frame = cx.decrypt_nwk_frame_in_place(frame_buf)?;
 
         match nwk_frame {
             NwkFrame::Data(data_frame) => Ok(Some(data_frame)),
@@ -614,19 +617,15 @@ where
             // need to get rid of the 'a lifetime in the loop
             // &mut buf is still guaranteed within 'a
             let buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
-            match self.poll_nwk_data_request(buf).await {
-                Ok(data_frame) => {
+            match self.poll_nwk_frame(buf).await {
+                Ok(Some(data_frame)) => {
                     return Ok(data_frame);
                 }
-                // keep polling: NoData (nothing buffered), or ambient traffic the
-                // pre-key joiner cannot decode (SecurityError/ParseError/InvalidFrame).
-                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a later poll
-                Err(
-                    NetworkError::MacError(MacError::NoData)
-                    | NetworkError::SecurityError(_)
-                    | NetworkError::ParseError
-                    | NetworkError::InvalidFrame,
-                ) => (),
+                // keep polling: nothing buffered, a NWK command frame, or ambient
+                // traffic the pre-key joiner cannot decode (SecurityError/ParseError).
+                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a
+                // later poll
+                Ok(None) | Err(NetworkError::SecurityError(_) | NetworkError::ParseError) => (),
                 Err(e) => return Err(e),
             }
         }
@@ -647,10 +646,11 @@ where
         secure: bool,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        let panid = self.nib().panid();
         let mut buf = [0u8; 256];
         let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
-        let mac_dest = Address::Short(PanId(panid), MacShortAddress(destination.0));
+        // §3.6.5: a sleepy end device unicasts broadcasts to its parent,
+        // which relays them into the network on its behalf
+        let mac_dest = self.parent_address()?;
         self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())
     }

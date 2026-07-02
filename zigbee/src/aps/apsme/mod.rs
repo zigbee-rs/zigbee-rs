@@ -175,7 +175,8 @@ impl Apsme {
         Ok(command)
     }
 
-    /// Passively receive and process one inbound APS frame.
+    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved APS
+    /// frame.
     ///
     /// An APS **data** frame is surfaced as an APSDE-DATA.indication
     /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4)
@@ -183,16 +184,24 @@ impl Apsme {
     /// coordinator is NWK-encrypted only, so only APS-unsecured data frames
     /// produce an indication. `src_address` carries the NWK source so the
     /// caller can address a response back to the requester.
-    pub(crate) async fn receive_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
+    pub(crate) async fn poll_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
         buf: &'a mut [u8],
     ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
-        // no application data: a NWK command frame (handled by the NWK layer) or
-        // other non-data frame shared the receive path
-        let Some(mut nwk_data) = nlme.receive_nwk_frame(buf).await? else {
+        let Some(nwk_data) = nlme.poll_nwk_frame(buf).await? else {
             return Ok(None);
         };
+        self.process_nwk_data(nlme, nwk_data)
+    }
+
+    /// Process one inbound NWK data frame into an APSDE-DATA.indication
+    /// (§2.2.4.1.3); APS command frames are handled internally (§4.4).
+    fn process_nwk_data<'a, M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        mut nwk_data: crate::nwk::frame::DataFrame<'a>,
+    ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
         let src_short = nwk_data.header.source.0;
         let local_addr = nlme.nib().network_address();
         let aps_bytes = nwk_data.payload;
@@ -338,7 +347,7 @@ impl Apsme {
         let payload_len = payload.len().min(buf.len() - hdr_len);
         buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-        nlme.broadcast_data(nwk_broadcast, false, &buf[..hdr_len + payload_len])
+        nlme.broadcast_data(nwk_broadcast, true, &buf[..hdr_len + payload_len])
             .await
     }
 }

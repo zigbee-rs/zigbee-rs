@@ -107,13 +107,22 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
     }
 }
 
-/// Steady-state receive loop: answers ZDP discovery, Basic-cluster reads, and
-/// Configure Reporting requests.
+/// Parent poll interval; must stay below the parent's ~7.68 s
+/// indirect-transaction persistence time.
+const POLL_INTERVAL_MS: u64 = 500;
+
+/// Steady-state receive loop: polls the parent and answers ZDP discovery,
+/// Basic-cluster reads, and Configure Reporting requests.
 #[embassy_executor::task]
 async fn rx_task(device: &'static ZigbeeDevice<EspMlme<'static>>) {
-    device
-        .rx_loop(&descriptor_config(), &(BASIC, ConfigureReportingServer))
-        .await
+    let cfg = descriptor_config();
+    let handler = (BASIC, ConfigureReportingServer);
+    loop {
+        if let Err(e) = device.poll_and_dispatch(&cfg, &handler).await {
+            println!("Rx dispatch error: {e:?}");
+        }
+        Timer::after_millis(POLL_INTERVAL_MS).await;
+    }
 }
 
 #[esp_rtos::main]
@@ -142,6 +151,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let device: &'static ZigbeeDevice<EspMlme<'static>> =
         DEVICE.init(ZigbeeDevice::new(config, nlme));
     let mut bdb = BaseDeviceBehavior::new(config);
+    // the tclk exchange polls would eat the coordinator's interview requests
+    // and this trust center never answers REQUEST-KEY anyway
+    bdb.tc_link_key_exchange_enabled = false;
 
     println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
     let join = bdb

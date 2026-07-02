@@ -1,13 +1,31 @@
+use embassy_futures::select::Either;
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_time::Timer;
 use esp_hal::efuse;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Error as Ieee802154Error;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
 
-static TX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+use crate::mlme::MacError;
+
+/// Outcome of a transmission, reported by the radio's tx-done / tx-failed
+/// interrupts. `Failed` covers no-ACK (after the hardware's 200 ms ACK wait),
+/// CCA-busy and coex aborts.
+#[derive(Clone, Copy)]
+enum TxEvent {
+    Done,
+    Failed,
+}
+
+static TX_SIGNAL: Signal<CriticalSectionRawMutex, TxEvent> = Signal::new();
 static RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Safety net above the hardware's 200 ms ACK wait; with both tx-done and
+/// tx-failed wired, exceeding this means a genuinely lost interrupt.
+const TX_DONE_TIMEOUT_MS: u64 = 250;
 
 /// Derive an EUI-64 extended address from a 6-byte EUI-48 MAC.
 ///
@@ -54,6 +72,9 @@ impl<'a> Ieee802154Driver<'a> {
             .driver
             .set_rx_available_callback_fn(Self::rx_callback);
         driver.driver.set_tx_done_callback_fn(Self::tx_callback);
+        driver
+            .driver
+            .set_tx_failed_callback_fn(Self::tx_failed_callback);
 
         driver.config.rx_when_idle = true;
         driver.config.ext_addr = Some(ieee_address.0);
@@ -84,20 +105,29 @@ impl<'a> Ieee802154Driver<'a> {
     }
 
     fn tx_callback() {
-        TX_SIGNAL.signal(());
+        TX_SIGNAL.signal(TxEvent::Done);
+    }
+
+    fn tx_failed_callback() {
+        TX_SIGNAL.signal(TxEvent::Failed);
     }
 
     /// Transmit a frame. The radio automatically returns to RX mode
     /// after transmission completes (`rx_when_idle = true`).
     ///
-    /// For an acknowledgment-requested frame the transmit-done signal fires
-    /// only after the ACK is received or the hardware ACK-wait times out, so
-    /// [`Self::last_tx_acked`] is valid once this returns.
-    pub async fn transmit(&mut self, frame: &[u8]) -> Result<(), Ieee802154Error> {
+    /// For an acknowledgment-requested frame tx-done fires only once the ACK is
+    /// received, so [`Self::last_tx_acked`] is valid on `Ok`. Returns
+    /// [`MacError::TxFailed`] on no-ACK, CCA-busy or a coex abort.
+    pub async fn transmit(&mut self, frame: &[u8]) -> Result<(), MacError> {
         TX_SIGNAL.reset();
         self.driver.transmit_raw(frame, true)?;
-        TX_SIGNAL.wait().await;
-        Ok(())
+        // bound the wait: a lost interrupt would otherwise block here forever
+        // while holding the radio lock, wedging the whole stack
+        match select(Timer::after_millis(TX_DONE_TIMEOUT_MS), TX_SIGNAL.wait()).await {
+            Either::First(_) => Err(MacError::TxTimeout),
+            Either::Second(TxEvent::Done) => Ok(()),
+            Either::Second(TxEvent::Failed) => Err(MacError::TxFailed),
+        }
     }
 
     /// Whether the most recent transmission was acknowledged. Only meaningful

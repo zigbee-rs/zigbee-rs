@@ -100,18 +100,18 @@ pub const MAX_PARENT_LINK_COST: u8 = 3;
 /// is typically in the range 0–255.
 pub fn link_cost_from_lqi(lqi: u8) -> u8 {
     match lqi {
-        // Excellent link
-        200..=255 => 1,
-        // Good link
-        150..=199 => 2,
-        // Acceptable
-        120..=149 => 3,
+        // Excellent link (≥ -55 dBm)
+        128..=255 => 1,
+        // Good link (≥ -65 dBm)
+        77..=127 => 2,
+        // Acceptable (≥ -75 dBm)
+        26..=76 => 3,
         // Marginal
-        90..=119 => 5,
+        11..=25 => 5,
         // Poor
-        50..=89 => 6,
+        1..=10 => 6,
         // Very poor
-        _ => 7,
+        0 => 7,
     }
 }
 
