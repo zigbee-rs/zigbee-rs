@@ -11,6 +11,8 @@
 #![allow(dead_code)]
 
 use core::ops::Not;
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::Ordering;
 
 use basemgt::ApsmeAddGroupConfirm;
 use basemgt::ApsmeAddGroupRequest;
@@ -31,6 +33,9 @@ use byte::BytesExt;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 
+use super::apsde::ApsdeSapIndication;
+use super::apsde::ApsdeSapIndicationStatus;
+use super::apsde::SecurityStatus;
 use super::binding::ApsBindingTable;
 use super::frame::CommandFrame;
 use super::frame::Frame;
@@ -40,6 +45,9 @@ use super::frame::frame_control::FrameControl;
 use super::frame::frame_control::FrameType;
 use super::frame::header::Header;
 use super::types::Address;
+use super::types::DstAddrMode;
+use super::types::SrcAddrMode;
+use super::types::SrcEndpoint;
 use super::types::TxOptions;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
@@ -78,7 +86,7 @@ pub(crate) struct Apsme {
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
     /// apsCounter AIB attribute (§4.4.11)
-    pub(crate) aps_counter: u8,
+    pub(crate) aps_counter: AtomicU8,
 }
 
 impl Apsme {
@@ -87,8 +95,13 @@ impl Apsme {
             supports_binding_table: true,
             binding_table: ApsBindingTable::new(),
             joined_network: None,
-            aps_counter: 0,
+            aps_counter: AtomicU8::new(0),
         }
+    }
+
+    /// Next APS counter value (§4.4.11), wrapping.
+    fn next_aps_counter(&self) -> u8 {
+        self.aps_counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
     }
 
     fn is_joined(&self) -> bool {
@@ -101,15 +114,13 @@ impl Apsme {
     /// for `dest_ieee` before handing it to the NWK layer. The NWK layer
     /// always encrypts with the network key.
     pub(crate) async fn send_command<M: zigbee_mac::mlme::Mlme>(
-        &mut self,
-        nlme: &mut Nlme<M>,
+        &self,
+        nlme: &Nlme<M>,
         destination: ShortAddress,
         dest_ieee: IeeeAddress,
         command: Command,
         aps_secure: bool,
     ) -> Result<(), NetworkError> {
-        self.aps_counter = self.aps_counter.wrapping_add(1);
-
         let frame_control = FrameControl::default()
             .set_frame_type(FrameType::Command)
             .set_security_flag(aps_secure);
@@ -121,7 +132,7 @@ impl Apsme {
             cluster_id: None,
             profile_id: None,
             source_endpoint: None,
-            counter: self.aps_counter,
+            counter: self.next_aps_counter(),
             extended_header: None,
         };
 
@@ -144,7 +155,7 @@ impl Apsme {
     /// command (§4.4).
     pub(crate) async fn poll_command<M: zigbee_mac::mlme::Mlme>(
         &self,
-        nlme: &mut Nlme<M>,
+        nlme: &Nlme<M>,
         retries: u8,
     ) -> Result<Command, NetworkError> {
         let mut buf = [0u8; 128];
@@ -162,10 +173,98 @@ impl Apsme {
         Ok(command)
     }
 
+    /// Passively receive and process one inbound APS frame.
+    ///
+    /// An APS **data** frame is surfaced as an APSDE-DATA.indication
+    /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4) and
+    /// yields `Ok(None)`. ZDO/ZCL traffic from a centralized coordinator is
+    /// NWK-encrypted only, so only APS-unsecured data frames produce an
+    /// indication. `src_address` carries the NWK source so the caller can address
+    /// a response back to the requester.
+    pub(crate) async fn receive_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        buf: &'a mut [u8],
+    ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
+        // no application data: a NWK command frame (handled by the NWK layer) or
+        // other non-data frame shared the receive path
+        let Some(mut nwk_data) = nlme.receive_nwk_frame(buf).await? else {
+            return Ok(None);
+        };
+        let src_short = nwk_data.header.source.0;
+        let local_addr = nlme.nib().network_address();
+        let aps_bytes = nwk_data.payload;
+
+        let offset = &mut 0;
+        let header: Header = aps_bytes.read_with(offset, ())?;
+
+        // APS command frame (§4.4): process internally, no application data.
+        if header.frame_control.frame_type() == FrameType::Command {
+            // SAFETY: re-borrows the same buffer; decryption is in place
+            let aps_buf = unsafe { nwk_data.payload_as_mut() };
+            let cx = SecurityContext::get();
+            let frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
+            if let Frame::ApsCommand(CommandFrame { command, .. }) = frame {
+                self.handle_aps_command(&command);
+            }
+            return Ok(None);
+        }
+
+        // only APS-unsecured data frames are dispatched as indications
+        if header.frame_control.frame_type() != FrameType::Data
+            || header.frame_control.security_flag()
+        {
+            return Ok(None);
+        }
+
+        let asdu = &aps_bytes[*offset..];
+        let src_endpoint =
+            SrcEndpoint::new(header.source_endpoint.unwrap_or(0)).unwrap_or_default();
+
+        Ok(Some(ApsdeSapIndication {
+            dst_addr_mode: DstAddrMode::Network,
+            dst_address: Address::Network(local_addr),
+            dst_endpoint: header.destination_endpoint.unwrap_or(0),
+            src_addr_mode: SrcAddrMode::Short,
+            src_address: Address::Network(src_short),
+            src_endpoint,
+            profile_id: header.profile_id.unwrap_or(0),
+            cluster_id: header.cluster_id.unwrap_or(0),
+            asdu,
+            status: ApsdeSapIndicationStatus::Success,
+            security_status: SecurityStatus::SecuredNwkKey,
+            link_quality: 0,
+            rx_time: 0,
+        }))
+    }
+
+    /// Process an inbound APS command frame (§4.4).
+    ///
+    /// Scaffolding extension point: every APS command variant is matched so a
+    /// handler can be filled in. During commissioning these commands are handled
+    /// inline by the security manager ([`Self::poll_command`] /
+    /// `ZigbeeDevice::poll_transport_key`); here, in the steady-state receive
+    /// loop, they are logged and ignored until a handler is needed.
+    fn handle_aps_command(&self, command: &Command) {
+        match command {
+            // key transport (§4.4.3): the network/link keys are obtained inline
+            // during join; an unsolicited key update would be handled here.
+            Command::TransportKey(_) => log::trace!("[APS] transport key (ignored)"),
+            // TODO: a Request-Key addressed to us (e.g. app link key) would be
+            // answered here.
+            Command::RequestKey(_) => log::trace!("[APS] request key (ignored)"),
+            // TC link-key verification (§4.4.9): driven inline by the BDB TC link
+            // key exchange.
+            Command::VerifyKey(_) => log::trace!("[APS] verify key (ignored)"),
+            Command::ConfirmKey(_) => log::trace!("[APS] confirm key (ignored)"),
+            Command::Reserved(id) => log::trace!("[APS] reserved command {id:#04x} (ignored)"),
+        }
+    }
+
     /// Send a unicast APS data frame to a specific destination (§2.2.5.1).
     pub(crate) async fn unicast_data<M: zigbee_mac::mlme::Mlme>(
-        &mut self,
-        nlme: &mut Nlme<M>,
+        &self,
+        nlme: &Nlme<M>,
         destination: ShortAddress,
         dst_endpoint: u8,
         cluster_id: u16,
@@ -173,8 +272,6 @@ impl Apsme {
         src_endpoint: u8,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        self.aps_counter = self.aps_counter.wrapping_add(1);
-
         let frame_control = FrameControl::default()
             .set_frame_type(FrameType::Data)
             .set_delivery_mode(DeliveryMode::Unicast);
@@ -186,7 +283,7 @@ impl Apsme {
             cluster_id: Some(cluster_id),
             profile_id: Some(profile_id),
             source_endpoint: Some(src_endpoint),
-            counter: self.aps_counter,
+            counter: self.next_aps_counter(),
             extended_header: None,
         };
 
@@ -198,7 +295,7 @@ impl Apsme {
         let payload_len = payload.len().min(buf.len() - hdr_len);
         buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
 
-        nlme.send_data(destination, false, &buf[..hdr_len + payload_len])
+        nlme.send_data(destination, true, &buf[..hdr_len + payload_len])
             .await
     }
 
@@ -207,8 +304,8 @@ impl Apsme {
     /// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
     /// RxOnWhenIdle devices).
     pub(crate) async fn broadcast_data<M: zigbee_mac::mlme::Mlme>(
-        &mut self,
-        nlme: &mut Nlme<M>,
+        &self,
+        nlme: &Nlme<M>,
         nwk_broadcast: ShortAddress,
         dst_endpoint: u8,
         cluster_id: u16,
@@ -216,8 +313,6 @@ impl Apsme {
         src_endpoint: u8,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        self.aps_counter = self.aps_counter.wrapping_add(1);
-
         let frame_control = FrameControl::default()
             .set_frame_type(FrameType::Data)
             .set_delivery_mode(DeliveryMode::Broadcast);
@@ -229,7 +324,7 @@ impl Apsme {
             cluster_id: Some(cluster_id),
             profile_id: Some(profile_id),
             source_endpoint: Some(src_endpoint),
-            counter: self.aps_counter,
+            counter: self.next_aps_counter(),
             extended_header: None,
         };
 

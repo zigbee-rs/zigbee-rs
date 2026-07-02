@@ -200,6 +200,20 @@ impl_byte! {
     pub struct ShortAddress(pub u16);
 }
 
+impl ShortAddress {
+    /// Network coordinator (Zigbee R22 §3.6.1.1: the coordinator is always
+    /// assigned address `0x0000`).
+    pub const COORDINATOR: Self = Self(0x0000);
+    /// Broadcast to all devices in the PAN (§3.6.5).
+    pub const BROADCAST_ALL: Self = Self(0xffff);
+    /// Broadcast to all routers and the coordinator (§3.6.5).
+    pub const BROADCAST_ROUTERS_AND_COORDINATOR: Self = Self(0xfffc);
+    /// Broadcast to all devices with `RxOnWhenIdle = TRUE` (§3.6.5).
+    pub const BROADCAST_RX_ON_WHEN_IDLE: Self = Self(0xfffd);
+    /// Broadcast to all low-power routers (§3.6.5).
+    pub const BROADCAST_LOW_POWER_ROUTERS: Self = Self(0xfffb);
+}
+
 impl From<u16> for ShortAddress {
     fn from(value: u16) -> Self {
         Self(value)

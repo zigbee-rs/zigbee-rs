@@ -4,7 +4,11 @@
 //! [ZigBee Base Device Behavior Specification Rev. 13]: https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf
 //!
 //! This crate defines the standard commissioning procedures all devices must
-//! support. It provides a high-level abstraction over the zigbee stack.
+//! support. It is a thin commissioning orchestrator: it does not own the
+//! [`ZigbeeDevice`] or the [`Nlme`] — instead, callers pass them by mutable
+//! reference for the duration of a commissioning procedure. Post-commissioning
+//! the application interacts with the stack through the APSDE-SAP exposed on
+//! [`ZigbeeDevice`].
 #![no_std]
 #![allow(unused)]
 
@@ -53,24 +57,22 @@ use zigbee_types::ShortAddress;
 
 /// Base Device Behavior (BDB) commissioning manager.
 ///
-/// Orchestrates the standard commissioning procedures defined in the
-/// BDB specification: initialization, network steering, network
-/// formation, finding & binding, and touchlink.
-pub struct BaseDeviceBehavior<M: Mlme> {
-    device: ZigbeeDevice,
-    nlme: Nlme<M>,
+/// Orchestrates the standard commissioning procedures defined in the BDB
+/// specification: initialization, network steering, network formation,
+/// finding & binding, and touchlink. The application owns the
+/// [`ZigbeeDevice`] and the [`Nlme`]; commissioning methods borrow them
+/// for the duration of the procedure.
+pub struct BaseDeviceBehavior {
+    config: Config,
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
 }
 
-impl<M: Mlme> BaseDeviceBehavior<M> {
-    pub fn new(nlme: Nlme<M>, config: Config) -> Self {
-        let device = ZigbeeDevice::new(config);
-
+impl BaseDeviceBehavior {
+    pub fn new(config: Config) -> Self {
         Self {
-            device,
-            nlme,
+            config,
             bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
@@ -87,7 +89,10 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
     /// Restores persistent state and, if the node is already on a network,
     /// attempts to rejoin it. Returns without error if the node is not on
     /// a network — the caller should then invoke [`network_steering`].
-    pub async fn start_initialization_procedure(&mut self) -> Result<(), NetworkError> {
+    pub async fn start_initialization_procedure<M: Mlme>(
+        &mut self,
+        _device: &ZigbeeDevice<M>,
+    ) -> Result<(), NetworkError> {
         // §7.1 step 1: restore persistent state (NIB/AIB backed by storage)
         // §7.1 steps 2-8: TODO implement rejoin path
         Ok(())
@@ -100,8 +105,9 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
     /// NLME-JOIN for the specified extended PAN ID, and finally the
     /// APS transport key exchange to obtain the network key from the
     /// Trust Center.
-    pub async fn network_steering(
+    pub async fn network_steering<M: Mlme>(
         &mut self,
+        device: &ZigbeeDevice<M>,
         extended_pan_id: IeeeAddress,
         channels: core::ops::Range<u8>,
         scan_duration: u8,
@@ -113,7 +119,7 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
 
         // §8.2 step 1
-        self.nlme.network_discovery(channels, scan_duration).await?;
+        device.nlme().network_discovery(channels, scan_duration).await?;
 
         // §8.2 step 5
         let request = NlmeJoinRequest {
@@ -122,20 +128,25 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
             capability_information,
             security_enabled: false,
         };
-        let confirm = self.nlme.join(request).await;
+        let confirm = device.nlme().join(request).await;
         if confirm.status != NlmeJoinStatus::Success {
             self.bdb_commissioning_status = BdbCommissioningStatus::NoNetwork;
             return Ok(confirm);
         }
 
         // §8.2 step 9
-        self.device.poll_transport_key(&mut self.nlme).await?;
+        log::debug!("[BDB] step 9: poll for network key (transport-key)");
+        device.poll_transport_key().await?;
+        log::debug!("[BDB] step 9: network key installed");
 
         // §8.2 step 11
-        self.device_annce(capability_information).await?;
+        log::debug!("[BDB] step 11: broadcast Device_annce");
+        Self::device_annce(device, capability_information).await?;
 
         // §8.2 step 12, §10.2.5
-        self.tc_link_key_exchange().await?;
+        log::debug!("[BDB] step 12: TC link key exchange");
+        self.tc_link_key_exchange(device).await?;
+        log::debug!("[BDB] step 12: TC link key exchange complete");
 
         self.bdb_node_is_on_a_network = true;
         self.bdb_commissioning_status = BdbCommissioningStatus::Success;
@@ -143,8 +154,8 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
     }
 
     /// Broadcast a ZDO Device_annce (§2.4.3.1.11, BDB §8.2 step 11).
-    async fn device_annce(
-        &mut self,
+    async fn device_annce<M: Mlme>(
+        device: &ZigbeeDevice<M>,
         capability_information: CapabilityInformation,
     ) -> Result<(), NetworkError> {
         let nib = nib::get_ref();
@@ -153,7 +164,7 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
             ieee_addr: nib.ieee_address(),
             capability: capability_information,
         };
-        self.device.device_annce(&mut self.nlme, annce).await
+        device.device_annce(annce).await
     }
 
     /// Trust Center link key exchange procedure (BDB §10.2.5).
@@ -161,7 +172,10 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
     /// Replaces the default TC link key (key A) with a unique key (key B)
     /// through a three-phase exchange: REQUEST-KEY → TRANSPORT-KEY →
     /// VERIFY-KEY → CONFIRM-KEY.
-    async fn tc_link_key_exchange(&mut self) -> Result<(), NetworkError> {
+    async fn tc_link_key_exchange<M: Mlme>(
+        &mut self,
+        device: &ZigbeeDevice<M>,
+    ) -> Result<(), NetworkError> {
         let tc_short = ShortAddress(0x0000);
         let tc_ieee = aib::get_ref().trust_center_address();
 
@@ -171,9 +185,8 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
         let mut attempts = 0u8;
         let new_key = loop {
             log::debug!("[BDB] send_aps_command");
-            self.device
+            device
                 .send_aps_command(
-                    &mut self.nlme,
                     tc_short,
                     tc_ieee,
                     Command::RequestKey(RequestKey::TrustCenterLinkKey),
@@ -183,9 +196,8 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
             attempts += 1;
             log::debug!("[BDB] send_aps_command ok");
 
-            match self
-                .device
-                .poll_aps_command(&mut self.nlme, BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
+            match device
+                .poll_aps_command(BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
                 .await
             {
                 Ok(Command::TransportKey(TransportKey::TrustCenterLinkKey(key_desc))) => {
@@ -231,9 +243,8 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
 
         let mut attempts = 0u8;
         loop {
-            self.device
+            device
                 .send_aps_command(
-                    &mut self.nlme,
                     tc_short,
                     tc_ieee,
                     Command::VerifyKey(VerifyKey {
@@ -246,9 +257,8 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
                 .await?;
             attempts += 1;
 
-            match self
-                .device
-                .poll_aps_command(&mut self.nlme, BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
+            match device
+                .poll_aps_command(BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
                 .await
             {
                 Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
@@ -272,11 +282,11 @@ impl<M: Mlme> BaseDeviceBehavior<M> {
     }
 
     fn is_end_device(&self) -> bool {
-        self.device.logical_type() == LogicalType::EndDevice
+        self.config.device_type == LogicalType::EndDevice
     }
 
     fn is_router(&self) -> bool {
-        self.device.logical_type() == LogicalType::Router
+        self.config.device_type == LogicalType::Router
     }
 }
 
