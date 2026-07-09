@@ -203,7 +203,7 @@ impl Apsme {
         mut nwk_data: crate::nwk::frame::DataFrame<'a>,
     ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
         let src_short = nwk_data.header.source.0;
-        let local_addr = nlme.nib().network_address();
+        let local_addr = *nlme.nib().network_address();
         let aps_bytes = nwk_data.payload;
 
         let offset = &mut 0;

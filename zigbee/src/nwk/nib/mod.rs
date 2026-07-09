@@ -8,25 +8,21 @@ use core::ops::DerefMut;
 use byte::BytesExt;
 use byte::TryRead;
 use byte::TryWrite;
-use embedded_storage::ReadStorage;
-use embedded_storage::Storage;
 use heapless::Vec;
 use heapless::index_map::FnvIndexMap;
-use spin::Mutex;
 use zigbee_macros::construct_ib;
 use zigbee_macros::impl_byte;
 use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
-use zigbee_types::storage::InMemoryStorage;
 
 use crate::security::frame::SecurityLevel;
 
 impl_byte! {
     #[tag(u8)]
     /// Zigbee device type.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum DeviceType {
         /// Zigbee coordinator
         Coordinator = 0x00,
@@ -122,67 +118,105 @@ construct_ib! {
     pub struct Nib {
         /// Sequence number
         sequence_number: u8, // random value, read only
+        #[storage_key = 9]
         passive_ack_timeout: u32, // stack profile
+        #[storage_key = 10]
         max_broadcast_retries: u8 = 0x03,
+        #[storage_key = 11]
         max_children: u8, // stack profile
+        #[storage_key = 12]
         max_depth: u8, // stack profile, read only
+        #[storage_key = 13]
         max_routers: u8, // stack profile
+        #[storage_key = 8]
         neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
+        #[storage_key = 14]
         network_broadcast_delivery_time: u32, // stack profile
+        #[storage_key = 15]
         report_constant_cost: u8 = 0x00, // 0x00 - 0x01
         route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 16]
         sym_link: bool = false, // bool
+        #[storage_key = 7]
         capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
+        #[storage_key = 17]
         addr_alloc: u8 = 0x0, // 0x00 - 0x02
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 18]
         use_tree_routing: bool = true,
+        #[storage_key = 19]
         manager_addr: u16 = 0x0000, // <= 0xfff7
+        #[storage_key = 20]
         max_source_route: u8 = 0x0c,
+        #[storage_key = 4]
         update_id: u8 = 0x00,
+        #[storage_key = 21]
         transaction_persistence_time: u16 = 0x01f4,
+        #[storage_key = 1]
         network_address: u16 = 0xffff, //  <= 0xfff7
+        #[storage_key = 22]
         stack_profile: u8, // <= 0x0f
         broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
+        #[storage_key = 23]
         group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
+        #[storage_key = 3]
         extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 24]
         use_multicast: bool = true,
         route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 25]
         is_concentrator: bool = false,
+        #[storage_key = 26]
         concentrator_radius: u8 = 0x00,
+        #[storage_key = 27]
         concentrator_discovery_time: u8 = 0x00,
         // nib security attributes
+        #[storage_key = 28]
         security_level: SecurityLevel = SecurityLevel::EncMic32,
+        #[storage_key = 6]
         security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
+        #[storage_key = 5]
         active_key_seq_number: u8 = 0x00,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 29]
         all_fresh: bool = true,
 
+        #[storage_key = 30]
         link_status_period: u8 = 0x0f,
+        #[storage_key = 31]
         router_age_limit: u8 = 0x03,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 32]
         unique_addr: bool = true,
+        #[storage_key = 33]
         address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 34]
         time_stamp: bool = false,
+        #[storage_key = 2]
         panid: u16 = 0xffff,
         tx_total: u16 = 0x0000,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 35]
         leave_request_allowed: bool = true,
+        #[storage_key = 36]
         parent_information: u8 = 0x00,
+        #[storage_key = 37]
         end_device_timeout_default: u8 = 0x08,
         #[ctx = ()]
         #[ctx_write = ()]
+        #[storage_key = 38]
         leave_request_without_rejoin_allowed: bool = true,
         ieee_address: IeeeAddress, // read only
         // mac_interface_table: StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>,
@@ -228,7 +262,7 @@ impl CapabilityInformation {
 }
 
 impl_byte! {
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct NwkNeighbor {
         //pub extended_address: IeeeAddress,
         pub network_address: ShortAddress,
@@ -282,7 +316,7 @@ impl_byte! {
 }
 
 /// See Table 3-67.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub(crate) enum RouteStatus {
     Active,
@@ -295,7 +329,7 @@ pub(crate) enum RouteStatus {
 
 impl_byte! {
     /// See Table 3-66.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct NwkRoute {
         pub destination_address: ShortAddress,
         pub next_hop_address: ShortAddress,
@@ -340,7 +374,7 @@ impl NwkRoute {
 
 impl_byte! {
     /// See Table 3-70.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct TransactionRecord {
         pub source_address: ShortAddress,
         pub sequence_number: u8,
@@ -350,7 +384,7 @@ impl_byte! {
 
 impl_byte! {
     /// See Table 3-59.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct RouteRecord {
         pub network_address: ShortAddress,
         pub relay_count: u16,
@@ -359,6 +393,7 @@ impl_byte! {
 }
 
 impl_byte! {
+    #[derive(Debug, Clone)]
     pub struct AddressMap {
         pub ieee_address: IeeeAddress,
         pub network_address: ShortAddress,
@@ -366,12 +401,12 @@ impl_byte! {
 }
 
 /// See Table 3-61.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MacInterface {}
 
 impl_byte! {
     /// See Table 4-3.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct NetworkSecurityMaterialDescriptor {
         pub key_seq_number: u8,
         pub outgoing_frame_counter: u32,
@@ -383,12 +418,16 @@ impl_byte! {
 
 impl_byte! {
     /// See Table 4-4.
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct IncomingFrameCounterDescriptor {
         pub sender_address: IeeeAddress,
         pub incoming_frame_counter: u32,
     }
 }
+
+/// Flash persistence of the NIB.
+#[cfg(feature = "storage")]
+pub(crate) mod storage;
 
 #[cfg(test)]
 mod tests {
@@ -396,8 +435,7 @@ mod tests {
 
     #[test]
     fn nib_set_vec() {
-        let nib = Nib::new(NibStorage::default());
-        nib.init();
+        let nib = Nib::new();
 
         let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, 1>::new();
         set.push(NetworkSecurityMaterialDescriptor {
@@ -408,41 +446,41 @@ mod tests {
             network_key_type: 0,
         })
         .unwrap();
-        nib.set_security_material_set(set);
+        nib.update_security_material_set(|value| *value = set);
         assert_eq!(nib.security_material_set().len(), 1);
     }
 
     #[test]
     fn nib_default() {
-        init(NibStorage::default());
+        init();
         let nib = get_ref();
 
-        assert_eq!(nib.max_broadcast_retries(), 0x03);
-        assert_eq!(nib.report_constant_cost(), 0x00);
-        assert!(!nib.sym_link());
-        assert_eq!(nib.capability_information(), CapabilityInformation(0x00));
-        assert_eq!(nib.addr_alloc(), 0x0);
-        assert!(nib.use_tree_routing());
-        assert_eq!(nib.manager_addr(), 0x0000);
-        assert_eq!(nib.max_source_route(), 0x0c);
-        assert_eq!(nib.update_id(), 0x00);
-        assert_eq!(nib.transaction_persistence_time(), 0x01f4);
-        assert_eq!(nib.network_address(), 0xffff);
-        assert_eq!(nib.extended_panid(), 0x0000_0000_0000_0000);
-        assert!(nib.use_multicast());
-        assert!(!nib.is_concentrator());
-        assert_eq!(nib.concentrator_radius(), 0x00);
-        assert_eq!(nib.concentrator_discovery_time(), 0x00);
-        assert_eq!(nib.link_status_period(), 0x0f);
-        assert_eq!(nib.router_age_limit(), 0x03);
-        assert!(nib.unique_addr());
-        assert!(!nib.time_stamp());
-        assert_eq!(nib.panid(), 0xffff);
-        assert_eq!(nib.tx_total(), 0x0000);
-        assert!(nib.leave_request_allowed());
-        assert_eq!(nib.parent_information(), 0x00);
-        assert_eq!(nib.end_device_timeout_default(), 0x08);
-        assert!(nib.leave_request_without_rejoin_allowed());
+        assert_eq!(*nib.max_broadcast_retries(), 0x03);
+        assert_eq!(*nib.report_constant_cost(), 0x00);
+        assert!(!*nib.sym_link());
+        assert_eq!(*nib.capability_information(), CapabilityInformation(0x00));
+        assert_eq!(*nib.addr_alloc(), 0x0);
+        assert!(*nib.use_tree_routing());
+        assert_eq!(*nib.manager_addr(), 0x0000);
+        assert_eq!(*nib.max_source_route(), 0x0c);
+        assert_eq!(*nib.update_id(), 0x00);
+        assert_eq!(*nib.transaction_persistence_time(), 0x01f4);
+        assert_eq!(*nib.network_address(), 0xffff);
+        assert_eq!(*nib.extended_panid(), 0x0000_0000_0000_0000);
+        assert!(*nib.use_multicast());
+        assert!(!*nib.is_concentrator());
+        assert_eq!(*nib.concentrator_radius(), 0x00);
+        assert_eq!(*nib.concentrator_discovery_time(), 0x00);
+        assert_eq!(*nib.link_status_period(), 0x0f);
+        assert_eq!(*nib.router_age_limit(), 0x03);
+        assert!(*nib.unique_addr());
+        assert!(!*nib.time_stamp());
+        assert_eq!(*nib.panid(), 0xffff);
+        assert_eq!(*nib.tx_total(), 0x0000);
+        assert!(*nib.leave_request_allowed());
+        assert_eq!(*nib.parent_information(), 0x00);
+        assert_eq!(*nib.end_device_timeout_default(), 0x08);
+        assert!(*nib.leave_request_without_rejoin_allowed());
     }
 
     #[test]

@@ -55,7 +55,6 @@ use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
 use crate::nwk::nib::Nib;
-use crate::nwk::nib::NibStorage;
 use crate::nwk::nib::NwkNeighbor;
 use crate::nwk::nib::link_cost_from_lqi;
 use crate::nwk::nib::relationship;
@@ -133,7 +132,7 @@ where
         let header = NwkHeader {
             frame_control,
             destination,
-            source: ShortAddress(nib.network_address()),
+            source: ShortAddress(*nib.network_address()),
             radius: 30,
             sequence_number: seq,
             destination_ieee: None,
@@ -158,7 +157,7 @@ where
     }
 
     /// Returns a reference to the global NIB singleton.
-    pub fn nib(&self) -> &'static Nib<NibStorage> {
+    pub fn nib(&self) -> &'static Nib {
         crate::nwk::nib::get_ref()
     }
 
@@ -222,7 +221,7 @@ where
             .collect();
 
         // When nwkStackProfile == 1 prefer minimum depth (§3.6.1.4.1.1).
-        if stack_profile == 1 {
+        if *stack_profile == 1 {
             candidates.sort_unstable_by_key(|&i| table[i].depth);
         }
 
@@ -254,7 +253,7 @@ where
             .find(|n| n.relationship == relationship::PARENT)
             .ok_or(NetworkError::NotJoined)?;
         let addr = Address::Short(
-            PanId(self.nib().panid()),
+            PanId(*self.nib().panid()),
             MacShortAddress(parent.network_address.0),
         );
         Ok(addr)
@@ -402,7 +401,7 @@ where
             })
             .collect();
 
-        self.nib().set_neighbor_table(StorageVec(neighbor_table));
+        self.nib().update_neighbor_table(|value| *value = StorageVec(neighbor_table));
 
         // Build network descriptors for the confirm primitive.
         let network_descriptors = scan_result
@@ -470,7 +469,7 @@ where
         }
 
         // A device already joined must not re-associate (§3.6.1.4.1.1).
-        if self.nib().network_address() != 0xffff {
+        if *self.nib().network_address() != 0xffff {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
 
@@ -478,7 +477,7 @@ where
 
         // Whether joining as router or end device, set nwkParentInformation
         // to 0 before searching (spec requirement).
-        self.nib().set_parent_information(0);
+        self.nib().update_parent_information(|value| *value = 0);
 
         let join_as_router = request.capability_information.device_type();
 
@@ -498,7 +497,7 @@ where
         // Store in NIB (§3.6.1.4.1.1: "the capability information shall be
         // stored as the value of the nwkCapabilityInformation NIB attribute").
         self.nib()
-            .set_capability_information(request.capability_information);
+            .update_capability_information(|value| *value = request.capability_information);
 
         // --- Try each candidate in order (§3.6.1.4.1.1) ---
         let mut last_status = NlmeJoinStatus::NotPermitted;
@@ -519,10 +518,10 @@ where
                         AssociationStatus::Successful => {
                             // --- Success: update NIB (§3.6.1.4.1.1) ---
                             let assigned_addr = response.association_address;
-                            self.nib().set_network_address(assigned_addr.0);
-                            self.nib().set_ieee_address(response.device_address);
-                            self.nib().set_extended_panid(request.extended_pan_id.0);
-                            self.nib().set_panid(pan_id.0);
+                            self.nib().update_network_address(|value| *value = assigned_addr.0);
+                            self.nib().update_ieee_address(|value| *value = response.device_address);
+                            self.nib().update_extended_panid(|value| *value = request.extended_pan_id.0);
+                            self.nib().update_panid(|value| *value = pan_id.0);
 
                             // Read parent fields before the clearing loop
                             // zeroes them (§3.6.1.4.1.1).
@@ -530,30 +529,28 @@ where
                                 self.nib().neighbor_table()[candidate_idx].update_id;
                             let parent_channel =
                                 self.nib().neighbor_table()[candidate_idx].logical_channel;
-                            self.nib().set_update_id(parent_update_id);
+                            self.nib().update_update_id(|value| *value = parent_update_id);
 
                             // Update the neighbor table: set the relationship
                             // field to 0x00 (parent) and clear optional
                             // Table 3-64 fields on all entries (they should
                             // not be retained after joining).
-                            let mut table = self.nib().neighbor_table();
-                            table[candidate_idx].relationship = relationship::PARENT;
-                            for neighbor in table.iter_mut() {
-                                neighbor.extended_pan_id = IeeeAddress(0);
-                                neighbor.logical_channel = 0;
-                                neighbor.depth = 0;
-                                neighbor.permit_joining = false;
-                                neighbor.potential_parent = 0;
-                                neighbor.router_capacity = false;
-                                neighbor.end_device_capacity = false;
-                                neighbor.update_id = 0;
-                                neighbor.pan_id = 0xffff;
-                            }
-                            // Discard entries not on the chosen network
-                            // (they are no longer relevant).
                             // TODO: retain only entries belonging to the
                             // joined network.
-                            self.nib().set_neighbor_table(table);
+                            self.nib().update_neighbor_table(|table| {
+                                table[candidate_idx].relationship = relationship::PARENT;
+                                for neighbor in table.iter_mut() {
+                                    neighbor.extended_pan_id = IeeeAddress(0);
+                                    neighbor.logical_channel = 0;
+                                    neighbor.depth = 0;
+                                    neighbor.permit_joining = false;
+                                    neighbor.potential_parent = 0;
+                                    neighbor.router_capacity = false;
+                                    neighbor.end_device_capacity = false;
+                                    neighbor.update_id = 0;
+                                    neighbor.pan_id = 0xffff;
+                                }
+                            });
 
                             return NlmeJoinConfirm {
                                 status: NlmeJoinStatus::Success,
@@ -567,15 +564,15 @@ where
                         AssociationStatus::NetworkAtCapacity => {
                             // Mark this neighbor as not a potential parent so
                             // we don't retry (§3.6.1.4.1.1).
-                            let mut table = self.nib().neighbor_table();
-                            table[candidate_idx].potential_parent = 0;
-                            self.nib().set_neighbor_table(table);
+                            self.nib().update_neighbor_table(|table| {
+                                table[candidate_idx].potential_parent = 0;
+                            });
                             last_status = NlmeJoinStatus::PanAtCapacity;
                         }
                         AssociationStatus::AccessDenied => {
-                            let mut table = self.nib().neighbor_table();
-                            table[candidate_idx].potential_parent = 0;
-                            self.nib().set_neighbor_table(table);
+                            self.nib().update_neighbor_table(|table| {
+                                table[candidate_idx].potential_parent = 0;
+                            });
                             last_status = NlmeJoinStatus::PanAccessDenied;
                         }
                         _ => {
@@ -688,7 +685,6 @@ mod tests {
     use zigbee_mac::mlme::ScanType;
 
     use super::*;
-    use crate::nwk::nib::NibStorage;
 
     // tests share a global NIB singleton — serialize access
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -791,11 +787,11 @@ mod tests {
     fn make_nlme(mac: MockMlme) -> (std::sync::MutexGuard<'static, ()>, Nlme<MockMlme>) {
         let guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         use crate::nwk::nib;
-        nib::try_init(NibStorage::default());
+        nib::try_init();
         nib::reset();
         // reset() only rewrites fields with a declared default; StorageVec fields
         // (no default) persist across tests in the global NIB, so clear explicitly
-        nib::get_ref().set_neighbor_table(StorageVec::new());
+        nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
         (guard, Nlme::new(mac))
     }
 
@@ -832,7 +828,7 @@ mod tests {
         table
             .push(make_neighbor(0xBBBB, 0x0001, 0x9999, 200, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
@@ -852,7 +848,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0001, 0x1234, 10, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
@@ -867,7 +863,7 @@ mod tests {
         let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
         n.end_device_capacity = false;
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
@@ -881,7 +877,7 @@ mod tests {
         let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
         n.router_capacity = false;
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), true);
         assert!(candidates.is_empty());
@@ -899,7 +895,7 @@ mod tests {
         n.router_capacity = false;
         n.end_device_capacity = true;
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
@@ -908,7 +904,7 @@ mod tests {
     #[test]
     fn select_parent_sorts_by_depth_for_stack_profile_1() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
-        nlme.nib().set_stack_profile(1);
+        nlme.nib().update_stack_profile(|value| *value = 1);
 
         let mut table = StorageVec::new();
         table
@@ -920,7 +916,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0002, 0x1234, 200, 2))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 3);
@@ -938,7 +934,7 @@ mod tests {
         let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
         n.permit_joining = false;
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
@@ -952,7 +948,7 @@ mod tests {
         let mut n = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
         n.potential_parent = 0;
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert!(candidates.is_empty());
@@ -969,7 +965,7 @@ mod tests {
         let mut n2 = make_neighbor(0xAAAA, 0x0001, 0x1234, 200, 0);
         n2.update_id = 3;
         table.push(n2).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let candidates = nlme.select_parent_candidates(IeeeAddress(0x1234), false);
         assert_eq!(candidates.len(), 1);
@@ -997,7 +993,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
 
@@ -1006,10 +1002,10 @@ mod tests {
         assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
         assert_eq!(confirm.channel, 11);
 
-        assert_eq!(nlme.nib().network_address(), 0x1234);
-        assert_eq!(nlme.nib().extended_panid(), 0xDEAD);
-        assert_eq!(nlme.nib().panid(), 0xAAAA);
-        assert_eq!(nlme.nib().update_id(), 0);
+        assert_eq!(*nlme.nib().network_address(), 0x1234);
+        assert_eq!(*nlme.nib().extended_panid(), 0xDEAD);
+        assert_eq!(*nlme.nib().panid(), 0xAAAA);
+        assert_eq!(*nlme.nib().update_id(), 0);
 
         let table = nlme.nib().neighbor_table();
         assert_eq!(table[0].relationship, 0x00);
@@ -1032,18 +1028,18 @@ mod tests {
         n.update_id = 7;
         let mut table = StorageVec::new();
         table.push(n).unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
-        assert_eq!(nlme.nib().update_id(), 7);
+        assert_eq!(*nlme.nib().update_id(), 7);
     }
 
     #[test]
     fn join_fails_when_no_candidates() {
         let mac = MockMlme::new();
         let (_guard, nlme) = make_nlme(mac);
-        nlme.nib().set_neighbor_table(StorageVec::new());
+        nlme.nib().update_neighbor_table(|value| *value = StorageVec::new());
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
     }
@@ -1052,7 +1048,7 @@ mod tests {
     fn join_fails_when_already_joined() {
         let mac = MockMlme::new();
         let (_guard, nlme) = make_nlme(mac);
-        nlme.nib().set_network_address(0x0001);
+        nlme.nib().update_network_address(|value| *value = 0x0001);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
@@ -1092,7 +1088,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0001, 0xDEAD, 200, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
@@ -1120,7 +1116,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::PanAccessDenied);
@@ -1139,7 +1135,7 @@ mod tests {
         table
             .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
             .unwrap();
-        nlme.nib().set_neighbor_table(table);
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::MacError);

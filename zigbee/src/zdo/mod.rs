@@ -127,6 +127,17 @@ impl<M: Mlme> ZigbeeDevice<M> {
         }
     }
 
+    /// Forgets the joined network so the next boot re-commissions: clears the
+    /// network address and security material.
+    ///
+    /// With flash-backed information bases, flush the storage before
+    /// resetting so this state survives the reboot.
+    pub fn forget_network(&self) {
+        let nib = nib::get_ref();
+        nib.update_network_address(|value| *value = 0xffff);
+        nib.update_security_material_set(|set| set.clear());
+    }
+
     /// Access the owned NWK management entity (used by BDB during
     /// commissioning).
     pub fn nlme(&self) -> &Nlme<M> {
@@ -253,35 +264,35 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 log::debug!("[ZDO] received network key {:02x?}", nwk_key.key);
 
                 let aib = aib::get_ref();
-                aib.set_trust_center_address(nwk_key.source_address);
-                let mut key_set = aib.device_key_pair_set();
-                if !key_set
-                    .iter()
-                    .any(|k| k.device_address == nwk_key.source_address)
-                {
-                    let _ = key_set.push(DeviceKeyPairDescriptor {
-                        device_address: nwk_key.source_address,
-                        key_attributes: KeyAttribute::ProvisionalKey,
-                        link_key: zigbee_types::ByteArray(crate::security::TRUST_CENTER_LINK_KEY),
-                        outgoing_frame_counter: 0,
-                        incoming_frame_counter: 0,
-                        link_key_type: LinkKeyType::GlobalLinkKey,
-                    });
-                    aib.set_device_key_pair_set(key_set);
-                }
+                aib.update_trust_center_address(|value| *value = nwk_key.source_address);
+                aib.update_device_key_pair_set(|key_set| {
+                    if !key_set
+                        .iter()
+                        .any(|k| k.device_address == nwk_key.source_address)
+                    {
+                        let _ = key_set.push(DeviceKeyPairDescriptor {
+                            device_address: nwk_key.source_address,
+                            key_attributes: KeyAttribute::ProvisionalKey,
+                            link_key: zigbee_types::ByteArray(crate::security::TRUST_CENTER_LINK_KEY),
+                            outgoing_frame_counter: 0,
+                            incoming_frame_counter: 0,
+                            link_key_type: LinkKeyType::GlobalLinkKey,
+                        });
+                    }
+                });
 
                 let nib = nib::get_ref();
-                let mut sec_material = nib.security_material_set();
-                sec_material.clear();
-                let _ = sec_material.push(NetworkSecurityMaterialDescriptor {
-                    key_seq_number: nwk_key.sequence_number,
-                    outgoing_frame_counter: 0,
-                    incoming_frame_counter_set: StorageVec::new(),
-                    key: nwk_key.key,
-                    network_key_type: 0x01,
+                nib.update_security_material_set(|sec_material| {
+                    sec_material.clear();
+                    let _ = sec_material.push(NetworkSecurityMaterialDescriptor {
+                        key_seq_number: nwk_key.sequence_number,
+                        outgoing_frame_counter: 0,
+                        incoming_frame_counter_set: StorageVec::new(),
+                        key: nwk_key.key,
+                        network_key_type: 0x01,
+                    });
                 });
-                nib.set_security_material_set(sec_material);
-                nib.set_active_key_seq_number(nwk_key.sequence_number);
+                nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
             }
             TransportKey::ApplicationLinkKey(_app_key) => (), // TODO
             TransportKey::TrustCenterLinkKey(_tcl_key) => (), // TODO
@@ -404,8 +415,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
         out: &mut [u8],
     ) -> Option<(u16, usize)> {
         let seq = *asdu.first()?;
-        let nwk_addr = self.nlme.nib().network_address();
-        let ieee_addr = self.nlme.nib().ieee_address();
+        let nwk_addr = *self.nlme.nib().network_address();
+        let ieee_addr = *self.nlme.nib().ieee_address();
 
         let result = match cluster {
             descriptor::NODE_DESC_REQ => (

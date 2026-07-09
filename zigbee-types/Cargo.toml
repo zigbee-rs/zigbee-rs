@@ -12,5 +12,6 @@ byte.workspace = true
 itertools.workspace = true
 heapless.workspace = true
 embedded-storage.workspace = true
+spin.workspace = true
 
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }

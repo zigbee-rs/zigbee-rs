@@ -29,7 +29,6 @@ use zigbee_types::IeeeAddress;
 
 use crate::aps::aib;
 use crate::aps::aib::Aib;
-use crate::aps::aib::AibStorage;
 use crate::aps::aib::DeviceKeyPairDescriptor;
 use crate::aps::aib::KeyAttribute;
 use crate::aps::aib::LinkKeyType;
@@ -46,7 +45,6 @@ use crate::nwk::nib;
 use crate::nwk::nib::IncomingFrameCounterDescriptor;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nib::Nib;
-use crate::nwk::nib::NibStorage;
 use crate::security::frame::KeyIdentifier;
 use crate::security::primitives::Aes128Mmo;
 use crate::security::primitives::HmacAes128Mmo;
@@ -103,12 +101,12 @@ impl From<SecurityError> for byte::Error {
 }
 
 pub struct SecurityContext<'a> {
-    nib: &'a Nib<NibStorage>,
-    aib: &'a Aib<AibStorage>,
+    nib: &'a Nib,
+    aib: &'a Aib,
 }
 
 impl<'a> SecurityContext<'a> {
-    pub fn new(nib: &'a Nib<NibStorage>, aib: &'a Aib<AibStorage>) -> Self {
+    pub fn new(nib: &'a Nib, aib: &'a Aib) -> Self {
         Self { nib, aib }
     }
 
@@ -126,22 +124,24 @@ impl<'a> SecurityContext<'a> {
         nwk_frame: NwkFrame<'_>,
         frame_buffer: &mut [u8],
     ) -> Result<usize, SecurityError> {
-        let sec_level = self.nib.security_level();
+        let sec_level = *self.nib.security_level();
         let _mic_len = sec_level.mic_length();
 
-        let key_sequence_number = self.nib.active_key_seq_number();
-        let mut sec_material_set = self.nib.security_material_set();
-        let sec_material = sec_material_set
-            .iter_mut()
-            .find(|k| k.key_seq_number == key_sequence_number)
-            .ok_or(SecurityError::Unspecified)?;
-        let frame_counter = sec_material.outgoing_frame_counter;
-        let local_addr = self.nib.ieee_address();
-        let key = sec_material.key;
-
-        // increment outgoing frame counter (§4.3.1.1)
-        sec_material.outgoing_frame_counter += 1;
-        self.nib.set_security_material_set(sec_material_set);
+        let key_sequence_number = *self.nib.active_key_seq_number();
+        // read the key + counter and increment the counter (§4.3.1.1) in one
+        // atomic update
+        let mut security_material = None;
+        self.nib.update_security_material_set(|set| {
+            if let Some(material) = set
+                .iter_mut()
+                .find(|k| k.key_seq_number == key_sequence_number)
+            {
+                security_material = Some((material.outgoing_frame_counter, material.key));
+                material.outgoing_frame_counter += 1;
+            }
+        });
+        let (frame_counter, key) = security_material.ok_or(SecurityError::Unspecified)?;
+        let local_addr = *self.nib.ieee_address();
 
         let mut security_control = SecurityControl::default();
         security_control.set_security_level(sec_level);
@@ -186,7 +186,7 @@ impl<'a> SecurityContext<'a> {
     ) -> Result<NwkFrame<'b>, SecurityError> {
         // Sec 4.3.1.2: overwrite the security level with the value from the NIB
         // (default 0x05)
-        let sec_level = self.nib.security_level();
+        let sec_level = *self.nib.security_level();
 
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
@@ -212,35 +212,40 @@ impl<'a> SecurityContext<'a> {
             return Err(SecurityError::InvalidData);
         }
 
-        // 2) select the key from NIB
-        let sec_material = self.nib.security_material_set();
-        let sec_material = sec_material
-            .iter()
-            .find(|k| {
-                aux_hdr
-                    .key_sequence_number
-                    .is_some_and(|ksn| ksn == k.key_seq_number)
-            })
-            .ok_or(SecurityError::Unspecified)?;
-        let key = sec_material.key.as_slice();
-
-        // 3) anti-replay: reject unless the frame counter is strictly greater
-        // than the last accepted one for this sender. Using `<=` means a replay
-        // of the most-recently-accepted counter is rejected too, not just older
-        // ones.
         let Some(source_address) = aux_hdr.source_address else {
             return Err(SecurityError::InvalidData);
         };
-        if sec_material
-            .incoming_frame_counter_set
-            .iter()
-            .find(|i| source_address == i.sender_address)
-            .is_some_and(|inc_frame_counter| {
-                aux_hdr.frame_counter <= inc_frame_counter.incoming_frame_counter
-            })
-        {
-            return Err(SecurityError::InvalidData);
-        }
+
+        // 2) select the key from NIB; guard scoped so the write lock below
+        // cannot deadlock
+        let key = {
+            let sec_material_set = self.nib.security_material_set();
+            let sec_material = sec_material_set
+                .iter()
+                .find(|k| {
+                    aux_hdr
+                        .key_sequence_number
+                        .is_some_and(|ksn| ksn == k.key_seq_number)
+                })
+                .ok_or(SecurityError::Unspecified)?;
+
+            // 3) anti-replay: reject unless the frame counter is strictly
+            // greater than the last accepted one for this sender. Using `<=`
+            // means a replay of the most-recently-accepted counter is rejected
+            // too, not just older ones.
+            if sec_material
+                .incoming_frame_counter_set
+                .iter()
+                .find(|i| source_address == i.sender_address)
+                .is_some_and(|inc_frame_counter| {
+                    aux_hdr.frame_counter <= inc_frame_counter.incoming_frame_counter
+                })
+            {
+                return Err(SecurityError::InvalidData);
+            }
+            sec_material.key
+        };
+        let key = key.as_slice();
 
         // write back the security level from NIB to aux header
         // the updated values is required as input to ccm
@@ -263,15 +268,18 @@ impl<'a> SecurityContext<'a> {
         // its frame counter as the most recent accepted value for this sender,
         // so a later replay of this (or an older) counter is rejected by the
         // check above. Persisted through the NIB's interior mutability.
-        let mut sec_material_set = self.nib.security_material_set();
-        if let Some(material) = sec_material_set.iter_mut().find(|k| {
-            aux_hdr
-                .key_sequence_number
-                .is_some_and(|ksn| ksn == k.key_seq_number)
-        }) {
-            record_nwk_incoming_frame_counter(material, source_address, aux_hdr.frame_counter)?;
-            self.nib.set_security_material_set(sec_material_set);
-        }
+        let mut record_result = Ok(());
+        self.nib.update_security_material_set(|set| {
+            if let Some(material) = set.iter_mut().find(|k| {
+                aux_hdr
+                    .key_sequence_number
+                    .is_some_and(|ksn| ksn == k.key_seq_number)
+            }) {
+                record_result =
+                    record_nwk_incoming_frame_counter(material, source_address, aux_hdr.frame_counter);
+            }
+        });
+        record_result?;
 
         Ok(NwkFrame::from_payload(nwk_hdr, enc_data)?)
     }
@@ -290,20 +298,24 @@ impl<'a> SecurityContext<'a> {
             return Ok(*offset);
         }
 
-        // get link key associated with destination from AIB
-        let mut key_set = self.aib.device_key_pair_set();
-        let key_config = key_set
-            .iter_mut()
-            .find(|k| {
-                k.device_address == dest
-                    && matches!(
-                        k.key_attributes,
-                        KeyAttribute::ProvisionalKey
-                            | KeyAttribute::UnverifiedKey
-                            | KeyAttribute::VerifiedKey
-                    )
-            })
-            .ok_or(SecurityError::Unspecified)?;
+        // get link key associated with destination from AIB; guard scoped so
+        // the counter increment below cannot deadlock
+        let (link_key, frame_counter) = {
+            let key_set = self.aib.device_key_pair_set();
+            let key_config = key_set
+                .iter()
+                .find(|k| {
+                    k.device_address == dest
+                        && matches!(
+                            k.key_attributes,
+                            KeyAttribute::ProvisionalKey
+                                | KeyAttribute::UnverifiedKey
+                                | KeyAttribute::VerifiedKey
+                        )
+                })
+                .ok_or(SecurityError::Unspecified)?;
+            (key_config.link_key, key_config.outgoing_frame_counter)
+        };
 
         // Step 1: Obtain security material and key identifier
         let (key, key_id) = match &aps_frame {
@@ -312,7 +324,7 @@ impl<'a> SecurityContext<'a> {
                 ..
             }) => (
                 // Section 4.5.3: key-transport key uses 1-octet string '0x00'
-                HmacAes128Mmo::hmac(key_config.link_key.as_slice(), &[0x00])?,
+                HmacAes128Mmo::hmac(link_key.as_slice(), &[0x00])?,
                 KeyIdentifier::KeyTransport,
             ),
             ApsFrame::ApsCommand(ApsCommandFrame {
@@ -323,20 +335,19 @@ impl<'a> SecurityContext<'a> {
                 ..
             }) => (
                 // Section 4.5.3: key-load key uses 1-octet string '0x02'
-                HmacAes128Mmo::hmac(key_config.link_key.as_slice(), &[0x02])?,
+                HmacAes128Mmo::hmac(link_key.as_slice(), &[0x02])?,
                 KeyIdentifier::KeyLoad,
             ),
-            _ => (key_config.link_key.0, KeyIdentifier::Data),
+            _ => (link_key.0, KeyIdentifier::Data),
         };
 
         // Step 2: Extract frame counter (and key sequence number if needed)
-        let frame_counter = key_config.outgoing_frame_counter;
         if frame_counter == u32::MAX {
             return Err(SecurityError::InvalidData);
         }
 
         // Step 3: Obtain security level from NIB
-        let sec_level = self.nib.security_level();
+        let sec_level = *self.nib.security_level();
         //let mic_length = sec_level.mic_length();
 
         // Set key identifier
@@ -351,7 +362,7 @@ impl<'a> SecurityContext<'a> {
         }
 
         let source_address = if security_control.extended_nonce() {
-            Some(self.nib.ieee_address())
+            Some(*self.nib.ieee_address())
         } else {
             None
         };
@@ -387,8 +398,11 @@ impl<'a> SecurityContext<'a> {
 
         // step 9:
         // increment and write back frame counter
-        key_config.outgoing_frame_counter += 1;
-        self.aib.set_device_key_pair_set(key_set);
+        self.aib.update_device_key_pair_set(|key_set| {
+            if let Some(key_config) = key_set.iter_mut().find(|k| k.device_address == dest) {
+                key_config.outgoing_frame_counter += 1;
+            }
+        });
 
         Ok(offset)
     }
@@ -441,7 +455,7 @@ impl<'a> SecurityContext<'a> {
     ) -> Result<ApsFrame<'b>, SecurityError> {
         // 5) overwrite the security level with the value from the NIB
         // (default 0x05)
-        let sec_level = self.nib.security_level();
+        let sec_level = *self.nib.security_level();
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
 
@@ -466,36 +480,31 @@ impl<'a> SecurityContext<'a> {
         // step 2: select the security material matching the source address
         // TODO: the spec says "using the source address in the APS frame as the index"
         // but the APS frame does not have a source field, only the security header
-        let mut key_set = self.aib.device_key_pair_set();
         // Whether a frame has already been accepted from this device. Only a
         // known device carries a meaningful `incoming_frame_counter`; the first
         // frame seen establishes it. This is the "seen-yet" sentinel that keeps
         // a legitimate first frame (whose counter may be 0, the field's initial
-        // value) from being rejected by the anti-replay check below.
-        let known_device = key_set.iter().any(|k| k.device_address == source_address);
-        let key_config = key_set.find_or_insert_with_mut(
-            |k| k.device_address == source_address,
-            // TODO: what do we set here if the source device is new and unknown?
-            || DeviceKeyPairDescriptor {
-                device_address: source_address,
-                key_attributes: KeyAttribute::VerifiedKey,
-                link_key: ByteArray(TRUST_CENTER_LINK_KEY),
-                outgoing_frame_counter: 0,
-                incoming_frame_counter: 0,
-                link_key_type: LinkKeyType::GlobalLinkKey,
-            },
-        );
+        // value) from being rejected by the anti-replay check below. The entry
+        // for an unknown device is only inserted after authentication succeeds.
+        let (known_device, link_key, last_incoming_counter) = {
+            let key_set = self.aib.device_key_pair_set();
+            key_set.iter().find(|k| k.device_address == source_address).map_or(
+                // TODO: what do we use here if the source device is new and unknown?
+                (false, ByteArray(TRUST_CENTER_LINK_KEY), 0),
+                |k| (true, k.link_key, k.incoming_frame_counter),
+            )
+        };
 
         // step 3: obtain the key
         let key = match aux_hdr.security_control.key_identifier() {
-            KeyIdentifier::Data => key_config.link_key.0,
+            KeyIdentifier::Data => link_key.0,
             KeyIdentifier::KeyTransport => {
                 // Section 4.5.3: key-transport key uses 1-octet string '0x00'
-                HmacAes128Mmo::hmac(key_config.link_key.as_slice(), &[0x00])?
+                HmacAes128Mmo::hmac(link_key.as_slice(), &[0x00])?
             }
             KeyIdentifier::KeyLoad => {
                 // Section 4.5.3: key-load key uses 1-octet string '0x02'
-                HmacAes128Mmo::hmac(key_config.link_key.as_slice(), &[0x02])?
+                HmacAes128Mmo::hmac(link_key.as_slice(), &[0x02])?
             }
             KeyIdentifier::Network => return Err(SecurityError::InvalidData),
         };
@@ -505,7 +514,7 @@ impl<'a> SecurityContext<'a> {
         // need replay protection too. Enforced only once a frame has previously
         // been accepted from this device. `<=` rejects a replay of the
         // most-recently-accepted counter as well, not just older ones.
-        if known_device && aux_hdr.frame_counter <= key_config.incoming_frame_counter {
+        if known_device && aux_hdr.frame_counter <= last_incoming_counter {
             return Err(SecurityError::Unspecified);
         }
 
@@ -532,11 +541,23 @@ impl<'a> SecurityContext<'a> {
             .map_err(SecurityError::CcmError)?;
 
         // anti-replay tracking: now that the frame is authenticated, record its
-        // frame counter as the most recent accepted value for this device and
-        // persist it through the AIB's interior mutability, so a later replay of
+        // frame counter as the most recent accepted value for this device
+        // (inserting the entry for a first-time sender), so a later replay of
         // this (or an older) counter is rejected by the check above.
-        key_config.incoming_frame_counter = aux_hdr.frame_counter;
-        self.aib.set_device_key_pair_set(key_set);
+        self.aib.update_device_key_pair_set(|key_set| {
+            let key_config = key_set.find_or_insert_with_mut(
+                |k| k.device_address == source_address,
+                || DeviceKeyPairDescriptor {
+                    device_address: source_address,
+                    key_attributes: KeyAttribute::VerifiedKey,
+                    link_key: ByteArray(TRUST_CENTER_LINK_KEY),
+                    outgoing_frame_counter: 0,
+                    incoming_frame_counter: 0,
+                    link_key_type: LinkKeyType::GlobalLinkKey,
+                },
+            );
+            key_config.incoming_frame_counter = aux_hdr.frame_counter;
+        });
 
         Ok(ApsFrame::from_payload(aps_hdr, enc_data)?)
     }
@@ -609,9 +630,8 @@ mod tests {
         0x00,
     ];
 
-    fn setup_nib() -> Nib<NibStorage> {
-        let nib = Nib::new(NibStorage::default());
-        nib.init();
+    fn setup_nib() -> Nib {
+        let nib = Nib::new();
 
         let mut set = Vec::new();
         set.push(NetworkSecurityMaterialDescriptor {
@@ -622,25 +642,22 @@ mod tests {
             network_key_type: 0,
         })
         .unwrap();
-        nib.set_security_material_set(StorageVec(set));
-        nib.set_ieee_address(IeeeAddress(0x1234_5678_90ab_cdef));
-        nib.set_security_level(SecurityLevel::EncMic32);
+        nib.update_security_material_set(|value| *value = StorageVec(set));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0x1234_5678_90ab_cdef));
+        nib.update_security_level(|value| *value = SecurityLevel::EncMic32);
 
         assert_eq!(nib.security_material_set()[0].key, ByteArray(NETWORK_KEY));
 
         nib
     }
 
-    fn setup_aib() -> Aib<AibStorage> {
-        let aib = Aib::new(AibStorage::default());
-        aib.init();
+    fn setup_aib() -> Aib {
+        let aib = Aib::new();
         aib
     }
 
-    fn append_aib_device_key_pair_set(aib: &Aib<AibStorage>, k: DeviceKeyPairDescriptor) {
-        let mut set = aib.device_key_pair_set();
-        set.push(k).unwrap();
-        aib.set_device_key_pair_set(set);
+    fn append_aib_device_key_pair_set(aib: &Aib, k: DeviceKeyPairDescriptor) {
+        aib.update_device_key_pair_set(|set| set.push(k).unwrap());
     }
 
     #[test]
@@ -696,7 +713,7 @@ mod tests {
                 link_key_type: LinkKeyType::GlobalLinkKey,
             },
         );
-        nib.set_ieee_address(IeeeAddress(0xa4c1_389c_3830_01e5));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0xa4c1_389c_3830_01e5));
         let mut got_buffer = [0u8; 21];
 
         let offset = security_context
@@ -778,7 +795,7 @@ mod tests {
                 link_key_type: LinkKeyType::GlobalLinkKey,
             },
         );
-        nib.set_ieee_address(IeeeAddress(0xf4ce_36c1_7d38_52e1));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0xf4ce_36c1_7d38_52e1));
 
         let mut got_buffer = [0u8; 54];
         let offset = security_context
@@ -822,7 +839,7 @@ mod tests {
                 link_key_type: LinkKeyType::GlobalLinkKey,
             },
         );
-        nib.set_ieee_address(IeeeAddress(0xf4ce_36c1_7d38_52e1));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0xf4ce_36c1_7d38_52e1));
 
         let mut got_buffer = [0u8; 128];
         let offset = security_context
@@ -845,7 +862,7 @@ mod tests {
     // Seeds a UniqueLinkKey descriptor for the fixture's sender whose incoming
     // counter is already `accepted`. UniqueLinkKey is required for the APS
     // anti-replay gate to run at all.
-    fn aib_with_incoming_counter(accepted: u32) -> Aib<AibStorage> {
+    fn aib_with_incoming_counter(accepted: u32) -> Aib {
         let aib = setup_aib();
         append_aib_device_key_pair_set(
             &aib,
@@ -953,9 +970,8 @@ mod tests {
     // Builds a NIB whose incoming frame-counter set already records
     // `accepted` as the last accepted counter for the fixture's sender
     // (0xa4c1_389c_3830_01e5).
-    fn nib_with_incoming_counter(accepted: u32) -> Nib<NibStorage> {
-        let nib = Nib::new(NibStorage::default());
-        nib.init();
+    fn nib_with_incoming_counter(accepted: u32) -> Nib {
+        let nib = Nib::new();
 
         let mut incoming = Vec::new();
         incoming
@@ -974,9 +990,9 @@ mod tests {
             network_key_type: 0,
         })
         .unwrap();
-        nib.set_security_material_set(StorageVec(set));
-        nib.set_ieee_address(IeeeAddress(0x1234_5678_90ab_cdef));
-        nib.set_security_level(SecurityLevel::EncMic32);
+        nib.update_security_material_set(|value| *value = StorageVec(set));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0x1234_5678_90ab_cdef));
+        nib.update_security_level(|value| *value = SecurityLevel::EncMic32);
         nib
     }
 
@@ -1025,7 +1041,7 @@ mod tests {
             .unwrap();
 
         let mut frame_buffer = [0u8; 45];
-        nib.set_ieee_address(IeeeAddress(0xa4c1_389c_3830_01e5));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0xa4c1_389c_3830_01e5));
 
         let offset = security_context
             .encrypt_nwk_frame_in_place(frame, &mut frame_buffer)
@@ -1050,7 +1066,7 @@ mod tests {
             .decrypt_nwk_frame_in_place(&mut frame_buffer)
             .unwrap();
 
-        nib.set_ieee_address(IeeeAddress(0xa4c1_389c_3830_01e5));
+        nib.update_ieee_address(|value| *value = IeeeAddress(0xa4c1_389c_3830_01e5));
         let mut buf = [0u8; 45];
         security_context
             .encrypt_nwk_frame_in_place(frame, &mut buf)
@@ -1062,9 +1078,9 @@ mod tests {
         // the same captured frame would now be rejected. This test only
         // exercises the outgoing counter, so clear the incoming replay window
         // to reuse the fixture for a second encrypt.
-        let mut material = nib.security_material_set();
-        material[0].incoming_frame_counter_set = StorageVec(Vec::new());
-        nib.set_security_material_set(material);
+        nib.update_security_material_set(|material| {
+            material[0].incoming_frame_counter_set = StorageVec(Vec::new());
+        });
 
         // encrypt again — counter should keep incrementing
         let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
@@ -1160,11 +1176,11 @@ mod tests {
         // the same captured frame would now be rejected. This test only
         // exercises the outgoing counter, so reset the incoming counter to
         // reuse the fixture for a second encrypt.
-        let mut key_set = aib.device_key_pair_set();
-        if let Some(k) = key_set.iter_mut().find(|k| k.device_address == dest) {
-            k.incoming_frame_counter = 0;
-        }
-        aib.set_device_key_pair_set(key_set);
+        aib.update_device_key_pair_set(|key_set| {
+            if let Some(k) = key_set.iter_mut().find(|k| k.device_address == dest) {
+                k.incoming_frame_counter = 0;
+            }
+        });
 
         // second encryption — counter should be 2
         let mut dec_buf = frame_buffer;

@@ -55,6 +55,10 @@
 #[cfg(test)]
 extern crate std;
 
+// dev-dependency only used by the storage tests
+#[cfg(all(test, not(feature = "storage")))]
+use sequential_storage as _;
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
@@ -65,6 +69,7 @@ pub mod apl;
 pub mod aps;
 pub mod nwk;
 pub mod security;
+pub mod storage;
 /// ZigBee Device Profile (§2.4).
 pub mod zdp;
 

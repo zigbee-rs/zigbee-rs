@@ -38,7 +38,6 @@ use zigbee::aps::frame::command::VerifyKey;
 use zigbee::nwk::nib;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nib::Nib;
-use zigbee::nwk::nib::NibStorage;
 use zigbee::nwk::nlme::NetworkError;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::management::NlmeJoinConfirm;
@@ -85,7 +84,7 @@ impl BaseDeviceBehavior {
     }
 
     /// Returns a reference to the global NIB singleton.
-    pub fn nib(&self) -> &'static Nib<NibStorage> {
+    pub fn nib(&self) -> &'static Nib {
         nib::get_ref()
     }
 
@@ -178,8 +177,8 @@ impl BaseDeviceBehavior {
     ) -> Result<(), NetworkError> {
         let nib = nib::get_ref();
         let annce = DeviceAnnce {
-            nwk_addr: ShortAddress(nib.network_address()),
-            ieee_addr: nib.ieee_address(),
+            nwk_addr: ShortAddress(*nib.network_address()),
+            ieee_addr: *nib.ieee_address(),
             capability: capability_information,
         };
         device.device_annce(annce).await
@@ -195,7 +194,7 @@ impl BaseDeviceBehavior {
         device: &ZigbeeDevice<M>,
     ) -> Result<(), NetworkError> {
         let tc_short = ShortAddress(0x0000);
-        let tc_ieee = aib::get_ref().trust_center_address();
+        let tc_ieee = *aib::get_ref().trust_center_address();
 
         log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
 
@@ -232,24 +231,23 @@ impl BaseDeviceBehavior {
         };
 
         // §10.2.5 step 9
-        let aib = aib::get_ref();
-        let mut key_set = aib.device_key_pair_set();
-        if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
-            entry.link_key = new_key;
-            entry.key_attributes = KeyAttribute::UnverifiedKey;
-            entry.outgoing_frame_counter = 0;
-            entry.incoming_frame_counter = 0;
-        } else {
-            let _ = key_set.push(DeviceKeyPairDescriptor {
-                device_address: tc_ieee,
-                key_attributes: KeyAttribute::UnverifiedKey,
-                link_key: new_key,
-                outgoing_frame_counter: 0,
-                incoming_frame_counter: 0,
-                link_key_type: LinkKeyType::UniqueLinkKey,
-            });
-        }
-        aib.set_device_key_pair_set(key_set);
+        aib::get_ref().update_device_key_pair_set(|key_set| {
+            if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
+                entry.link_key = new_key;
+                entry.key_attributes = KeyAttribute::UnverifiedKey;
+                entry.outgoing_frame_counter = 0;
+                entry.incoming_frame_counter = 0;
+            } else {
+                let _ = key_set.push(DeviceKeyPairDescriptor {
+                    device_address: tc_ieee,
+                    key_attributes: KeyAttribute::UnverifiedKey,
+                    link_key: new_key,
+                    outgoing_frame_counter: 0,
+                    incoming_frame_counter: 0,
+                    link_key_type: LinkKeyType::UniqueLinkKey,
+                });
+            }
+        });
 
         // §10.2.5 steps 10-13
         // §4.4.10.7.4
@@ -257,7 +255,7 @@ impl BaseDeviceBehavior {
             NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
         })?;
         // §4.4.10.7.3
-        let device_addr = nib::get_ref().ieee_address();
+        let device_addr = *nib::get_ref().ieee_address();
 
         let mut attempts = 0u8;
         loop {
@@ -282,11 +280,13 @@ impl BaseDeviceBehavior {
                 Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
                     log::debug!("[BDB] TC link key verified successfully");
                     // mark key as verified
-                    let mut key_set = aib.device_key_pair_set();
-                    if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
-                        entry.key_attributes = KeyAttribute::VerifiedKey;
-                    }
-                    aib.set_device_key_pair_set(key_set);
+                    aib::get_ref().update_device_key_pair_set(|key_set| {
+                        if let Some(entry) =
+                            key_set.iter_mut().find(|k| k.device_address == tc_ieee)
+                        {
+                            entry.key_attributes = KeyAttribute::VerifiedKey;
+                        }
+                    });
                     return Ok(());
                 }
                 _ if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {

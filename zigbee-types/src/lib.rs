@@ -158,6 +158,12 @@ impl<const N: usize, T> DerefMut for StorageVec<T, N> {
     }
 }
 
+impl<const N: usize, T: Clone> Clone for StorageVec<T, N> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 impl<'a, const N: usize, C, T> TryRead<'a, C> for StorageVec<T, N>
 where
     C: Default + Copy + Clone,

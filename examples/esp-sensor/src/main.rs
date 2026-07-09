@@ -1,13 +1,11 @@
 #![no_std]
 #![no_main]
 
-mod persist;
+use core::ops::Range;
 
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_time::Timer;
 use esp_storage::FlashStorage;
-use persist::Persist;
-use persist::Region;
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -21,6 +19,7 @@ use zigbee::aps::apsde::ApsdeSapConfirmStatus;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
+use zigbee::storage::StorageDriver;
 use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
@@ -42,6 +41,14 @@ use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+/// flash region reserved for zigbee persistence.
+///
+/// MUST be adjusted to your partition table: it must not overlap the
+/// bootloader, the firmware image, or the esp-idf partition table. it must be
+/// erase-sector aligned (4 KiB on esp32-c6) and span at least two sectors so
+/// sequential-storage has a spare sector for garbage collection.
+const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 
 /// Extended PAN ID of the network to join.
 const EXTENDED_PAN_ID: u64 = 0x0000000000000000;
@@ -92,7 +99,10 @@ static BASIC: BasicServer = BasicServer {
     power_source: 0x03,
 };
 
+type ZigbeeFlash = zigbee::storage::FlashStorage<BlockingAsync<FlashStorage<'static>>>;
+
 static DEVICE: StaticCell<ZigbeeDevice<EspMlme<'static>>> = StaticCell::new();
+static STORAGE: StaticCell<ZigbeeFlash> = StaticCell::new();
 
 fn descriptor_config() -> DeviceDescriptorConfig<'static> {
     DeviceDescriptorConfig {
@@ -143,39 +153,26 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    // application owns the flash; the library only ever sees the RAM mirror
+    // the stack owns persistence: it restores the information bases here and
+    // the storage task persists dirty state (keys, frame counters, tables)
+    // whenever the stack changes it
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let mut store = Persist::new(flash, persist::ZIGBEE_FLASH_RANGE);
-
-    // restore the information bases from flash, falling back to defaults on
-    // first boot (nothing persisted yet)
-    match store.load(Region::Nib).await {
-        Some(blob) => zigbee::nwk::nib::init_restore(Default::default(), blob),
-        None => zigbee::nwk::nib::init(Default::default()),
-    }
-    match store.load(Region::Aib).await {
-        Some(blob) => zigbee::aps::aib::init_restore(Default::default(), blob),
-        None => zigbee::aps::aib::init(Default::default()),
-    }
-
-    // frame counters advance on every secured frame but we only flush
-    // periodically; jump the outgoing counter ahead on boot so a value that
-    // may already have gone out since the last flush is never reused
-    bump_nwk_frame_counter(FRAME_COUNTER_HEADROOM);
+    let storage: &'static ZigbeeFlash =
+        STORAGE.init(zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await);
 
     // a restored short address means we are still on the network: the parent
     // keeps sleepy children across our reboot, so resume polling instead of
     // re-commissioning (NLME-JOIN refuses to re-associate a joined device)
     let nib = zigbee::nwk::nib::get_ref();
-    let resume = nib.network_address() != 0xffff;
+    let resume = *nib.network_address() != 0xffff;
 
     // on resume the radio must be configured from the restored NIB up front —
     // association normally does this, but we skip it
     let mut mac_config = esp_radio::ieee802154::Config::default();
     if resume {
         mac_config.channel = CHANNEL;
-        mac_config.pan_id = Some(nib.panid());
-        mac_config.short_addr = Some(nib.network_address());
+        mac_config.pan_id = Some(*nib.panid());
+        mac_config.short_addr = Some(*nib.network_address());
         mac_config.auto_ack_tx = true;
         mac_config.auto_ack_rx = true;
     }
@@ -199,13 +196,13 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     if resume {
         println!(
             "Resuming on network: addr={:#06x} pan={:#06x} channel={CHANNEL}",
-            nib.network_address(),
-            nib.panid(),
+            *nib.network_address(),
+            *nib.panid(),
         );
         // announce the power cycle so the coordinator refreshes its state
         let annce = DeviceAnnce {
-            nwk_addr: ShortAddress(nib.network_address()),
-            ieee_addr: nib.ieee_address(),
+            nwk_addr: ShortAddress(*nib.network_address()),
+            ieee_addr: *nib.ieee_address(),
             capability: CapabilityInformation(CAPABILITY),
         };
         if let Err(e) = device.device_annce(annce).await {
@@ -228,9 +225,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
                 let nib = bdb.nib();
                 println!(
                     "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
-                    nib.network_address(),
-                    nib.panid(),
-                    nib.extended_panid(),
+                    *nib.network_address(),
+                    *nib.panid(),
+                    *nib.extended_panid(),
                     nib.update_id()
                 );
 
@@ -262,14 +259,10 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // Spawn the receive loop so the interview (Node_Desc / Active_EP /
     // Simple_Desc / Basic reads) is answered while the report loop runs.
     spawner.spawn(rx_task(device).expect("spawn rx_task"));
-    //
-    // persist the freshly negotiated keys and addressing so a reset resumes
-    // on the network instead of re-commissioning
-    persist_all(&mut store).await;
+    spawner.spawn(storage_task(storage).expect("spawn storage_task"));
 
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths
-    let mut since_flush: u32 = 0;
     let mut report_failures: u32 = 0;
     loop {
         zcl_seq = zcl_seq.wrapping_add(1);
@@ -312,18 +305,10 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         // its child table — forget the network and re-commission from scratch
         if report_failures >= MAX_REPORT_FAILURES {
             println!("Parent unreachable, forgetting network and rebooting");
-            zigbee::nwk::nib::get_ref().set_network_address(0xffff);
-            persist_all(&mut store).await;
+            device.forget_network();
+            // make sure the cleared state hits flash before the reset
+            storage.flush().await;
             esp_hal::system::software_reset();
-        }
-
-        // flush only every N reports: each flush rewrites the whole IB blob,
-        // so flushing per frame would burn flash erase cycles. the boot-time
-        // headroom bump covers the counters not yet persisted between flushes.
-        since_flush += 1;
-        if since_flush >= FLUSH_EVERY {
-            persist_all(&mut store).await;
-            since_flush = 0;
         }
 
         sample = sample.wrapping_add(10);
@@ -331,46 +316,13 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     }
 }
 
-/// outgoing frame counter values to skip on boot to cover frames sent since the
-/// last flush (see [`FLUSH_EVERY`]).
-const FRAME_COUNTER_HEADROOM: u32 = 1024;
-
-/// number of reports between flushes.
-const FLUSH_EVERY: u32 = 16;
-
 /// consecutive report failures before the network is forgotten and the device
 /// re-commissions.
 const MAX_REPORT_FAILURES: u32 = 4;
 
-/// scratch large enough for whichever IB blob is bigger.
-const MAX_BLOB: usize = {
-    let n = zigbee::nwk::nib::NibId::BUFFER_SIZE;
-    let a = zigbee::aps::aib::AibId::BUFFER_SIZE;
-    if n > a { n } else { a }
-};
-
-/// snapshots both information bases to flash.
-async fn persist_all(store: &mut Persist<BlockingAsync<FlashStorage<'static>>>) {
-    let mut buf = [0u8; MAX_BLOB];
-
-    zigbee::nwk::nib::get_ref().export(&mut buf);
-    if let Err(e) = store.save(Region::Nib, &buf[..zigbee::nwk::nib::NibId::BUFFER_SIZE]).await {
-        println!("NIB persist failed: {e:?}");
-    }
-
-    zigbee::aps::aib::get_ref().export(&mut buf);
-    if let Err(e) = store.save(Region::Aib, &buf[..zigbee::aps::aib::AibId::BUFFER_SIZE]).await {
-        println!("AIB persist failed: {e:?}");
-    }
-}
-
-/// advances the active network key's outgoing frame counter.
-fn bump_nwk_frame_counter(by: u32) {
-    let nib = zigbee::nwk::nib::get_ref();
-    let mut set = nib.security_material_set();
-    let Some(first) = set.first_mut() else {
-        return; // no key yet (first boot)
-    };
-    first.outgoing_frame_counter = first.outgoing_frame_counter.saturating_add(by);
-    nib.set_security_material_set(set);
+/// Persists information-base changes (keys, frame counters, neighbor table)
+/// to flash as the stack makes them.
+#[embassy_executor::task]
+async fn storage_task(storage: &'static ZigbeeFlash) {
+    storage.run().await
 }
