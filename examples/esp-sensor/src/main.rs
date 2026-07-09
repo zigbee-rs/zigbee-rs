@@ -4,6 +4,7 @@
 use core::ops::Range;
 
 use embassy_embedded_hal::adapter::BlockingAsync;
+use embassy_time::Delay;
 use embassy_time::Timer;
 use esp_storage::FlashStorage;
 use esp_alloc as _;
@@ -126,20 +127,18 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
 
 /// Parent poll interval; must stay below the parent's ~7.68 s
 /// indirect-transaction persistence time.
-const POLL_INTERVAL_MS: u64 = 500;
+const POLL_INTERVAL_MS: u32 = 500;
 
-/// Steady-state receive loop: polls the parent and answers ZDP discovery,
-/// Basic-cluster reads, and Configure Reporting requests.
+/// Receive loop: idles until the join completes, then answers ZDP discovery,
+/// Basic-cluster reads, Configure Reporting requests, and APS commands
+/// (TC link key exchange).
 #[embassy_executor::task]
 async fn rx_task(device: &'static ZigbeeDevice<EspMlme<'static>>) {
     let cfg = descriptor_config();
     let handler = (BASIC, ConfigureReportingServer);
-    loop {
-        if let Err(e) = device.poll_and_dispatch(&cfg, &handler).await {
-            println!("Rx dispatch error: {e:?}");
-        }
-        Timer::after_millis(POLL_INTERVAL_MS).await;
-    }
+    device
+        .rx_loop(&cfg, &handler, &mut Delay, POLL_INTERVAL_MS)
+        .await
 }
 
 #[esp_rtos::main]
@@ -189,9 +188,13 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let device: &'static ZigbeeDevice<EspMlme<'static>> =
         DEVICE.init(ZigbeeDevice::new(config, nlme));
     let mut bdb = BaseDeviceBehavior::new(config);
-    // the tclk exchange polls would eat the coordinator's interview requests
-    // and this trust center never answers REQUEST-KEY anyway
-    bdb.tc_link_key_exchange_enabled = false;
+
+    // spawn the receive loop up front; it idles until the join completes,
+    // then answers the interview and delivers the TC link key replies
+    spawner.spawn(rx_task(device).expect("spawn rx_task"));
+    // persist NIB/AIB changes as they happen, including the keys obtained
+    // during commissioning
+    spawner.spawn(storage_task(storage).expect("spawn storage_task"));
 
     if resume {
         println!(
@@ -213,6 +216,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         let join = bdb
             .network_steering(
                 device,
+                &mut Delay,
                 IeeeAddress(EXTENDED_PAN_ID),
                 CHANNEL..CHANNEL + 1,
                 SCAN_DURATION,
@@ -255,11 +259,6 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             }
         }
     }
-
-    // Spawn the receive loop so the interview (Node_Desc / Active_EP /
-    // Simple_Desc / Basic reads) is answered while the report loop runs.
-    spawner.spawn(rx_task(device).expect("spawn rx_task"));
-    spawner.spawn(storage_task(storage).expect("spawn storage_task"));
 
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths

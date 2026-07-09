@@ -2,6 +2,7 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use config::Config;
+use embedded_hal_async::delay::DelayNs;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
@@ -10,6 +11,7 @@ pub mod config;
 pub mod descriptor;
 pub mod device_annce;
 use zigbee_types::StorageVec;
+use zigbee_types::sync::Event;
 
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::aps::aib;
@@ -18,6 +20,7 @@ use crate::aps::aib::KeyAttribute;
 use crate::aps::aib::LinkKeyType;
 use crate::aps::apsde::ApsdeSapConfirm;
 use crate::aps::apsde::ApsdeSapConfirmStatus;
+use crate::aps::apsde::ApsdeSapIndication;
 use crate::aps::apsde::ApsdeSapRequest;
 use crate::aps::apsme::Apsme;
 use crate::aps::frame::CommandFrame;
@@ -52,6 +55,8 @@ pub struct ZigbeeDevice<M> {
     /// ZDP transaction sequence number (§2.4.2), independent of the APS
     /// counter.
     zdp_seq: AtomicU8,
+    /// signaled once the network key is installed; gates the receive loop
+    joined: Event,
 }
 
 /// zigbee network
@@ -124,6 +129,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             nlme,
             apsme: Apsme::new(),
             zdp_seq: AtomicU8::new(0),
+            joined: Event::new(),
         }
     }
 
@@ -239,6 +245,11 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
     /// Security Manager: poll for a Transport-Key command and install the
     /// network key and Trust Center link key entry (§4.4.10).
+    ///
+    /// Pre-NWK-key join path only: the frame is decrypted with the well-known
+    /// key before the network key is installed. Signals
+    /// [`Self::wait_until_joined`] on success, releasing a gated receive
+    /// loop, which handles all APS commands from then on.
     pub async fn poll_transport_key(&self) -> Result<(), NetworkError> {
         let mut buf = [0u8; 128];
         let mut nwk_data = self
@@ -295,6 +306,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     });
                 });
                 nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
+                self.joined.signal();
             }
             TransportKey::ApplicationLinkKey(_app_key) => (), // TODO
             TransportKey::TrustCenterLinkKey(_tcl_key) => (), // TODO
@@ -321,11 +333,30 @@ impl<M: Mlme> ZigbeeDevice<M> {
             .await
     }
 
-    /// Security Manager: poll for an incoming APS command (§4.4).
+    /// Wait until the network key is installed and the device is joined.
     ///
-    /// Delegates to APSME which decrypts the NWK and APS layers.
-    pub async fn poll_aps_command(&self, retries: u8) -> Result<Command, NetworkError> {
-        self.apsme.poll_command(&self.nlme, retries).await
+    /// Gates the receive loop: spawn the RX task before commissioning and
+    /// await this first, so the parent is not polled while the join is still
+    /// in progress.
+    pub async fn wait_until_joined(&self) {
+        self.joined.wait_set().await;
+    }
+
+    /// Wait until the Trust Center delivered a new link key (§4.4.10).
+    ///
+    /// The receive loop installs the key as unverified into the AIB before
+    /// signaling. Bound the wait with an executor timeout.
+    pub async fn wait_tc_link_key_received(&self) {
+        self.apsme.tc_key_received.wait().await;
+    }
+
+    /// Wait until the Trust Center confirmed the link key verification
+    /// (§4.4.9).
+    ///
+    /// The receive loop marks the key verified in the AIB before signaling.
+    /// Bound the wait with an executor timeout.
+    pub async fn wait_tc_link_key_verified(&self) {
+        self.apsme.tc_key_verified.wait().await;
     }
 
     /// Receive and dispatch one inbound APS data frame.
@@ -338,11 +369,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
         handler: &impl ClusterRequestHandler,
     ) -> Result<(), NetworkError> {
-        use crate::aps::types::Address;
-
         let mut rx = [0u8; 256];
-        let mut out = [0u8; 128];
-
         let indication = match self.apsme.poll_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
             // ambient traffic we cannot decode (foreign or pre-key frames caught
@@ -350,8 +377,40 @@ impl<M: Mlme> ZigbeeDevice<M> {
             Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
             Err(e) => return Err(e),
         };
-        // non-dispatchable frame (NWK command handled by the NWK layer, or an APS
-        // command/ack): nothing to dispatch, wait for the next frame.
+        self.dispatch(indication, cfg, handler).await
+    }
+
+    /// Passively receive and dispatch one inbound APS data frame (rx-on-when-
+    /// idle devices), like [`Self::poll_and_dispatch`] without polling the
+    /// parent.
+    pub async fn receive_and_dispatch(
+        &self,
+        cfg: &descriptor::DeviceDescriptorConfig<'_>,
+        handler: &impl ClusterRequestHandler,
+    ) -> Result<(), NetworkError> {
+        let mut rx = [0u8; 256];
+        let indication = match self.apsme.receive_aps_frame(&self.nlme, &mut rx).await {
+            Ok(indication) => indication,
+            // ambient traffic we cannot decode — normal, not a fault
+            Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        self.dispatch(indication, cfg, handler).await
+    }
+
+    /// Answer one dispatched APSDE-DATA.indication, if any.
+    async fn dispatch(
+        &self,
+        indication: Option<ApsdeSapIndication<'_>>,
+        cfg: &descriptor::DeviceDescriptorConfig<'_>,
+        handler: &impl ClusterRequestHandler,
+    ) -> Result<(), NetworkError> {
+        use crate::aps::types::Address;
+
+        let mut out = [0u8; 128];
+
+        // non-dispatchable frame (NWK command handled by the NWK layer; an APS
+        // command is handled at its arrival point): wait for the next frame
         let Some(indication) = indication else {
             return Ok(());
         };
@@ -461,20 +520,45 @@ impl<M: Mlme> ZigbeeDevice<M> {
         Some(result)
     }
 
-    /// Run the poll/dispatch loop forever (the steady-state RX task).
+    /// Run the receive/dispatch loop forever (the steady-state RX task).
     ///
-    /// Polls the parent back-to-back — prefer calling
-    /// [`Self::poll_and_dispatch`] from your own loop with a sleep in
-    /// between to pace the data requests.
+    /// Waits for the join to complete before touching the radio, so it can
+    /// be spawned ahead of commissioning. The receive strategy follows the
+    /// joined capability (`nwkCapabilityInformation`, §3.4.1.3.1.1): a device
+    /// with `rxOnWhenIdle = TRUE` listens for frames directly, while a sleepy
+    /// end device polls the parent for buffered unicasts every
+    /// `poll_interval_ms` — keep it below the parent's indirect-transaction
+    /// persistence time (~7.68 s).
     pub async fn rx_loop(
         &self,
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
         handler: &impl ClusterRequestHandler,
+        delay: &mut impl DelayNs,
+        poll_interval_ms: u32,
     ) -> ! {
+        // a restored network address means the device resumed on a network
+        // without a fresh key exchange — release the gate immediately
+        if *self.nlme.nib().network_address() != ShortAddress::default().0 {
+            self.joined.signal();
+        }
+        self.wait_until_joined().await;
+        if self
+            .nlme
+            .nib()
+            .capability_information()
+            .receiver_on_when_idle()
+        {
+            loop {
+                if let Err(e) = self.receive_and_dispatch(cfg, handler).await {
+                    log::debug!("[ZDO] rx dispatch error: {e:?}");
+                }
+            }
+        }
         loop {
             if let Err(e) = self.poll_and_dispatch(cfg, handler).await {
                 log::debug!("[ZDO] rx dispatch error: {e:?}");
             }
+            delay.delay_ms(poll_interval_ms).await;
         }
     }
 }

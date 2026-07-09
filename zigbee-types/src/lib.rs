@@ -16,6 +16,7 @@ use itertools::Itertools;
 use zigbee_macros::impl_byte;
 
 pub mod storage;
+pub mod sync;
 
 pub type NwkAddress = u16;
 
