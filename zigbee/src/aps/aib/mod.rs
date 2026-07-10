@@ -83,7 +83,7 @@ impl_byte! {
 
 impl_byte! {
     #[tag(u8)]
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum KeyAttribute {
         ProvisionalKey = 0x00,
         UnverifiedKey = 0x01,

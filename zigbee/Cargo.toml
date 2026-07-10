@@ -20,6 +20,7 @@ storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
 
 [dependencies]
 byte.workspace = true
+embedded-hal-async.workspace = true
 ccm.workspace = true
 aes.workspace = true
 aead.workspace = true

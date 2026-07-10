@@ -295,6 +295,19 @@ where
         self.process_received_nwk_frame(&mut buf[..len])
     }
 
+    /// Passively wait for the next inbound NWK frame and process it.
+    ///
+    /// For devices with `rxOnWhenIdle = TRUE`, which receive directly instead
+    /// of polling the parent for buffered unicasts. Returns `Ok(None)` when
+    /// the frame carried no application data.
+    pub async fn receive_nwk_frame<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
+        let (len, _lqi) = self.mac.receive(buf).await?;
+        self.process_received_nwk_frame(&mut buf[..len])
+    }
+
     /// Decrypt one inbound NWK frame and hand NWK commands to the NWK layer.
     fn process_received_nwk_frame<'a>(
         &self,

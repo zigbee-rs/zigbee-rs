@@ -12,6 +12,12 @@
 #![no_std]
 #![allow(unused)]
 
+use core::future::Future;
+use core::future::poll_fn;
+use core::pin::pin;
+use core::task::Poll;
+
+use embedded_hal_async::delay::DelayNs;
 use thiserror::Error;
 
 pub mod types;
@@ -22,18 +28,16 @@ const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
 const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
 const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
+/// bdbcTcLinkKeyExchangeTimeout in milliseconds
+const TC_LINK_KEY_EXCHANGE_TIMEOUT_MS: u32 = BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT as u32 * 1_000;
+
 use types::BdbCommissioningStatus;
 use types::CommissioningMode;
 use zigbee::Config;
 use zigbee::LogicalType;
 use zigbee::aps::aib;
-use zigbee::aps::aib::DeviceKeyPairDescriptor;
-use zigbee::aps::aib::KeyAttribute;
-use zigbee::aps::aib::LinkKeyType;
 use zigbee::aps::frame::command::Command;
-use zigbee::aps::frame::command::ConfirmKey;
 use zigbee::aps::frame::command::RequestKey;
-use zigbee::aps::frame::command::TransportKey;
 use zigbee::aps::frame::command::VerifyKey;
 use zigbee::nwk::nib;
 use zigbee::nwk::nib::CapabilityInformation;
@@ -67,8 +71,8 @@ pub struct BaseDeviceBehavior {
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
     /// Whether network steering performs the TC link key exchange (BDB §8.2
-    /// step 12). Disable to keep the default global TC link key and return
-    /// to the application right after Device_annce.
+    /// step 12). Disable for trust centers that never answer REQUEST-KEY to
+    /// keep the default global TC link key and skip the retry stalls.
     pub tc_link_key_exchange_enabled: bool,
 }
 
@@ -106,12 +110,17 @@ impl BaseDeviceBehavior {
     /// (BDB §8.2).
     ///
     /// Performs NLME-NETWORK-DISCOVERY on the given channels, then
-    /// NLME-JOIN for the specified extended PAN ID, and finally the
-    /// APS transport key exchange to obtain the network key from the
-    /// Trust Center.
+    /// NLME-JOIN for the specified extended PAN ID, the APS transport key
+    /// exchange to obtain the network key from the Trust Center, and
+    /// finally the TC link key exchange.
+    ///
+    /// The receive loop task must be spawned before calling this: it idles
+    /// until the join completes (`ZigbeeDevice::rx_loop`), then delivers the
+    /// Trust Center's replies for the link key exchange.
     pub async fn network_steering<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
         extended_pan_id: IeeeAddress,
         channels: core::ops::Range<u8>,
         scan_duration: u8,
@@ -155,7 +164,7 @@ impl BaseDeviceBehavior {
             log::debug!("[BDB] step 12: TC link key exchange");
             // non-fatal: a TC allowing legacy devices may never answer the
             // REQUEST-KEY, keep the default global TC link key then
-            match self.tc_link_key_exchange(device).await {
+            match self.tc_link_key_exchange(device, delay).await {
                 Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
                 Err(e) => log::warn!(
                     "[BDB] step 12: TC link key exchange failed ({e:?}), continuing with default TC link key"
@@ -189,19 +198,39 @@ impl BaseDeviceBehavior {
     /// Replaces the default TC link key (key A) with a unique key (key B)
     /// through a three-phase exchange: REQUEST-KEY → TRANSPORT-KEY →
     /// VERIFY-KEY → CONFIRM-KEY.
+    ///
+    /// The receive loop consumes the Trust Center's replies and updates the
+    /// AIB; this procedure only drives the timing: it sends the requests and
+    /// awaits the stack's progress events for `bdbcTcLinkKeyExchangeTimeout`
+    /// each.
     async fn tc_link_key_exchange<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), NetworkError> {
+        // arm the stack: only now are Transport-Key/Confirm-Key honored, so
+        // replayed frames outside the exchange cannot downgrade the key
+        device.begin_tc_link_key_exchange();
+        let result = self.run_tc_link_key_exchange(device, delay).await;
+        device.end_tc_link_key_exchange();
+        result
+    }
+
+    async fn run_tc_link_key_exchange<M: Mlme>(
+        &mut self,
+        device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
     ) -> Result<(), NetworkError> {
         let tc_short = ShortAddress(0x0000);
-        let tc_ieee = *aib::get_ref().trust_center_address();
+        let aib = aib::get_ref();
+        let tc_ieee = *aib.trust_center_address();
 
         log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
 
-        // §10.2.5 steps 6-9
+        // §10.2.5 steps 6-9: the receive loop installs the transported key as
+        // unverified and signals reception
         let mut attempts = 0u8;
-        let new_key = loop {
-            log::debug!("[BDB] send_aps_command");
+        loop {
             device
                 .send_aps_command(
                     tc_short,
@@ -211,43 +240,33 @@ impl BaseDeviceBehavior {
                 )
                 .await?;
             attempts += 1;
-            log::debug!("[BDB] send_aps_command ok");
 
-            match device
-                .poll_aps_command(BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
-                .await
+            match with_timeout(
+                device.wait_tc_link_key_received(),
+                delay.delay_ms(TC_LINK_KEY_EXCHANGE_TIMEOUT_MS),
+            )
+            .await
             {
-                Ok(Command::TransportKey(TransportKey::TrustCenterLinkKey(key_desc))) => {
+                Some(()) => {
                     log::debug!("[BDB] received new TC link key");
-                    break key_desc.key;
+                    break;
                 }
-                _ if attempts >= BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS => {
+                None if attempts >= BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS => {
                     log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);
                 }
-                _ => continue,
+                None => continue,
             }
-        };
+        }
 
-        // §10.2.5 step 9
-        aib::get_ref().update_device_key_pair_set(|key_set| {
-            if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
-                entry.link_key = new_key;
-                entry.key_attributes = KeyAttribute::UnverifiedKey;
-                entry.outgoing_frame_counter = 0;
-                entry.incoming_frame_counter = 0;
-            } else {
-                let _ = key_set.push(DeviceKeyPairDescriptor {
-                    device_address: tc_ieee,
-                    key_attributes: KeyAttribute::UnverifiedKey,
-                    link_key: new_key,
-                    outgoing_frame_counter: 0,
-                    incoming_frame_counter: 0,
-                    link_key_type: LinkKeyType::UniqueLinkKey,
-                });
-            }
-        });
+        // §10.2.5 step 9: the unverified key is now in the AIB
+        let new_key = aib
+            .device_key_pair_set()
+            .iter()
+            .find(|k| k.device_address == tc_ieee)
+            .map(|k| k.link_key)
+            .ok_or(NetworkError::NoTransportKey)?;
 
         // §10.2.5 steps 10-13
         // §4.4.10.7.4
@@ -273,28 +292,27 @@ impl BaseDeviceBehavior {
                 .await?;
             attempts += 1;
 
-            match device
-                .poll_aps_command(BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT)
-                .await
+            match with_timeout(
+                device.wait_tc_link_key_verified(),
+                delay.delay_ms(TC_LINK_KEY_EXCHANGE_TIMEOUT_MS),
+            )
+            .await
             {
-                Ok(Command::ConfirmKey(confirm)) if confirm.status == 0x00 => {
+                Some(0x00) => {
                     log::debug!("[BDB] TC link key verified successfully");
-                    // mark key as verified
-                    aib::get_ref().update_device_key_pair_set(|key_set| {
-                        if let Some(entry) =
-                            key_set.iter_mut().find(|k| k.device_address == tc_ieee)
-                        {
-                            entry.key_attributes = KeyAttribute::VerifiedKey;
-                        }
-                    });
                     return Ok(());
                 }
-                _ if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
+                // rejected verification: retry immediately instead of
+                // burning the full timeout
+                Some(status) if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
+                    log::warn!("[BDB] CONFIRM-KEY status {status:#04x}, retrying");
+                }
+                None if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => continue,
+                _ => {
                     log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);
                 }
-                _ => continue,
             }
         }
     }
@@ -306,6 +324,22 @@ impl BaseDeviceBehavior {
     fn is_router(&self) -> bool {
         self.config.device_type == LogicalType::Router
     }
+}
+
+/// resolve `fut`, or `None` if `timeout` fires first
+async fn with_timeout<F: Future>(fut: F, timeout: impl Future<Output = ()>) -> Option<F::Output> {
+    let mut fut = pin!(fut);
+    let mut timeout = pin!(timeout);
+    poll_fn(move |cx| {
+        if let Poll::Ready(value) = fut.as_mut().poll(cx) {
+            return Poll::Ready(Some(value));
+        }
+        match timeout.as_mut().poll(cx) {
+            Poll::Ready(()) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    })
+    .await
 }
 
 #[derive(Debug, Error)]
