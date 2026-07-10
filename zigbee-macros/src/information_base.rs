@@ -1,6 +1,8 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! construct_ib {
+    (@default $default:expr) => { $default };
+    (@default) => { ::core::default::Default::default() };
     (
         $(#[doc = $ib_doc:literal])*
         $ib_vis:vis struct $ib_name:ident {
@@ -8,163 +10,265 @@ macro_rules! construct_ib {
                 $(#[doc = $doc:literal])*
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
+                $(#[storage_key = $skey:literal])?
                 $field:ident: $field_ty:path $(= $default:expr)?,
             )+
         }
     ) => {
-        pub type ${ concat($ib_name, Storage) } = ::zigbee_types::storage::InMemoryStorage<{ ${ concat($ib_name, Id) }::BUFFER_SIZE }>;
+        static mut IB: Option<$ib_name> = None;
 
-        static mut IB: Option<$ib_name<${ concat($ib_name, Storage) }>> = None;
-
-        /// Initializes the IB.
-        pub fn init(storage: ${ concat($ib_name, Storage) }) {
-            // SAFETY: NIB can only be initialized once
+        /// Initializes the IB with default values.
+        pub fn init() {
+            // SAFETY: the IB can only be initialized once
             unsafe {
                 if IB.is_some() {
                     panic!(concat!(stringify!($ib_name), " already initialized"));
                 }
-                let ib = $ib_name::new(storage);
-                ib.init();
-                IB = Some(ib);
+                IB = Some($ib_name::new());
             }
         }
 
         /// Returns a reference to the IB.
-        pub fn get_ref() -> &'static $ib_name<${ concat($ib_name, Storage) }> {
+        pub fn get_ref() -> &'static $ib_name {
             // SAFETY: IB is mutated only in init once
             unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " not initialized")) }
         }
 
+        static DIRTY_SIGNAL: ::zigbee_types::storage::DirtySignal =
+            ::zigbee_types::storage::DirtySignal::new();
+
+        /// Waits until a persisted attribute changes (single waiter).
+        ///
+        /// Wakes once per batch of changes; pair with `take_dirty` to see
+        /// which fields changed.
+        pub async fn changed() {
+            DIRTY_SIGNAL.changed().await;
+        }
+
         /// Initialize the IB if not already initialized, otherwise do nothing.
         #[cfg(test)]
-        pub fn try_init(storage: ${ concat($ib_name, Storage) }) {
+        pub fn try_init() {
             // SAFETY: only called at test setup before concurrent access
             unsafe {
                 if IB.is_none() {
-                    let ib = $ib_name::new(storage);
-                    ib.init();
-                    IB = Some(ib);
+                    IB = Some($ib_name::new());
                 }
             }
         }
 
-        /// Re-write default values to the existing IB storage.
+        /// Re-write default values to the existing IB.
         #[cfg(test)]
         pub fn reset() {
             // SAFETY: only called at test setup; the singleton reference
-            // is not reallocated, just its storage contents are overwritten
+            // is not reallocated, just its contents are overwritten
             unsafe {
                 if let Some(ref ib) = IB {
-                    ib.init();
+                    $(
+                        *ib.fields.$field.write() =
+                            $crate::construct_ib!(@default $($default)?);
+                    )+
+                    *ib.dirty.lock() = 0;
                 }
             }
         }
 
         #[repr(usize)]
         #[allow(non_camel_case_types)]
-        #[derive(Copy, Clone, Eq, PartialEq)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq)]
         $ib_vis enum ${ concat($ib_name, Id) } {
             $($field),+
         }
 
         impl ${ concat($ib_name, Id) } {
-            // might not be the exact size of the field
-            // because encoding (produced by byte::TryWrite)
-            // might be different than struct alignment
-            // but `size_of` gives us an upper bound
-            const IB_ID_SIZE_LUT: &[usize] = &[
+            // upper bound of the `byte`-encoded size per field: encodings are
+            // packed and never larger than the in-memory representation
+            const ENCODED_SIZE_LUT: &[usize] = &[
                 $(
                     size_of::<$field_ty>()
                 ),+
             ];
 
-            pub const BUFFER_SIZE: usize = ${ concat($ib_name, Id) }::ib_buffer_size();
+            // stable persistence key per field; None = RAM-only field
+            const STORAGE_KEY_LUT: &[Option<u8>] = &[
+                $(
+                    {
+                        let key: Option<u8> = None;
+                        $(let key = Some($skey);)?
+                        key
+                    }
+                ),+
+            ];
 
-            const fn ib_buffer_size() -> usize {
-                let mut size = 0usize;
+            /// Upper bound of the encoded size over all persisted fields.
+            pub const MAX_FIELD_SIZE: usize = ${ concat($ib_name, Id) }::max_field_size();
+
+            /// All field ids in declaration order.
+            pub const VARIANTS: &[Self] = &[$(Self::$field),+];
+
+            /// Returns the stable persistence key, or `None` for RAM-only fields.
+            pub const fn storage_key(&self) -> Option<u8> {
+                Self::STORAGE_KEY_LUT[*self as usize]
+            }
+
+            /// Resolves a stable persistence key back to its field id.
+            pub const fn from_storage_key(key: u8) -> Option<Self> {
+                $(
+                    if let Some(k) = Self::STORAGE_KEY_LUT[Self::$field as usize] {
+                        if k == key {
+                            return Some(Self::$field);
+                        }
+                    }
+                )+
+                None
+            }
+
+            const fn max_field_size() -> usize {
+                let mut max = 0usize;
                 let mut i = 0;
-                while i < Self::IB_ID_SIZE_LUT.len() {
-                    size += Self::IB_ID_SIZE_LUT[i];
+                while i < Self::ENCODED_SIZE_LUT.len() {
+                    if Self::STORAGE_KEY_LUT[i].is_some() && Self::ENCODED_SIZE_LUT[i] > max {
+                        max = Self::ENCODED_SIZE_LUT[i];
+                    }
                     i += 1;
                 }
-                size
+                max
             }
 
-            const fn size(&self) -> usize {
-                Self::IB_ID_SIZE_LUT[*self as usize]
-            }
-
-            const fn offset(&self) -> usize {
-                let mut i = 0usize;
-                let mut offset = 0usize;
-                while i != *self as usize {
-                    offset += Self::IB_ID_SIZE_LUT[i];
+            const fn storage_keys_unique() -> bool {
+                let lut = Self::STORAGE_KEY_LUT;
+                let mut i = 0;
+                while i < lut.len() {
+                    let mut j = i + 1;
+                    while j < lut.len() {
+                        if let (Some(a), Some(b)) = (lut[i], lut[j]) {
+                            if a == b {
+                                return false;
+                            }
+                        }
+                        j += 1;
+                    }
                     i += 1;
                 }
-                offset
+                true
+            }
+        }
+
+        const _: () = {
+            // dirty mask is a u64 bitmask indexed by field position
+            assert!(${ concat($ib_name, Id) }::STORAGE_KEY_LUT.len() <= 64);
+            assert!(${ concat($ib_name, Id) }::storage_keys_unique());
+        };
+
+        // plain in-memory representation with one lock per field so readers
+        // never contend with each other; serialization only happens when a
+        // field is exported to / imported from persistent storage
+        #[allow(non_camel_case_types)]
+        struct ${ concat($ib_name, Fields) } {
+            $($field: ::spin::RwLock<$field_ty>,)+
+        }
+
+        impl ${ concat($ib_name, Fields) } {
+            fn defaults() -> Self {
+                Self {
+                    $($field: ::spin::RwLock::new($crate::construct_ib!(@default $($default)?)),)+
+                }
             }
         }
 
         $(#[doc = $ib_doc])*
-        $ib_vis struct $ib_name<C> {
-            storage: ::spin::Mutex<C>,
+        $ib_vis struct $ib_name {
+            fields: ${ concat($ib_name, Fields) },
+            // bitmask of persisted fields modified since the last take_dirty
+            dirty: ::spin::Mutex<u64>,
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        impl<C: ::embedded_storage::Storage> $ib_name<C> {
-            pub fn new(storage: C) -> Self {
-                Self { storage: ::spin::Mutex::new(storage) }
+        impl $ib_name {
+            pub fn new() -> Self {
+                Self {
+                    fields: ${ concat($ib_name, Fields) }::defaults(),
+                    dirty: ::spin::Mutex::new(0),
+                }
             }
 
-            pub fn init(&self) {
+            /// Returns and clears the bitmask of fields modified since the
+            /// last call.
+            pub fn take_dirty(&self) -> u64 {
+                let mut dirty = self.dirty.lock();
+                core::mem::take(&mut *dirty)
+            }
+
+            /// Re-arms the dirty bit of a field, e.g. after a failed store.
+            pub fn mark_dirty(&self, id: ${ concat($ib_name, Id) }) {
+                *self.dirty.lock() |= 1 << (id as u64);
+                DIRTY_SIGNAL.notify();
+            }
+
+            /// Encodes a single field into `buf`, returning the encoded length.
+            ///
+            /// Returns `None` for RAM-only fields (no storage key) or if `buf`
+            /// is too small.
+            pub fn export_field(&self, id: ${ concat($ib_name, Id) }, buf: &mut [u8]) -> Option<usize> {
+                use byte::BytesExt;
+                use byte::TryWrite;
+                id.storage_key()?;
+                match id {
+                    $(
+                        ${ concat($ib_name, Id) }::$field => {
+                            let value: $field_ty =
+                                ::core::clone::Clone::clone(&*self.fields.$field.read());
+                            let _cx = ::byte::LE;
+                            $(
+                                let _cx = $ctx_write;
+                            )?
+                            let mut offset = 0;
+                            buf.write_with(&mut offset, value, _cx).ok()?;
+                            Some(offset)
+                        }
+                    )+
+                }
+            }
+
+            /// Decodes `data` into a single field without marking it dirty.
+            ///
+            /// Returns `false` if the data does not parse as the field type,
+            /// leaving the current value untouched.
+            pub fn import_field(&self, id: ${ concat($ib_name, Id) }, data: &[u8]) -> bool {
                 use byte::BytesExt;
                 use byte::TryRead;
-                use byte::TryWrite;
-                $(
-                    let _cx = ::byte::LE;
+                match id {
                     $(
-                        let _cx = $ctx_write;
-                    )?
-                    $(
-                        let mut buf = [0u8; ${ concat($ib_name, Id) }::$field.size()];
-                        let value: $field_ty = $default;
-                        buf.write_with(&mut 0, value, _cx).unwrap();
-                        let _ = self.storage.lock().write(${ concat($ib_name, Id) }::$field.offset() as u32, &buf);
-                    )?
-                )+
+                        ${ concat($ib_name, Id) }::$field => {
+                            let _cx = ::byte::LE;
+                            $(
+                                let _cx = $ctx_hdr;
+                            )?
+                            let Ok(value) = data.read_with::<$field_ty>(&mut 0, _cx) else {
+                                return false;
+                            };
+                            *self.fields.$field.write() = value;
+                            true
+                        }
+                    )+
+                }
             }
 
             $(
                 $(#[doc = $doc])*
-                pub fn $field(&self) -> $field_ty {
-                    use byte::BytesExt;
-                    use byte::TryRead;
-                    use byte::TryWrite;
-                    const SIZE: usize = ${ concat($ib_name, Id) }::$field.size();
-                    let mut buf = [0u8; SIZE];
-                    let _cx = ::byte::LE;
-                    $(
-                        let _cx = $ctx_hdr;
-                    )?
-
-                    let _ = self.storage.lock().read(${ concat($ib_name, Id) }::$field.offset() as u32, &mut buf);
-                    buf.read_with(&mut 0, _cx).unwrap()
+                ///
+                /// Returns a read guard; do not hold it across an
+                /// `update_*` of the same field.
+                pub fn $field(&self) -> ::spin::RwLockReadGuard<'_, $field_ty> {
+                    self.fields.$field.read()
                 }
 
-                pub fn ${ concat(set_, $field) }(&self, value: $field_ty) {
-                    use byte::BytesExt;
-                    use byte::TryRead;
-                    use byte::TryWrite;
-                    const SIZE: usize = ${ concat($ib_name, Id) }::$field.size();
-                    let mut buf = [0u8; SIZE];
+                /// Updates the field in place under its write lock.
+                pub fn ${ concat(update_, $field) }(&self, f: impl FnOnce(&mut $field_ty)) {
+                    f(&mut *self.fields.$field.write());
 
-                    let _cx = ::byte::LE;
-                    $(
-                        let _cx = $ctx_write;
-                    )?
-                    buf.write_with(&mut 0, value, _cx).unwrap();
-
-                    let _ = self.storage.lock().write(${ concat($ib_name, Id) }::$field.offset() as u32, &buf);
+                    if ${ concat($ib_name, Id) }::$field.storage_key().is_some() {
+                        *self.dirty.lock() |= 1 << (${ concat($ib_name, Id) }::$field as u64);
+                        DIRTY_SIGNAL.notify();
+                    }
                 }
             )+
         }

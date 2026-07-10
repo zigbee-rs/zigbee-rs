@@ -16,6 +16,7 @@ edition.workspace = true
 [features]
 alloc = []
 in-memory-nib = ["alloc"]
+storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
 
 [dependencies]
 byte.workspace = true
@@ -23,7 +24,8 @@ ccm.workspace = true
 aes.workspace = true
 aead.workspace = true
 itertools.workspace = true
-embedded-storage.workspace = true
+embedded-storage-async = { workspace = true, optional = true }
+sequential-storage = { workspace = true, optional = true }
 spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false }
@@ -35,3 +37,4 @@ zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 
 [dev-dependencies]
 mockall.workspace = true
+sequential-storage = { workspace = true, features = ["_test"] }

@@ -25,8 +25,10 @@ ccm = { version = "0.5.0", default-features = false }
 aead = { version = "0.5.0", default-features = false }
 itertools = { version = "0.14.0", default-features = false }
 embedded-storage = "0.3.1"
+embedded-storage-async = "0.4.1"
+sequential-storage = "7.2.0"
 heapless = "0.9.1"
 log = "0.4"
 mockall = "0.13"
-spin = { version = "0.10.0", default-features = false, features = ["spin_mutex", "mutex"] }
+spin = { version = "0.10.0", default-features = false, features = ["spin_mutex", "mutex", "rwlock"] }
 thiserror = { version = "2.0.6", default-features = false }

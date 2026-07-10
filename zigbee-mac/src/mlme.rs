@@ -32,6 +32,10 @@ pub const A_MAX_FRAME_RETRIES: u8 = 3;
 /// upper layers hold the MAC by shared reference and drive receive and transmit
 /// concurrently from separate tasks.
 pub trait Mlme {
+    /// The device's IEEE (extended) address as provisioned by the hardware,
+    /// e.g. read from efuse.
+    fn ieee_address(&self) -> IeeeAddress;
+
     async fn scan_network(
         &self,
         ty: ScanType,

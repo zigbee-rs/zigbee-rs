@@ -1,7 +1,11 @@
 #![no_std]
 #![no_main]
 
+use core::ops::Range;
+
+use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_time::Timer;
+use esp_storage::FlashStorage;
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -15,10 +19,12 @@ use zigbee::aps::apsde::ApsdeSapConfirmStatus;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::nwk::nlme::Nlme;
 use zigbee::nwk::nlme::management::NlmeJoinStatus;
+use zigbee::storage::StorageDriver;
 use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
+use zigbee::zdp::device_annce::DeviceAnnce;
 use zigbee_base_device_behavior::BaseDeviceBehavior;
 use zigbee_cluster_library::basic;
 use zigbee_cluster_library::basic::BasicServer;
@@ -35,6 +41,14 @@ use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+/// flash region reserved for zigbee persistence.
+///
+/// MUST be adjusted to your partition table: it must not overlap the
+/// bootloader, the firmware image, or the esp-idf partition table. it must be
+/// erase-sector aligned (4 KiB on esp32-c6) and span at least two sectors so
+/// sequential-storage has a spare sector for garbage collection.
+const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 
 /// Extended PAN ID of the network to join.
 const EXTENDED_PAN_ID: u64 = 0x0000000000000000;
@@ -85,7 +99,10 @@ static BASIC: BasicServer = BasicServer {
     power_source: 0x03,
 };
 
+type ZigbeeFlash = zigbee::storage::FlashStorage<BlockingAsync<FlashStorage<'static>>>;
+
 static DEVICE: StaticCell<ZigbeeDevice<EspMlme<'static>>> = StaticCell::new();
+static STORAGE: StaticCell<ZigbeeFlash> = StaticCell::new();
 
 fn descriptor_config() -> DeviceDescriptorConfig<'static> {
     DeviceDescriptorConfig {
@@ -136,11 +153,32 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
-    zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
+    // the stack owns persistence: it restores the information bases here and
+    // the storage task persists dirty state (keys, frame counters, tables)
+    // whenever the stack changes it
+    let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
+    let storage: &'static ZigbeeFlash =
+        STORAGE.init(zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await);
+
+    // a restored short address means we are still on the network: the parent
+    // keeps sleepy children across our reboot, so resume polling instead of
+    // re-commissioning (NLME-JOIN refuses to re-associate a joined device)
+    let nib = zigbee::nwk::nib::get_ref();
+    let resume = *nib.network_address() != 0xffff;
+
+    // on resume the radio must be configured from the restored NIB up front —
+    // association normally does this, but we skip it
+    let mut mac_config = esp_radio::ieee802154::Config::default();
+    if resume {
+        mac_config.channel = CHANNEL;
+        mac_config.pan_id = Some(*nib.panid());
+        mac_config.short_addr = Some(*nib.network_address());
+        mac_config.auto_ack_tx = true;
+        mac_config.auto_ack_rx = true;
+    }
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
-    let mac = EspMlme::new(ieee802154, Default::default());
+    let mac = EspMlme::new(ieee802154, mac_config);
     println!("Device IEEE address: {:#018x}", mac.ieee_address());
     let nlme = Nlme::new(mac);
 
@@ -155,48 +193,65 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // and this trust center never answers REQUEST-KEY anyway
     bdb.tc_link_key_exchange_enabled = false;
 
-    println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
-    let join = bdb
-        .network_steering(
-            device,
-            IeeeAddress(EXTENDED_PAN_ID),
-            CHANNEL..CHANNEL + 1,
-            SCAN_DURATION,
-            CapabilityInformation(CAPABILITY),
-        )
-        .await;
-
-    match join {
-        Ok(confirm) if confirm.status == NlmeJoinStatus::Success => {
-            let nib = bdb.nib();
-            println!(
-                "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
-                nib.network_address(),
-                nib.panid(),
-                nib.extended_panid(),
-                nib.update_id()
-            );
-
-            let network_key = nib.security_material_set().first().unwrap().key;
-            println!("Network key installed: key={:02x?}", network_key);
-
-            let link_key = aib::get_ref()
-                .device_key_pair_set()
-                .first()
-                .unwrap()
-                .link_key;
-            println!("Link key installed: key={:02x?}", link_key);
+    if resume {
+        println!(
+            "Resuming on network: addr={:#06x} pan={:#06x} channel={CHANNEL}",
+            *nib.network_address(),
+            *nib.panid(),
+        );
+        // announce the power cycle so the coordinator refreshes its state
+        let annce = DeviceAnnce {
+            nwk_addr: ShortAddress(*nib.network_address()),
+            ieee_addr: *nib.ieee_address(),
+            capability: CapabilityInformation(CAPABILITY),
+        };
+        if let Err(e) = device.device_annce(annce).await {
+            println!("Device_annce failed: {e:?}");
         }
-        Ok(confirm) => {
-            println!("Join failed: {:?}", confirm.status);
-            loop {
-                Timer::after_secs(60).await;
+    } else {
+        println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
+        let join = bdb
+            .network_steering(
+                device,
+                IeeeAddress(EXTENDED_PAN_ID),
+                CHANNEL..CHANNEL + 1,
+                SCAN_DURATION,
+                CapabilityInformation(CAPABILITY),
+            )
+            .await;
+
+        match join {
+            Ok(confirm) if confirm.status == NlmeJoinStatus::Success => {
+                let nib = bdb.nib();
+                println!(
+                    "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
+                    *nib.network_address(),
+                    *nib.panid(),
+                    *nib.extended_panid(),
+                    nib.update_id()
+                );
+
+                let network_key = nib.security_material_set().first().unwrap().key;
+                println!("Network key installed: key={:02x?}", network_key);
+
+                let link_key = aib::get_ref()
+                    .device_key_pair_set()
+                    .first()
+                    .unwrap()
+                    .link_key;
+                println!("Link key installed: key={:02x?}", link_key);
             }
-        }
-        Err(e) => {
-            println!("Join error: {e:#}");
-            loop {
-                Timer::after_secs(60).await;
+            Ok(confirm) => {
+                println!("Join failed: {:?}", confirm.status);
+                loop {
+                    Timer::after_secs(60).await;
+                }
+            }
+            Err(e) => {
+                println!("Join error: {e:#}");
+                loop {
+                    Timer::after_secs(60).await;
+                }
             }
         }
     }
@@ -204,9 +259,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // Spawn the receive loop so the interview (Node_Desc / Active_EP /
     // Simple_Desc / Basic reads) is answered while the report loop runs.
     spawner.spawn(rx_task(device).expect("spawn rx_task"));
+    spawner.spawn(storage_task(storage).expect("spawn storage_task"));
 
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths
+    let mut report_failures: u32 = 0;
     loop {
         zcl_seq = zcl_seq.wrapping_add(1);
 
@@ -235,12 +292,37 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         match result {
             Ok(confirm) if confirm.status == ApsdeSapConfirmStatus::Success => {
                 println!("Reported temperature: {} (seq={})", sample, zcl_seq);
+                report_failures = 0;
             }
-            Ok(confirm) => println!("Report failed: {:?}", confirm.status),
+            Ok(confirm) => {
+                println!("Report failed: {:?}", confirm.status);
+                report_failures += 1;
+            }
             Err(e) => println!("Encode error: {:?}", e),
+        }
+
+        // an unreachable parent (no MAC ack) means we were likely aged out of
+        // its child table — forget the network and re-commission from scratch
+        if report_failures >= MAX_REPORT_FAILURES {
+            println!("Parent unreachable, forgetting network and rebooting");
+            device.forget_network();
+            // make sure the cleared state hits flash before the reset
+            storage.flush().await;
+            esp_hal::system::software_reset();
         }
 
         sample = sample.wrapping_add(10);
         Timer::after_secs(30).await;
     }
+}
+
+/// consecutive report failures before the network is forgotten and the device
+/// re-commissions.
+const MAX_REPORT_FAILURES: u32 = 4;
+
+/// Persists information-base changes (keys, frame counters, neighbor table)
+/// to flash as the stack makes them.
+#[embassy_executor::task]
+async fn storage_task(storage: &'static ZigbeeFlash) {
+    storage.run().await
 }
