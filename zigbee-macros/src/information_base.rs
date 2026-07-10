@@ -34,15 +34,15 @@ macro_rules! construct_ib {
             unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " not initialized")) }
         }
 
-        static DIRTY_SIGNAL: ::zigbee_types::storage::DirtySignal =
-            ::zigbee_types::storage::DirtySignal::new();
+        static DIRTY_SIGNAL: ::zigbee_types::sync::Event =
+            ::zigbee_types::sync::Event::new();
 
         /// Waits until a persisted attribute changes (single waiter).
         ///
         /// Wakes once per batch of changes; pair with `take_dirty` to see
         /// which fields changed.
         pub async fn changed() {
-            DIRTY_SIGNAL.changed().await;
+            DIRTY_SIGNAL.wait().await;
         }
 
         /// Initialize the IB if not already initialized, otherwise do nothing.
@@ -200,7 +200,7 @@ macro_rules! construct_ib {
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
             pub fn mark_dirty(&self, id: ${ concat($ib_name, Id) }) {
                 *self.dirty.lock() |= 1 << (id as u64);
-                DIRTY_SIGNAL.notify();
+                DIRTY_SIGNAL.signal();
             }
 
             /// Encodes a single field into `buf`, returning the encoded length.
@@ -267,7 +267,7 @@ macro_rules! construct_ib {
 
                     if ${ concat($ib_name, Id) }::$field.storage_key().is_some() {
                         *self.dirty.lock() |= 1 << (${ concat($ib_name, Id) }::$field as u64);
-                        DIRTY_SIGNAL.notify();
+                        DIRTY_SIGNAL.signal();
                     }
                 }
             )+
