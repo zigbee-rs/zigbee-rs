@@ -17,7 +17,9 @@ const TAG: u16 = 0x0100;
 /// their defaults.
 pub(crate) async fn restore<F: NorFlash>(map: &mut FlashMap<F>, aib: &Aib) {
     for id in AibId::VARIANTS {
-        let Some(key) = id.storage_key() else { continue };
+        let Some(key) = id.storage_key() else {
+            continue;
+        };
         let key = TAG | u16::from(key);
         if let Some(data) = map.fetch(key).await
             && !aib.import_field(*id, data)
@@ -30,11 +32,7 @@ pub(crate) async fn restore<F: NorFlash>(map: &mut FlashMap<F>, aib: &Aib) {
 }
 
 /// Persists all AIB fields modified since the last call.
-pub(crate) async fn flush<F: NorFlash>(
-    map: &mut FlashMap<F>,
-    shadow: &mut Shadow,
-    aib: &Aib,
-) {
+pub(crate) async fn flush<F: NorFlash>(map: &mut FlashMap<F>, shadow: &mut Shadow, aib: &Aib) {
     let dirty = aib.take_dirty();
     if dirty == 0 {
         return;
@@ -44,7 +42,9 @@ pub(crate) async fn flush<F: NorFlash>(
         if dirty & (1 << (*id as u64)) == 0 {
             continue;
         }
-        let Some(key) = id.storage_key() else { continue };
+        let Some(key) = id.storage_key() else {
+            continue;
+        };
 
         let len = if *id == AibId::device_key_pair_set {
             // normalize counters so the stored image only changes when a

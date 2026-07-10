@@ -29,7 +29,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
+    zigbee::nwk::nib::init();
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
     let mac = EspMlme::new(ieee802154, Default::default());

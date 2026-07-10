@@ -409,7 +409,8 @@ where
             })
             .collect();
 
-        self.nib().update_neighbor_table(|value| *value = StorageVec(neighbor_table));
+        self.nib()
+            .update_neighbor_table(|value| *value = StorageVec(neighbor_table));
 
         // Build network descriptors for the confirm primitive.
         let network_descriptors = scan_result
@@ -526,9 +527,12 @@ where
                         AssociationStatus::Successful => {
                             // --- Success: update NIB (§3.6.1.4.1.1) ---
                             let assigned_addr = response.association_address;
-                            self.nib().update_network_address(|value| *value = assigned_addr.0);
-                            self.nib().update_ieee_address(|value| *value = response.device_address);
-                            self.nib().update_extended_panid(|value| *value = request.extended_pan_id.0);
+                            self.nib()
+                                .update_network_address(|value| *value = assigned_addr.0);
+                            self.nib()
+                                .update_ieee_address(|value| *value = response.device_address);
+                            self.nib()
+                                .update_extended_panid(|value| *value = request.extended_pan_id.0);
                             self.nib().update_panid(|value| *value = pan_id.0);
 
                             // Read parent fields before the clearing loop
@@ -537,7 +541,8 @@ where
                                 self.nib().neighbor_table()[candidate_idx].update_id;
                             let parent_channel =
                                 self.nib().neighbor_table()[candidate_idx].logical_channel;
-                            self.nib().update_update_id(|value| *value = parent_update_id);
+                            self.nib()
+                                .update_update_id(|value| *value = parent_update_id);
 
                             // Update the neighbor table: set the relationship
                             // field to 0x00 (parent) and clear optional
@@ -1050,7 +1055,8 @@ mod tests {
     fn join_fails_when_no_candidates() {
         let mac = MockMlme::new();
         let (_guard, nlme) = make_nlme(mac);
-        nlme.nib().update_neighbor_table(|value| *value = StorageVec::new());
+        nlme.nib()
+            .update_neighbor_table(|value| *value = StorageVec::new());
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::NotPermitted);
     }

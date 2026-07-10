@@ -273,7 +273,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
                         let _ = key_set.push(DeviceKeyPairDescriptor {
                             device_address: nwk_key.source_address,
                             key_attributes: KeyAttribute::ProvisionalKey,
-                            link_key: zigbee_types::ByteArray(crate::security::TRUST_CENTER_LINK_KEY),
+                            link_key: zigbee_types::ByteArray(
+                                crate::security::TRUST_CENTER_LINK_KEY,
+                            ),
                             outgoing_frame_counter: 0,
                             incoming_frame_counter: 0,
                             link_key_type: LinkKeyType::GlobalLinkKey,

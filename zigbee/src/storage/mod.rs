@@ -34,13 +34,13 @@ impl StorageDriver for NoStorage {
 pub(crate) mod flash;
 
 #[cfg(feature = "storage")]
-pub use flash::init_with_flash;
+pub(crate) use flash::FlashMap;
 #[cfg(feature = "storage")]
 pub use flash::FlashStorage;
 #[cfg(feature = "storage")]
-pub(crate) use flash::FlashMap;
-#[cfg(feature = "storage")]
 pub(crate) use flash::Shadow;
+#[cfg(feature = "storage")]
+pub use flash::init_with_flash;
 #[cfg(feature = "storage")]
 pub(crate) use flash::round_down;
 #[cfg(feature = "storage")]

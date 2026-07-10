@@ -452,8 +452,9 @@ mod tests {
 
     #[test]
     fn nib_default() {
-        init();
-        let nib = get_ref();
+        // local instance: the global singleton is shared with (and mutated
+        // by) other tests running in parallel
+        let nib = Nib::new();
 
         assert_eq!(*nib.max_broadcast_retries(), 0x03);
         assert_eq!(*nib.report_constant_cost(), 0x00);

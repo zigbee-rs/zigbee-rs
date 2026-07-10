@@ -275,8 +275,11 @@ impl<'a> SecurityContext<'a> {
                     .key_sequence_number
                     .is_some_and(|ksn| ksn == k.key_seq_number)
             }) {
-                record_result =
-                    record_nwk_incoming_frame_counter(material, source_address, aux_hdr.frame_counter);
+                record_result = record_nwk_incoming_frame_counter(
+                    material,
+                    source_address,
+                    aux_hdr.frame_counter,
+                );
             }
         });
         record_result?;
@@ -488,11 +491,14 @@ impl<'a> SecurityContext<'a> {
         // for an unknown device is only inserted after authentication succeeds.
         let (known_device, link_key, last_incoming_counter) = {
             let key_set = self.aib.device_key_pair_set();
-            key_set.iter().find(|k| k.device_address == source_address).map_or(
-                // TODO: what do we use here if the source device is new and unknown?
-                (false, ByteArray(TRUST_CENTER_LINK_KEY), 0),
-                |k| (true, k.link_key, k.incoming_frame_counter),
-            )
+            key_set
+                .iter()
+                .find(|k| k.device_address == source_address)
+                .map_or(
+                    // TODO: what do we use here if the source device is new and unknown?
+                    (false, ByteArray(TRUST_CENTER_LINK_KEY), 0),
+                    |k| (true, k.link_key, k.incoming_frame_counter),
+                )
         };
 
         // step 3: obtain the key

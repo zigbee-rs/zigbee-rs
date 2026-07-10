@@ -20,8 +20,8 @@ fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    zigbee::nwk::nib::init(zigbee::nwk::nib::NibStorage::default());
-    zigbee::aps::aib::init(zigbee::aps::aib::AibStorage::default());
+    zigbee::nwk::nib::init();
+    zigbee::aps::aib::init();
     let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154);
 
     ieee802154.set_config(Config {
