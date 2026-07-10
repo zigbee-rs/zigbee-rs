@@ -654,6 +654,10 @@ impl EspMlmeInner<'_> {
 }
 
 impl Mlme for EspMlme<'_> {
+    fn ieee_address(&self) -> zigbee_types::IeeeAddress {
+        zigbee_types::IeeeAddress(self.ieee_address)
+    }
+
     async fn scan_network(
         &self,
         ty: ScanType,

@@ -50,6 +50,7 @@ use crate::nwk::frame::frame_control::DiscoverRoute;
 use crate::nwk::frame::frame_control::FrameControl as NwkFrameControl;
 use crate::nwk::frame::frame_control::FrameType as NwkFrameType;
 use crate::nwk::frame::header::Header as NwkHeader;
+use crate::nwk::nib;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
@@ -99,7 +100,14 @@ impl<M> Nlme<M>
 where
     M: Mlme,
 {
+    /// Creates a new instance owning the given MAC.
+    ///
+    /// Mirrors the MAC's hardware-provisioned IEEE address into
+    /// `nwkIeeeAddress`, so it is valid even when resuming on a network
+    /// without re-associating. The information bases must be initialized
+    /// first.
     pub fn new(mac: M) -> Self {
+        nib::get_ref().update_ieee_address(|value| *value = mac.ieee_address());
         Self {
             mac,
             nwk_seq: AtomicU8::new(0),
@@ -158,7 +166,7 @@ where
 
     /// Returns a reference to the global NIB singleton.
     pub fn nib(&self) -> &'static Nib {
-        crate::nwk::nib::get_ref()
+        nib::get_ref()
     }
 
     /// Select parent candidates from the neighbor table (§3.6.1.4.1.1).
@@ -722,6 +730,7 @@ mod tests {
     mockall::mock! {
         Mlme {}
         impl Mlme for Mlme {
+            fn ieee_address(&self) -> IeeeAddress;
             async fn scan_network(
                 &self,
                 ty: ScanType,
@@ -784,7 +793,7 @@ mod tests {
         }
     }
 
-    fn make_nlme(mac: MockMlme) -> (std::sync::MutexGuard<'static, ()>, Nlme<MockMlme>) {
+    fn make_nlme(mut mac: MockMlme) -> (std::sync::MutexGuard<'static, ()>, Nlme<MockMlme>) {
         let guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         use crate::nwk::nib;
         nib::try_init();
@@ -792,6 +801,8 @@ mod tests {
         // reset() only rewrites fields with a declared default; StorageVec fields
         // (no default) persist across tests in the global NIB, so clear explicitly
         nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
+        mac.expect_ieee_address()
+            .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
         (guard, Nlme::new(mac))
     }
 
