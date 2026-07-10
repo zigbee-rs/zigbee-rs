@@ -17,6 +17,7 @@ pub struct Event {
 }
 
 impl Event {
+    /// Creates an unset event.
     pub const fn new() -> Self {
         Self {
             set: AtomicBool::new(false),
@@ -28,6 +29,11 @@ impl Event {
     pub fn signal(&self) {
         self.set.store(true, Ordering::Release);
         self.waker.wake();
+    }
+
+    /// Clear a pending, unconsumed signal.
+    pub fn reset(&self) {
+        self.set.store(false, Ordering::Release);
     }
 
     /// Wait until signaled, consuming the flag (edge semantics).

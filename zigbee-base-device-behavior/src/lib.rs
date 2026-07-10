@@ -70,6 +70,10 @@ pub struct BaseDeviceBehavior {
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
+    /// Whether network steering performs the TC link key exchange (BDB §8.2
+    /// step 12). Disable for trust centers that never answer REQUEST-KEY to
+    /// keep the default global TC link key and skip the retry stalls.
+    pub tc_link_key_exchange_enabled: bool,
 }
 
 impl BaseDeviceBehavior {
@@ -79,6 +83,7 @@ impl BaseDeviceBehavior {
             bdb_node_is_on_a_network: false,
             bdb_commissioning_mode: CommissioningMode::NetworkSteering,
             bdb_commissioning_status: BdbCommissioningStatus::Success,
+            tc_link_key_exchange_enabled: true,
         }
     }
 
@@ -155,14 +160,18 @@ impl BaseDeviceBehavior {
         Self::device_annce(device, capability_information).await?;
 
         // §8.2 step 12, §10.2.5
-        log::debug!("[BDB] step 12: TC link key exchange");
-        // non-fatal: a TC allowing legacy devices may never answer the
-        // REQUEST-KEY, keep the default global TC link key then
-        match self.tc_link_key_exchange(device, delay).await {
-            Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
-            Err(e) => log::warn!(
-                "[BDB] step 12: TC link key exchange failed ({e:?}), continuing with default TC link key"
-            ),
+        if self.tc_link_key_exchange_enabled {
+            log::debug!("[BDB] step 12: TC link key exchange");
+            // non-fatal: a TC allowing legacy devices may never answer the
+            // REQUEST-KEY, keep the default global TC link key then
+            match self.tc_link_key_exchange(device, delay).await {
+                Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
+                Err(e) => log::warn!(
+                    "[BDB] step 12: TC link key exchange failed ({e:?}), continuing with default TC link key"
+                ),
+            }
+        } else {
+            log::debug!("[BDB] step 12: TC link key exchange disabled, skipping");
         }
 
         self.bdb_node_is_on_a_network = true;
@@ -195,6 +204,19 @@ impl BaseDeviceBehavior {
     /// awaits the stack's progress events for `bdbcTcLinkKeyExchangeTimeout`
     /// each.
     async fn tc_link_key_exchange<M: Mlme>(
+        &mut self,
+        device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
+    ) -> Result<(), NetworkError> {
+        // arm the stack: only now are Transport-Key/Confirm-Key honored, so
+        // replayed frames outside the exchange cannot downgrade the key
+        device.begin_tc_link_key_exchange();
+        let result = self.run_tc_link_key_exchange(device, delay).await;
+        device.end_tc_link_key_exchange();
+        result
+    }
+
+    async fn run_tc_link_key_exchange<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
         delay: &mut impl DelayNs,
@@ -276,16 +298,21 @@ impl BaseDeviceBehavior {
             )
             .await
             {
-                Some(()) => {
+                Some(0x00) => {
                     log::debug!("[BDB] TC link key verified successfully");
                     return Ok(());
                 }
-                None if attempts >= BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
+                // rejected verification: retry immediately instead of
+                // burning the full timeout
+                Some(status) if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
+                    log::warn!("[BDB] CONFIRM-KEY status {status:#04x}, retrying");
+                }
+                None if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => continue,
+                _ => {
                     log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);
                 }
-                None => continue,
             }
         }
     }

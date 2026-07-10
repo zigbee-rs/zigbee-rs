@@ -11,6 +11,7 @@
 #![allow(dead_code)]
 
 use core::ops::Not;
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
@@ -95,10 +96,17 @@ pub(crate) struct Apsme {
     pub(crate) joined_network: Option<Address>,
     /// apsCounter AIB attribute (§4.4.11)
     pub(crate) aps_counter: AtomicU8,
+    /// whether a TC link key exchange is in flight; gates the handling of
+    /// Transport-Key/Confirm-Key so replayed or unsolicited frames cannot
+    /// downgrade an established key (§4.4.10)
+    tc_exchange_active: AtomicBool,
     /// signaled when a TC link key was received and installed (§4.4.10)
     pub(crate) tc_key_received: Event,
-    /// signaled when the TC confirmed the link key verification (§4.4.9)
+    /// signaled when the TC answered the key verification (§4.4.9)
     pub(crate) tc_key_verified: Event,
+    /// status of the last Confirm-Key (§4.4.9), valid once
+    /// [`Self::tc_key_verified`] fired
+    tc_confirm_status: AtomicU8,
 }
 
 impl Apsme {
@@ -108,9 +116,31 @@ impl Apsme {
             binding_table: ApsBindingTable::new(),
             joined_network: None,
             aps_counter: AtomicU8::new(0),
+            tc_exchange_active: AtomicBool::new(false),
             tc_key_received: Event::new(),
             tc_key_verified: Event::new(),
+            tc_confirm_status: AtomicU8::new(0),
         }
+    }
+
+    /// Arm the TC link key exchange: clear stale events from a previous
+    /// attempt and accept Transport-Key/Confirm-Key until disarmed.
+    pub(crate) fn begin_tc_key_exchange(&self) {
+        self.tc_key_received.reset();
+        self.tc_key_verified.reset();
+        self.tc_exchange_active.store(true, Ordering::Release);
+    }
+
+    /// Disarm the TC link key exchange; subsequent key-transport commands
+    /// are ignored again.
+    pub(crate) fn end_tc_key_exchange(&self) {
+        self.tc_exchange_active.store(false, Ordering::Release);
+    }
+
+    /// Status of the last Confirm-Key (0x00 = success), valid after
+    /// [`Self::tc_key_verified`] fired.
+    pub(crate) fn tc_confirm_status(&self) -> u8 {
+        self.tc_confirm_status.load(Ordering::Acquire)
     }
 
     /// Next APS counter value (§4.4.11), wrapping.
@@ -262,19 +292,30 @@ impl Apsme {
     /// commissioning flow (BDB §10.2.5) can await progress. Unsolicited NWK
     /// key rotation (§4.4.3) is a future extension point.
     fn handle_aps_command(&self, aib: &Aib, command: &Command) {
+        let exchange_active = self.tc_exchange_active.load(Ordering::Acquire);
         match command {
+            // outside an armed exchange a TC link key must not be honored: a
+            // replayed frame would downgrade a verified key and reset its
+            // frame counters
+            Command::TransportKey(TransportKey::TrustCenterLinkKey(_)) if !exchange_active => {
+                log::warn!("[APS] rx unsolicited TC link key (ignored)");
+            }
+            Command::ConfirmKey(_) if !exchange_active => {
+                log::warn!("[APS] rx unsolicited confirm key (ignored)");
+            }
             Command::TransportKey(TransportKey::TrustCenterLinkKey(descriptor)) => {
                 log::debug!("[APS] rx TC link key");
                 self.install_unverified_tc_link_key(aib, descriptor);
                 self.tc_key_received.signal();
             }
-            Command::ConfirmKey(confirm) if confirm.status == 0x00 => {
-                log::debug!("[APS] rx confirm key: success");
-                self.mark_tc_link_key_verified(aib);
-                self.tc_key_verified.signal();
-            }
             Command::ConfirmKey(confirm) => {
-                log::warn!("[APS] rx confirm key: status {:#04x}", confirm.status);
+                log::debug!("[APS] rx confirm key: status {:#04x}", confirm.status);
+                if confirm.status == 0x00 {
+                    self.mark_tc_link_key_verified(aib);
+                }
+                self.tc_confirm_status
+                    .store(confirm.status, Ordering::Release);
+                self.tc_key_verified.signal();
             }
             // key transport (§4.4.3): the network key is obtained inline during
             // join; an unsolicited key update would be handled here
@@ -625,6 +666,7 @@ mod tests {
         let apsme = Apsme::new();
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
+        apsme.begin_tc_key_exchange();
 
         let mut received = pin!(apsme.tc_key_received.wait());
         assert!(received.as_mut().poll(&mut cx).is_pending());
@@ -639,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_key_marks_verified_and_signals() {
+    fn confirm_key_marks_verified_and_signals_status() {
         use core::future::Future;
         use core::pin::pin;
         use core::task::Context;
@@ -648,19 +690,17 @@ mod tests {
         let apsme = Apsme::new();
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
+        apsme.begin_tc_key_exchange();
         apsme.handle_aps_command(&aib, &tc_link_key());
 
-        // failed verification leaves the key unverified
+        // failed verification signals the status but leaves the key unverified
         apsme.handle_aps_command(&aib, &confirm_key(0x01));
         assert_eq!(
             aib.device_key_pair_set()[0].key_attributes,
             KeyAttribute::UnverifiedKey
         );
-        assert!(
-            pin!(apsme.tc_key_verified.wait())
-                .poll(&mut cx)
-                .is_pending()
-        );
+        assert!(pin!(apsme.tc_key_verified.wait()).poll(&mut cx).is_ready());
+        assert_eq!(apsme.tc_confirm_status(), 0x01);
 
         apsme.handle_aps_command(&aib, &confirm_key(0x00));
         assert_eq!(
@@ -668,5 +708,47 @@ mod tests {
             KeyAttribute::VerifiedKey
         );
         assert!(pin!(apsme.tc_key_verified.wait()).poll(&mut cx).is_ready());
+        assert_eq!(apsme.tc_confirm_status(), 0x00);
+    }
+
+    #[test]
+    fn key_transport_ignored_outside_exchange() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::Context;
+        use core::task::Waker;
+
+        let apsme = Apsme::new();
+        let aib = setup_aib();
+        let mut cx = Context::from_waker(Waker::noop());
+
+        // not armed: a (replayed) TC link key must not touch the AIB
+        apsme.handle_aps_command(&aib, &tc_link_key());
+        assert!(aib.device_key_pair_set().is_empty());
+        assert!(
+            pin!(apsme.tc_key_received.wait())
+                .poll(&mut cx)
+                .is_pending()
+        );
+
+        apsme.handle_aps_command(&aib, &confirm_key(0x00));
+        assert!(
+            pin!(apsme.tc_key_verified.wait())
+                .poll(&mut cx)
+                .is_pending()
+        );
+
+        // disarmed after a completed exchange: a replay must not downgrade
+        // the verified key or reset its frame counters
+        apsme.begin_tc_key_exchange();
+        apsme.handle_aps_command(&aib, &tc_link_key());
+        apsme.handle_aps_command(&aib, &confirm_key(0x00));
+        apsme.end_tc_key_exchange();
+        aib.update_device_key_pair_set(|key_set| key_set[0].outgoing_frame_counter = 42);
+
+        apsme.handle_aps_command(&aib, &tc_link_key());
+        let entry = aib.device_key_pair_set()[0].clone();
+        assert_eq!(entry.key_attributes, KeyAttribute::VerifiedKey);
+        assert_eq!(entry.outgoing_frame_counter, 42);
     }
 }

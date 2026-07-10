@@ -308,9 +308,11 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
                 self.joined.signal();
             }
-            TransportKey::ApplicationLinkKey(_app_key) => (), // TODO
-            TransportKey::TrustCenterLinkKey(_tcl_key) => (), // TODO
-            TransportKey::Reserved(_) => return Err(NetworkError::NoTransportKey),
+            // only the network key completes the join (§4.4.10); anything
+            // else here is a stale frame — fail instead of proceeding keyless
+            TransportKey::ApplicationLinkKey(_)
+            | TransportKey::TrustCenterLinkKey(_)
+            | TransportKey::Reserved(_) => return Err(NetworkError::NoTransportKey),
         }
 
         Ok(())
@@ -342,6 +344,19 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.joined.wait_set().await;
     }
 
+    /// Arm the TC link key exchange (BDB §10.2.5): key-transport commands
+    /// are honored and stale progress events are cleared. Disarm with
+    /// [`Self::end_tc_link_key_exchange`] when the exchange concludes.
+    pub fn begin_tc_link_key_exchange(&self) {
+        self.apsme.begin_tc_key_exchange();
+    }
+
+    /// Disarm the TC link key exchange; unsolicited key-transport commands
+    /// are ignored again.
+    pub fn end_tc_link_key_exchange(&self) {
+        self.apsme.end_tc_key_exchange();
+    }
+
     /// Wait until the Trust Center delivered a new link key (§4.4.10).
     ///
     /// The receive loop installs the key as unverified into the AIB before
@@ -350,13 +365,14 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.apsme.tc_key_received.wait().await;
     }
 
-    /// Wait until the Trust Center confirmed the link key verification
-    /// (§4.4.9).
+    /// Wait until the Trust Center answered the key verification (§4.4.9)
+    /// and return the Confirm-Key status (0x00 = success, key marked
+    /// verified).
     ///
-    /// The receive loop marks the key verified in the AIB before signaling.
     /// Bound the wait with an executor timeout.
-    pub async fn wait_tc_link_key_verified(&self) {
+    pub async fn wait_tc_link_key_verified(&self) -> u8 {
         self.apsme.tc_key_verified.wait().await;
+        self.apsme.tc_confirm_status()
     }
 
     /// Receive and dispatch one inbound APS data frame.
