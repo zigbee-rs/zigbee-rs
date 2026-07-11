@@ -155,6 +155,9 @@ impl BaseDeviceBehavior {
         device.poll_transport_key().await?;
         log::debug!("[BDB] step 9: network key installed");
 
+        // §3.6.10.2: negotiate the end-device timeout with the parent
+        Self::negotiate_end_device_timeout(device, delay).await;
+
         // §8.2 step 11
         log::debug!("[BDB] step 11: broadcast Device_annce");
         Self::device_annce(device, capability_information).await?;
@@ -191,6 +194,34 @@ impl BaseDeviceBehavior {
             capability: capability_information,
         };
         device.device_annce(annce).await
+    }
+
+    /// Negotiate the end-device timeout with the parent (§3.6.10.2).
+    ///
+    /// Sends an End Device Timeout Request; the concurrently running receive
+    /// loop consumes the parent's response and updates the NIB. Non-fatal: a
+    /// legacy parent never answers and keeps its default timeout.
+    async fn negotiate_end_device_timeout<M: Mlme>(
+        device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
+    ) {
+        log::debug!("[BDB] negotiate end-device timeout");
+        if let Err(e) = device.nlme().send_end_device_timeout_request().await {
+            log::warn!("[BDB] end-device timeout request failed ({e:?})");
+            return;
+        }
+
+        // bounded wait for the receive loop to consume the response
+        let nib = nib::get_ref();
+        for _ in 0..3 {
+            if device.nlme().negotiated_poll_interval_ms().is_some()
+                || *nib.parent_information() != 0
+            {
+                return;
+            }
+            delay.delay_ms(500).await;
+        }
+        log::warn!("[BDB] no end-device timeout response, assuming legacy parent");
     }
 
     /// Trust Center link key exchange procedure (BDB §10.2.5).

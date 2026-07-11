@@ -44,8 +44,13 @@ use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
 
+use crate::nwk::frame::CommandFrame as NwkCommandFrame;
 use crate::nwk::frame::DataFrame as NwkDataFrame;
 use crate::nwk::frame::Frame as NwkFrame;
+use crate::nwk::frame::command::Command;
+use crate::nwk::frame::command::end_device_timeout_request;
+use crate::nwk::frame::command::end_device_timeout_request::EndDeviceTimeoutRequest;
+use crate::nwk::frame::command::end_device_timeout_response::EndDeviceTimeoutResponse;
 use crate::nwk::frame::frame_control::DiscoverRoute;
 use crate::nwk::frame::frame_control::FrameControl as NwkFrameControl;
 use crate::nwk::frame::frame_control::FrameType as NwkFrameType;
@@ -63,6 +68,9 @@ use crate::security::SecurityContext;
 
 /// Network management entity
 pub mod management;
+
+// sentinel for `pending_timeout_request`: no request outstanding
+const NO_PENDING_TIMEOUT: u8 = 0xff;
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
@@ -94,6 +102,8 @@ impl From<byte::Error> for NetworkError {
 pub struct Nlme<M> {
     mac: M,
     nwk_seq: AtomicU8,
+    // requested timeout enum awaiting a response (§3.6.10.2); 0xff = none
+    pending_timeout_request: AtomicU8,
 }
 
 impl<M> Nlme<M>
@@ -111,6 +121,7 @@ where
         Self {
             mac,
             nwk_seq: AtomicU8::new(0),
+            pending_timeout_request: AtomicU8::new(NO_PENDING_TIMEOUT),
         }
     }
 
@@ -162,6 +173,79 @@ where
             buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
             Ok(hdr_len + payload_len)
         }
+    }
+
+    /// Build a secured NWK command frame into `buf`, returning the total
+    /// frame length (§3.3.2).
+    fn build_nwk_command_frame(
+        &self,
+        destination: ShortAddress,
+        command: Command<'_>,
+        buf: &mut [u8],
+    ) -> Result<usize, NetworkError> {
+        let nib = self.nib();
+        let frame_control = NwkFrameControl(0)
+            .set_frame_type(NwkFrameType::NwkCommand)
+            .set_protocol_version(2)
+            .set_discover_route(DiscoverRoute::Suppress)
+            .set_security_flag(true)
+            .set_source_ieee_flag(true);
+
+        let header = NwkHeader {
+            frame_control,
+            destination,
+            source: ShortAddress(*nib.network_address()),
+            radius: 1,
+            sequence_number: self.next_nwk_seq(),
+            destination_ieee: None,
+            source_ieee: Some(*nib.ieee_address()),
+            multicast_control: None,
+            source_route_subframe: None,
+        };
+
+        let nwk_frame = NwkFrame::NwkCommand(NwkCommandFrame { header, command });
+        let cx = SecurityContext::get();
+        let len = cx.encrypt_nwk_frame_in_place(nwk_frame, buf)?;
+        Ok(len)
+    }
+
+    /// Send an End Device Timeout Request to the parent (§3.6.10.2).
+    ///
+    /// Requests the timeout enumeration from `nwkEndDeviceTimeoutDefault`.
+    /// The parent's response is consumed by the receive path and updates
+    /// `nwkParentInformation` and the negotiated timeout in the NIB; no
+    /// response means a legacy parent and leaves the NIB untouched.
+    pub async fn send_end_device_timeout_request(&self) -> Result<(), NetworkError> {
+        let requested_timeout = *self.nib().end_device_timeout_default();
+        let command = Command::EndDeviceTimeoutRequest(EndDeviceTimeoutRequest {
+            requested_timeout,
+            // all bits reserved, must be 0 (§3.4.11.3.2)
+            end_device_configuration: 0x00,
+        });
+
+        let mut buf = [0u8; 256];
+        let len = self.build_nwk_command_frame(self.parent_short_address()?, command, &mut buf)?;
+        self.pending_timeout_request
+            .store(requested_timeout, Ordering::Relaxed);
+        self.mac
+            .transmit_data(self.parent_address()?, &buf[..len])
+            .await?;
+        Ok(())
+    }
+
+    /// Recommended maximum poll interval in milliseconds, allowing three
+    /// keepalives per negotiated timeout period (§3.6.10.3).
+    ///
+    /// Returns `None` when no timeout was negotiated or the parent does not
+    /// support the MAC data poll keepalive method.
+    pub fn negotiated_poll_interval_ms(&self) -> Option<u32> {
+        let nib = self.nib();
+        let seconds = end_device_timeout_request::timeout_seconds(*nib.end_device_timeout())?;
+        let parent_information = *nib.parent_information();
+        if parent_information & EndDeviceTimeoutResponse::MAC_DATA_POLL_KEEPALIVE == 0 {
+            return None;
+        }
+        Some(seconds * 1000 / 3)
     }
 
     /// Returns a reference to the global NIB singleton.
@@ -253,18 +337,31 @@ where
         }
     }
 
+    /// Clear parent information and the negotiated end-device timeout; a
+    /// fresh join invalidates both (§3.6.1.4.1.1, §3.6.10.2).
+    fn reset_parent_negotiation(&self) {
+        let nib = self.nib();
+        nib.update_parent_information(|value| *value = 0);
+        nib.update_end_device_timeout(|value| *value = NO_PENDING_TIMEOUT);
+    }
+
     /// Find the parent's MAC address from the neighbor table.
     fn parent_address(&self) -> Result<Address, NetworkError> {
+        let addr = Address::Short(
+            PanId(*self.nib().panid()),
+            MacShortAddress(self.parent_short_address()?.0),
+        );
+        Ok(addr)
+    }
+
+    /// Find the parent's network address from the neighbor table.
+    fn parent_short_address(&self) -> Result<ShortAddress, NetworkError> {
         let table = self.nib().neighbor_table();
         let parent = table
             .iter()
             .find(|n| n.relationship == relationship::PARENT)
             .ok_or(NetworkError::NotJoined)?;
-        let addr = Address::Short(
-            PanId(*self.nib().panid()),
-            MacShortAddress(parent.network_address.0),
-        );
-        Ok(addr)
+        Ok(parent.network_address)
     }
 
     /// Issue one MLME-POLL to the parent (§3.6.6).
@@ -335,9 +432,7 @@ where
     /// handler can be filled in. Most are not yet acted upon — they are logged
     /// and ignored. Returning unit keeps the caller's receive loop simple; add
     /// a result type here if a handler needs to surface failures.
-    fn handle_nwk_command(&self, command: &crate::nwk::frame::command::Command<'_>) {
-        use crate::nwk::frame::command::Command;
-
+    fn handle_nwk_command(&self, command: &Command<'_>) {
         match command {
             // routing (§3.4.1–3.4.2): a sleepy end device routes via its parent,
             // so route discovery is currently a no-op.
@@ -356,13 +451,34 @@ where
             // link management (§3.4.8, §3.4.13).
             Command::LinkStatus(_) => log::trace!("[NWK] link status (ignored)"),
             Command::LinkPowerDelta(_) => log::trace!("[NWK] link power delta (ignored)"),
-            // end-device timeout (§3.4.11–3.4.12): TODO negotiate/refresh the
-            // parent's end-device timeout for this child.
+            // end-device timeout requests are parent-side only (§3.4.11)
             Command::EndDeviceTimeoutRequest(_) => {
                 log::trace!("[NWK] end-device timeout request (ignored)");
             }
-            Command::EndDeviceTimeoutResponse(_) => {
-                log::trace!("[NWK] end-device timeout response (ignored)");
+            // §3.6.10.2: on SUCCESS store the Parent Information bitmask and
+            // the negotiated timeout; otherwise the parent keeps its default.
+            // TODO: timeout-request keepalive method (bit 1) and Parent Link
+            // Failure (NWK status 0x09) on keepalive failure
+            Command::EndDeviceTimeoutResponse(response) => {
+                let pending = self
+                    .pending_timeout_request
+                    .swap(NO_PENDING_TIMEOUT, Ordering::Relaxed);
+                if response.status == EndDeviceTimeoutResponse::STATUS_SUCCESS
+                    && pending != NO_PENDING_TIMEOUT
+                {
+                    let nib = self.nib();
+                    nib.update_parent_information(|value| *value = response.parent_information);
+                    nib.update_end_device_timeout(|value| *value = pending);
+                    log::info!(
+                        "[NWK] end-device timeout negotiated: enum={pending}, parent_information={:#04x}",
+                        response.parent_information
+                    );
+                } else {
+                    log::warn!(
+                        "[NWK] end-device timeout response rejected or unexpected (status={:#04x})",
+                        response.status
+                    );
+                }
             }
             Command::Reserved(id) => log::trace!("[NWK] reserved command {id:#04x} (ignored)"),
         }
@@ -499,7 +615,7 @@ where
 
         // Whether joining as router or end device, set nwkParentInformation
         // to 0 before searching (spec requirement).
-        self.nib().update_parent_information(|value| *value = 0);
+        self.reset_parent_negotiation();
 
         let join_as_router = request.capability_information.device_type();
 
@@ -624,7 +740,8 @@ where
     /// (§3.2.2.13).
     #[allow(clippy::unused_async)]
     pub async fn rejoin(&self) -> NlmeJoinConfirm {
-        // TODO: implement NWK rejoin procedure (§3.6.1.4.2)
+        // TODO: implement NWK rejoin procedure (§3.6.1.4.2); afterwards send an
+        // End Device Timeout Request even when rejoining the same parent (§3.6.10.2)
         todo!()
     }
 
@@ -816,6 +933,8 @@ mod tests {
         use crate::nwk::nib;
         nib::try_init();
         nib::reset();
+        // the security context used by frame builders also needs the AIB
+        crate::aps::aib::try_init();
         // reset() only rewrites fields with a declared default; StorageVec fields
         // (no default) persist across tests in the global NIB, so clear explicitly
         nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
@@ -1181,5 +1300,169 @@ mod tests {
 
         let confirm = block_on(nlme.join(req));
         assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    // -------------------------------------------------------------------
+    // end device timeout tests (§3.6.10)
+    // -------------------------------------------------------------------
+
+    /// Seed the global NIB with a joined-network state: parent neighbor,
+    /// addresses, and NWK security material.
+    fn seed_joined_nib(nlme: &Nlme<MockMlme>) {
+        use zigbee_types::ByteArray;
+
+        use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
+
+        let nib = nlme.nib();
+        nib.update_panid(|value| *value = 0xAAAA);
+        nib.update_network_address(|value| *value = 0x1234);
+
+        let mut table = StorageVec::new();
+        let mut parent = make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0);
+        parent.relationship = relationship::PARENT;
+        table.push(parent).unwrap();
+        nib.update_neighbor_table(|value| *value = table);
+
+        let mut set = StorageVec::new();
+        set.push(NetworkSecurityMaterialDescriptor {
+            key_seq_number: 0,
+            outgoing_frame_counter: 1,
+            incoming_frame_counter_set: StorageVec::new(),
+            key: ByteArray([0x42; 16]),
+            network_key_type: 0,
+        })
+        .unwrap();
+        nib.update_security_material_set(|value| *value = set);
+    }
+
+    #[test]
+    fn send_end_device_timeout_request_encodes_command() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .withf(|dest, payload| {
+                assert_eq!(
+                    *dest,
+                    Address::Short(PanId(0xAAAA), MacShortAddress(0x0000))
+                );
+                // header is unencrypted; verify it directly
+                let (header, _) = NwkHeader::try_read(payload, ()).unwrap();
+                assert_eq!(header.frame_control.frame_type(), NwkFrameType::NwkCommand);
+                assert!(header.frame_control.security_flag());
+                assert!(header.frame_control.source_ieee_flag());
+                assert_eq!(header.radius, 1);
+                assert_eq!(header.destination, ShortAddress(0x0000));
+                assert_eq!(header.source, ShortAddress(0x1234));
+
+                // decrypt in place to verify the command payload
+                let mut buf = [0u8; 256];
+                buf[..payload.len()].copy_from_slice(payload);
+                let frame = SecurityContext::get()
+                    .decrypt_nwk_frame_in_place(&mut buf[..payload.len()])
+                    .unwrap();
+                let NwkFrame::NwkCommand(command_frame) = frame else {
+                    panic!("expected NWK command frame");
+                };
+                let Command::EndDeviceTimeoutRequest(request) = command_frame.command else {
+                    panic!("expected end device timeout request");
+                };
+                assert_eq!(request.requested_timeout, 0x08);
+                assert_eq!(request.end_device_configuration, 0x00);
+                true
+            })
+            .returning(|_, _| Ok(()));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        block_on(nlme.send_end_device_timeout_request()).unwrap();
+        assert_eq!(
+            nlme.pending_timeout_request.load(Ordering::Relaxed),
+            *nlme.nib().end_device_timeout_default()
+        );
+    }
+
+    #[test]
+    fn send_end_device_timeout_request_not_joined() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        let result = block_on(nlme.send_end_device_timeout_request());
+        assert!(matches!(result, Err(NetworkError::NotJoined)));
+    }
+
+    #[test]
+    fn end_device_timeout_response_success_updates_nib() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
+
+        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+            EndDeviceTimeoutResponse {
+                status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
+                parent_information: 0b011,
+            },
+        ));
+
+        let nib = nlme.nib();
+        assert_eq!(*nib.parent_information(), 0b011);
+        assert_eq!(*nib.end_device_timeout(), 0x03);
+        // pending request consumed
+        assert_eq!(
+            nlme.pending_timeout_request.load(Ordering::Relaxed),
+            NO_PENDING_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn end_device_timeout_response_rejected_leaves_nib_untouched() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
+
+        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+            EndDeviceTimeoutResponse {
+                status: EndDeviceTimeoutResponse::STATUS_INCORRECT_VALUE,
+                parent_information: 0b001,
+            },
+        ));
+
+        let nib = nlme.nib();
+        assert_eq!(*nib.parent_information(), 0x00);
+        assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
+    }
+
+    #[test]
+    fn end_device_timeout_response_unsolicited_ignored() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+            EndDeviceTimeoutResponse {
+                status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
+                parent_information: 0b001,
+            },
+        ));
+
+        let nib = nlme.nib();
+        assert_eq!(*nib.parent_information(), 0x00);
+        assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
+    }
+
+    #[test]
+    fn negotiated_poll_interval() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        let nib = nlme.nib();
+
+        // not negotiated
+        assert_eq!(nlme.negotiated_poll_interval_ms(), None);
+
+        // negotiated 2 min with MAC data poll keepalive: 120 s / 3 = 40 s
+        nib.update_end_device_timeout(|value| *value = 1);
+        nib.update_parent_information(|value| {
+            *value = EndDeviceTimeoutResponse::MAC_DATA_POLL_KEEPALIVE;
+        });
+        assert_eq!(nlme.negotiated_poll_interval_ms(), Some(40_000));
+
+        // parent without MAC data poll keepalive support
+        nib.update_parent_information(|value| {
+            *value = EndDeviceTimeoutResponse::TIMEOUT_REQUEST_KEEPALIVE;
+        });
+        assert_eq!(nlme.negotiated_poll_interval_ms(), None);
     }
 }

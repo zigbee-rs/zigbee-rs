@@ -214,6 +214,9 @@ construct_ib! {
         parent_information: u8 = 0x00,
         #[storage_key = 37]
         end_device_timeout_default: u8 = 0x08,
+        // negotiated timeout enumeration (§3.6.10.2); 0xff = not negotiated
+        #[storage_key = 39]
+        end_device_timeout: u8 = 0xff,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 38]
