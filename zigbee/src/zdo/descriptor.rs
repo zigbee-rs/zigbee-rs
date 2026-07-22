@@ -10,6 +10,7 @@ use byte::ctx;
 use zigbee_types::IeeeAddress;
 
 use crate::apl::descriptors::node_descriptor::LogicalType;
+use crate::nwk::nlme::management::NlmeLeaveStatus;
 
 // ZDP request cluster identifiers (§2.4.3).
 pub const NWK_ADDR_REQ: u16 = 0x0000;
@@ -19,6 +20,7 @@ pub const SIMPLE_DESC_REQ: u16 = 0x0004;
 pub const ACTIVE_EP_REQ: u16 = 0x0005;
 pub const BIND_REQ: u16 = 0x0021;
 pub const UNBIND_REQ: u16 = 0x0022;
+pub const MGMT_LEAVE_REQ: u16 = 0x0034;
 
 // ZDP response cluster identifiers (§2.4.4): request id | 0x8000.
 pub const NWK_ADDR_RSP: u16 = 0x8000;
@@ -28,13 +30,27 @@ pub const SIMPLE_DESC_RSP: u16 = 0x8004;
 pub const ACTIVE_EP_RSP: u16 = 0x8005;
 pub const BIND_RSP: u16 = 0x8021;
 pub const UNBIND_RSP: u16 = 0x8022;
+pub const MGMT_LEAVE_RSP: u16 = 0x8034;
 
 /// ZDP status: SUCCESS (§2.4.5).
 const STATUS_SUCCESS: u8 = 0x00;
+/// ZDP status: the supplied request type was invalid.
+const STATUS_INV_REQUESTTYPE: u8 = 0x80;
+/// ZDP status: the requested device does not exist.
+const STATUS_DEVICE_NOT_FOUND: u8 = 0x81;
 /// ZDP status: supplied endpoint was 0x00 or 0xff.
 const STATUS_INVALID_EP: u8 = 0x82;
 /// ZDP status: requested endpoint is not described by a simple descriptor.
 const STATUS_NOT_ACTIVE: u8 = 0x83;
+/// ZDP status: the device is not in the proper state for the operation.
+const STATUS_NOT_PERMITTED: u8 = 0x8b;
+/// ZDP status: the command was rejected due to security restrictions.
+const STATUS_NOT_AUTHORIZED: u8 = 0x8d;
+
+/// Mgmt_Leave_req options: Remove Children (§2.4.3.3.5).
+const MGMT_LEAVE_REMOVE_CHILDREN: u8 = 0b0100_0000;
+/// Mgmt_Leave_req options: Rejoin (§2.4.3.3.5).
+const MGMT_LEAVE_REJOIN: u8 = 0b1000_0000;
 
 const NODE_DESCRIPTOR_SIZE: usize = 13;
 
@@ -241,6 +257,59 @@ pub fn bind_rsp(seq: u8, src_endpoint: u8, out: &mut [u8]) -> Result<usize, byte
     Ok(*offset)
 }
 
+/// A parsed Mgmt_Leave_req (§2.4.3.3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MgmtLeaveReq {
+    /// ZDP transaction sequence number to echo in the response.
+    pub seq: u8,
+    /// Device to remove; `None` for the NULL address, which targets the
+    /// recipient itself.
+    pub device_address: Option<IeeeAddress>,
+    pub remove_children: bool,
+    pub rejoin: bool,
+}
+
+/// Parse a Mgmt_Leave_req payload (§2.4.3.3.5).
+///
+/// Returns `None` if the payload is too short.
+pub fn parse_mgmt_leave_req(asdu: &[u8]) -> Option<MgmtLeaveReq> {
+    let seq = *asdu.first()?;
+    let addr_bytes: [u8; 8] = asdu.get(1..9)?.try_into().ok()?;
+    let device_address = match u64::from_le_bytes(addr_bytes) {
+        0 => None,
+        addr => Some(IeeeAddress(addr)),
+    };
+    let options = *asdu.get(9)?;
+    Some(MgmtLeaveReq {
+        seq,
+        device_address,
+        remove_children: options & MGMT_LEAVE_REMOVE_CHILDREN != 0,
+        rejoin: options & MGMT_LEAVE_REJOIN != 0,
+    })
+}
+
+/// Map an NLME-LEAVE.confirm status onto the ZDP status enumeration (§2.4.5).
+///
+/// The Mgmt_Leave_rsp Status field carries NOT_SUPPORTED, NOT_AUTHORIZED or
+/// any status code returned by NLME-LEAVE.confirm (§2.4.4.4.5).
+pub fn leave_status(status: NlmeLeaveStatus) -> u8 {
+    match status {
+        NlmeLeaveStatus::Success => STATUS_SUCCESS,
+        NlmeLeaveStatus::InvalidRequest => STATUS_INV_REQUESTTYPE,
+        NlmeLeaveStatus::UnknownDevice => STATUS_DEVICE_NOT_FOUND,
+        NlmeLeaveStatus::MacError => STATUS_NOT_PERMITTED,
+        NlmeLeaveStatus::NotAuthorized => STATUS_NOT_AUTHORIZED,
+    }
+}
+
+/// Build a Mgmt_Leave_rsp payload (§2.4.4.4.5): seq, status.
+pub fn mgmt_leave_rsp(seq: u8, status: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, status, ctx::LE)?;
+    Ok(*offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +425,52 @@ mod tests {
                 0x34, 0x12, // NWK addr (LE)
             ]
         );
+    }
+
+    #[test]
+    fn parse_mgmt_leave_req_self_null_address() {
+        let asdu = [
+            0x09, // seq
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,        // NULL device address
+            0b1100_0000, // remove children + rejoin
+        ];
+        let req = parse_mgmt_leave_req(&asdu).unwrap();
+        assert_eq!(req.seq, 0x09);
+        assert_eq!(req.device_address, None);
+        assert!(req.remove_children);
+        assert!(req.rejoin);
+    }
+
+    #[test]
+    fn parse_mgmt_leave_req_targets_device() {
+        let asdu = [
+            0x0a, // seq
+            0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, // IEEE addr (LE)
+            0x00, // no flags
+        ];
+        let req = parse_mgmt_leave_req(&asdu).unwrap();
+        assert_eq!(req.seq, 0x0a);
+        assert_eq!(req.device_address, Some(IeeeAddress(0x0011_2233_4455_6677)));
+        assert!(!req.remove_children);
+        assert!(!req.rejoin);
+    }
+
+    #[test]
+    fn parse_mgmt_leave_req_too_short() {
+        assert!(parse_mgmt_leave_req(&[0x01, 0x02]).is_none());
+    }
+
+    #[test]
+    fn mgmt_leave_rsp_layout() {
+        let mut out = [0u8; 4];
+        let n = mgmt_leave_rsp(0x09, 0x00, &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x09, 0x00]);
     }
 }
