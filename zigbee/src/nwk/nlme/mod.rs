@@ -51,6 +51,9 @@ use crate::nwk::frame::command::Command;
 use crate::nwk::frame::command::end_device_timeout_request;
 use crate::nwk::frame::command::end_device_timeout_request::EndDeviceTimeoutRequest;
 use crate::nwk::frame::command::end_device_timeout_response::EndDeviceTimeoutResponse;
+use crate::nwk::frame::command::rejoin_request;
+use crate::nwk::frame::command::rejoin_request::RejoinRequest;
+use crate::nwk::frame::command::rejoin_response::RejoinResponse;
 use crate::nwk::frame::frame_control::DiscoverRoute;
 use crate::nwk::frame::frame_control::FrameControl as NwkFrameControl;
 use crate::nwk::frame::frame_control::FrameType as NwkFrameType;
@@ -71,6 +74,10 @@ pub mod management;
 
 // sentinel for `pending_timeout_request`: no request outstanding
 const NO_PENDING_TIMEOUT: u8 = 0xff;
+
+// poll attempts while waiting for the parent to deliver a buffered Rejoin
+// Response (§3.4.7.1: indirect transmission for a sleepy child)
+const REJOIN_RESPONSE_POLL_RETRIES: u8 = 20;
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
@@ -587,7 +594,13 @@ where
     }
 
     /// 3.2.2.13
+    // the association candidate loop is a single state machine; splitting it
+    // up would scatter the §3.6.1.4.1.1 bookkeeping across functions
+    #[allow(clippy::too_many_lines)]
     pub async fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
+        if request.rejoin_network == RejoinNetwork::NwkRejoin {
+            return self.nwk_rejoin(request).await;
+        }
         let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
             status,
             network_address: ShortAddress(0xffff),
@@ -600,8 +613,7 @@ where
         // --- Validate the request (§3.2.2.13.3) ---
 
         // Only MAC association is handled here.
-        // Orphan (0x01), NWK rejoin (0x02), and channel change (0x03) are not yet
-        // implemented.
+        // Orphan (0x01) and channel change (0x03) are not yet implemented.
         if request.rejoin_network != RejoinNetwork::Association {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
@@ -736,13 +748,126 @@ where
         fail(last_status)
     }
 
-    /// Convenience wrapper — issues a join with `RejoinNetwork::NwkRejoin`
-    /// (§3.2.2.13).
-    #[allow(clippy::unused_async)]
-    pub async fn rejoin(&self) -> NlmeJoinConfirm {
-        // TODO: implement NWK rejoin procedure (§3.6.1.4.2); afterwards send an
-        // End Device Timeout Request even when rejoining the same parent (§3.6.10.2)
-        todo!()
+    /// NLME-JOIN.request with `RejoinNetwork::NwkRejoin` (§3.2.2.13.3).
+    ///
+    /// Reconnects to a network this device remembers — extended PAN id,
+    /// parent, network key — without a fresh MLME-SCAN: it unicasts a Rejoin
+    /// Request (§3.4.6) to the previously known parent and waits for the
+    /// Rejoin Response (§3.4.7).
+    ///
+    /// Only Secure Rejoin (§4.6.3.3.1) is implemented: the device must still
+    /// hold the network key it rejoins with, so `request.security_enabled`
+    /// must be `true`. Trust Center Rejoin (§4.6.3.3.2, unsecured, for a
+    /// device that lost its key) is not yet supported.
+    async fn nwk_rejoin(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
+        let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
+            status,
+            network_address: ShortAddress(0xffff),
+            extended_pan_id: IeeeAddress(0u64),
+            channel: 0,
+            enhanced_beacon_type: false,
+            mac_interface_index: 0u8,
+        };
+
+        if !request.security_enabled {
+            return fail(NlmeJoinStatus::InvalidRequest);
+        }
+
+        // a rejoin only makes sense against a network this device already
+        // remembers (BDB §7.1 step 4 only reaches here when
+        // bdbNodeIsOnANetwork is TRUE and the extended PAN id is known).
+        if *self.nib().network_address() == 0xffff
+            || *self.nib().extended_panid() != request.extended_pan_id.0
+        {
+            return fail(NlmeJoinStatus::InvalidRequest);
+        }
+        let Ok(parent) = self.parent_short_address() else {
+            return fail(NlmeJoinStatus::InvalidRequest);
+        };
+
+        // whether joining or rejoining, nwkParentInformation is reset
+        // (§3.2.2.13.3)
+        self.reset_parent_negotiation();
+        self.nib()
+            .update_capability_information(|value| *value = request.capability_information);
+
+        let command = Command::RejoinRequest(RejoinRequest {
+            // the Capability Information bit layout (Table 3-62) is shared
+            // with `nwk::nib::CapabilityInformation`
+            capability_information: rejoin_request::CapabilityInformation(
+                request.capability_information.0,
+            ),
+        });
+
+        let mut buf = [0u8; 64];
+        let Ok(len) = self.build_nwk_command_frame(parent, command, &mut buf) else {
+            return fail(NlmeJoinStatus::InvalidRequest);
+        };
+        let Ok(parent_addr) = self.parent_address() else {
+            return fail(NlmeJoinStatus::InvalidRequest);
+        };
+        if self
+            .mac
+            .transmit_data(parent_addr, &buf[..len])
+            .await
+            .is_err()
+        {
+            return fail(NlmeJoinStatus::MacError);
+        }
+
+        // §3.4.7.1: delivered indirectly to a sleepy child, so poll for it
+        let Ok(response) = self
+            .poll_rejoin_response(REJOIN_RESPONSE_POLL_RETRIES)
+            .await
+        else {
+            return fail(NlmeJoinStatus::MacError);
+        };
+
+        if response.status == u8::from(AssociationStatus::NetworkAtCapacity) {
+            return fail(NlmeJoinStatus::PanAtCapacity);
+        }
+        if response.status == u8::from(AssociationStatus::AccessDenied) {
+            return fail(NlmeJoinStatus::PanAccessDenied);
+        }
+        if response.status != u8::from(AssociationStatus::Successful) {
+            return fail(NlmeJoinStatus::MacError);
+        }
+
+        self.nib()
+            .update_network_address(|value| *value = response.network_address.0);
+
+        NlmeJoinConfirm {
+            status: NlmeJoinStatus::Success,
+            network_address: response.network_address,
+            extended_pan_id: request.extended_pan_id,
+            // the operating channel isn't tracked in the NIB — the caller is
+            // responsible for having the radio already tuned to it (BDB
+            // §7.1 step 4 passes ScanChannels=0: no scan is performed here).
+            channel: 0,
+            enhanced_beacon_type: false,
+            mac_interface_index: 0u8,
+        }
+    }
+
+    /// Poll the parent for the Rejoin Response to a just-sent Rejoin Request,
+    /// retrying up to `retries` times.
+    async fn poll_rejoin_response(&self, retries: u8) -> Result<RejoinResponse, NetworkError> {
+        let mut buf = [0u8; 128];
+        for _ in 0..retries {
+            let Some(len) = self.poll_parent(&mut buf).await? else {
+                continue;
+            };
+            let cx = SecurityContext::get();
+            let Ok(nwk_frame) = cx.decrypt_nwk_frame_in_place(&mut buf[..len]) else {
+                continue;
+            };
+            if let NwkFrame::NwkCommand(command_frame) = nwk_frame
+                && let Command::RejoinResponse(response) = command_frame.command
+            {
+                return Ok(response);
+            }
+        }
+        Err(NetworkError::MacError(MacError::NoData))
     }
 
     /// Poll the coordinator for pending data, strip the NWK header, and
@@ -1303,6 +1428,171 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
+    // NWK rejoin tests (§3.2.2.13.3, §3.4.6/.7)
+    // -------------------------------------------------------------------
+
+    fn rejoin_request(epid: u64) -> NlmeJoinRequest {
+        NlmeJoinRequest {
+            extended_pan_id: IeeeAddress(epid),
+            rejoin_network: RejoinNetwork::NwkRejoin,
+            capability_information: CapabilityInformation(0x80),
+            security_enabled: true,
+        }
+    }
+
+    /// Build the encrypted bytes of an inbound Rejoin Response command frame,
+    /// as `poll_data` would deliver it from the parent.
+    fn encrypted_rejoin_response(network_address: u16, status: u8) -> heapless::Vec<u8, 128> {
+        let nib = nib::get_ref();
+        let header = NwkHeader {
+            frame_control: NwkFrameControl(0)
+                .set_frame_type(NwkFrameType::NwkCommand)
+                .set_protocol_version(2)
+                .set_discover_route(DiscoverRoute::Suppress)
+                .set_security_flag(true)
+                .set_source_ieee_flag(true),
+            destination: ShortAddress(*nib.network_address()),
+            source: ShortAddress(0x0000),
+            radius: 1,
+            sequence_number: 0,
+            destination_ieee: None,
+            source_ieee: Some(*nib.ieee_address()),
+            multicast_control: None,
+            source_route_subframe: None,
+        };
+        let command = Command::RejoinResponse(RejoinResponse {
+            network_address: ShortAddress(network_address),
+            status,
+        });
+        let nwk_frame = NwkFrame::NwkCommand(NwkCommandFrame { header, command });
+        let mut buf = heapless::Vec::<u8, 128>::new();
+        buf.resize(128, 0).unwrap();
+        let len = SecurityContext::get()
+            .encrypt_nwk_frame_in_place(nwk_frame, &mut buf)
+            .unwrap();
+        buf.truncate(len);
+        buf
+    }
+
+    #[test]
+    fn nwk_rejoin_not_joined_is_invalid() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn nwk_rejoin_requires_security_enabled() {
+        // no mac expectations set: any call would panic the mock
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let mut req = rejoin_request(0xDEAD);
+        req.security_enabled = false;
+
+        let confirm = block_on(nlme.join(req));
+        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn nwk_rejoin_epid_mismatch_is_invalid() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.join(rejoin_request(0xBEEF)));
+        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn nwk_rejoin_success_sends_request_and_updates_address() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .withf(|dest, payload| {
+                assert_eq!(
+                    *dest,
+                    Address::Short(PanId(0xAAAA), MacShortAddress(0x0000))
+                );
+                let mut buf = [0u8; 256];
+                buf[..payload.len()].copy_from_slice(payload);
+                let frame = SecurityContext::get()
+                    .decrypt_nwk_frame_in_place(&mut buf[..payload.len()])
+                    .unwrap();
+                let NwkFrame::NwkCommand(command_frame) = frame else {
+                    panic!("expected NWK command frame");
+                };
+                let Command::RejoinRequest(request) = command_frame.command else {
+                    panic!("expected rejoin request");
+                };
+                // rejoin_request() uses CapabilityInformation(0x80): allocate
+                // address set, device_type (end device) clear
+                assert_eq!(request.capability_information.device_type(), 0);
+                assert_eq!(request.capability_information.allocate_address(), 1);
+                true
+            })
+            .returning(|_, _| Ok(()));
+        mac.expect_poll_data().times(1).returning(|_, buf| {
+            let response = encrypted_rejoin_response(0x5678, 0x00);
+            buf[..response.len()].copy_from_slice(&response);
+            Ok((response.len(), 200u8))
+        });
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(confirm.network_address, ShortAddress(0x5678));
+        assert_eq!(*nlme.nib().network_address(), 0x5678);
+    }
+
+    #[test]
+    fn nwk_rejoin_network_at_capacity() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data().times(1).returning(|_, _| Ok(()));
+        mac.expect_poll_data().times(1).returning(|_, buf| {
+            let response = encrypted_rejoin_response(0xffff, 0x01);
+            buf[..response.len()].copy_from_slice(&response);
+            Ok((response.len(), 200u8))
+        });
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::PanAtCapacity);
+    }
+
+    #[test]
+    fn nwk_rejoin_no_response_is_mac_error() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data().times(1).returning(|_, _| Ok(()));
+        mac.expect_poll_data()
+            .returning(|_, _| Err(MacError::NoData));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::MacError);
+    }
+
+    #[test]
+    fn nwk_rejoin_transmit_failure_is_mac_error() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .returning(|_, _| Err(MacError::NoAck));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
+        assert_eq!(confirm.status, NlmeJoinStatus::MacError);
+    }
+
+    // -------------------------------------------------------------------
     // end device timeout tests (§3.6.10)
     // -------------------------------------------------------------------
 
@@ -1316,6 +1606,7 @@ mod tests {
         let nib = nlme.nib();
         nib.update_panid(|value| *value = 0xAAAA);
         nib.update_network_address(|value| *value = 0x1234);
+        nib.update_extended_panid(|value| *value = 0xDEAD);
 
         let mut table = StorageVec::new();
         let mut parent = make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0);
