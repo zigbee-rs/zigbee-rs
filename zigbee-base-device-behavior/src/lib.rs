@@ -12,6 +12,9 @@
 #![no_std]
 #![allow(unused)]
 
+#[cfg(test)]
+extern crate std;
+
 use core::future::Future;
 use core::future::poll_fn;
 use core::pin::pin;
@@ -57,6 +60,7 @@ use zigbee_mac::mlme::Mlme;
 use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
+use zigbee_types::sync::with_timeout;
 
 /// Base Device Behavior (BDB) commissioning manager.
 ///
@@ -94,16 +98,64 @@ impl BaseDeviceBehavior {
 
     /// Initialization procedure (BDB §7.1).
     ///
-    /// Restores persistent state and, if the node is already on a network,
-    /// attempts to rejoin it. Returns without error if the node is not on
-    /// a network — the caller should then invoke [`network_steering`].
+    /// Persistent state (NIB/AIB) must already be restored by the caller
+    /// before constructing the [`Nlme`]/[`ZigbeeDevice`] — that is step 1.
+    /// If the node is not on a network, or is not an end device, this
+    /// returns `Ok(None)` and the caller should invoke
+    /// [`Self::network_steering`].
+    ///
+    /// Otherwise it attempts an NWK rejoin (§3.2.2.13.3) against the
+    /// remembered network and, on success, renegotiates the end-device
+    /// timeout (§3.6.10.2) and broadcasts a Device_annce before returning the
+    /// confirm. A rejoin failure is not retried here — per §7.1 step 5 that is
+    /// the caller's responsibility (e.g. falling back to
+    /// [`Self::network_steering`] after [`ZigbeeDevice::forget_network`]).
     pub async fn start_initialization_procedure<M: Mlme>(
         &mut self,
-        _device: &ZigbeeDevice<M>,
-    ) -> Result<(), NetworkError> {
-        // §7.1 step 1: restore persistent state (NIB/AIB backed by storage)
-        // §7.1 steps 2-8: TODO implement rejoin path
-        Ok(())
+        device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
+    ) -> Result<Option<NlmeJoinConfirm>, NetworkError> {
+        let nib = self.nib();
+
+        // §7.1 step 2
+        self.bdb_node_is_on_a_network = *nib.network_address() != 0xffff;
+        if !self.bdb_node_is_on_a_network {
+            return Ok(None);
+        }
+
+        // §7.1 step 3: only an end device attempts an automatic rejoin here;
+        // a router's channel-verification step (§7.1 steps 6-7) is not yet
+        // implemented.
+        if !self.is_end_device() {
+            return Ok(None);
+        }
+
+        // §7.1 step 4
+        log::debug!("[BDB] step 4: attempt NWK rejoin");
+        let capability_information = *nib.capability_information();
+        let request = NlmeJoinRequest {
+            extended_pan_id: IeeeAddress(*nib.extended_panid()),
+            rejoin_network: RejoinNetwork::NwkRejoin,
+            capability_information,
+            security_enabled: true,
+        };
+        let confirm = device.nlme().join(request).await;
+
+        // §7.1 step 5
+        if confirm.status == NlmeJoinStatus::Success {
+            // §3.6.10.2: the timeout is renegotiated after every rejoin, even
+            // with the same parent
+            Self::negotiate_end_device_timeout(device, delay).await;
+
+            log::debug!("[BDB] step 5: rejoin succeeded, broadcasting Device_annce");
+            Self::device_annce(device, capability_information).await?;
+            self.bdb_commissioning_status = BdbCommissioningStatus::Success;
+        } else {
+            log::warn!("[BDB] step 5: rejoin failed ({:?})", confirm.status);
+            self.bdb_commissioning_status = BdbCommissioningStatus::NoNetwork;
+        }
+
+        Ok(Some(confirm))
     }
 
     /// Network steering procedure for a node NOT on a network
@@ -130,6 +182,11 @@ impl BaseDeviceBehavior {
             "[BDB] start network steering, EPID={extended_pan_id:?}, channels={channels:?}"
         );
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+
+        // a node steering onto a network holds no valid link keys for it: any
+        // left over from an earlier network would reject the Trust Center's
+        // Transport-Key (§4.4.10)
+        device.reset_trust_center_link_keys();
 
         // §8.2 step 1
         device
@@ -358,21 +415,6 @@ impl BaseDeviceBehavior {
 }
 
 /// resolve `fut`, or `None` if `timeout` fires first
-async fn with_timeout<F: Future>(fut: F, timeout: impl Future<Output = ()>) -> Option<F::Output> {
-    let mut fut = pin!(fut);
-    let mut timeout = pin!(timeout);
-    poll_fn(move |cx| {
-        if let Poll::Ready(value) = fut.as_mut().poll(cx) {
-            return Poll::Ready(Some(value));
-        }
-        match timeout.as_mut().poll(cx) {
-            Poll::Ready(()) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    })
-    .await
-}
-
 #[derive(Debug, Error)]
 pub enum BdbError {
     #[error("network error")]
@@ -380,4 +422,129 @@ pub enum BdbError {
 
     #[error("no open network discovered to join")]
     NoNetwork,
+}
+
+#[cfg(test)]
+mod tests {
+    use core::future::Future;
+
+    use zigbee::nwk::nib;
+    use zigbee_mac::Address;
+    use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacError;
+    use zigbee_mac::mlme::ScanResult;
+    use zigbee_mac::mlme::ScanType;
+
+    use super::*;
+
+    #[allow(clippy::panic)]
+    fn block_on<F: Future>(f: F) -> F::Output {
+        use core::pin::pin;
+        use core::task::Context;
+        use core::task::Poll;
+        use core::task::RawWaker;
+        use core::task::RawWakerVTable;
+        use core::task::Waker;
+
+        fn noop(_: *const ()) {}
+        fn clone(p: *const ()) -> RawWaker {
+            RawWaker::new(p, &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+
+        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        let mut f = pin!(f);
+
+        match f.as_mut().poll(&mut cx) {
+            Poll::Ready(val) => val,
+            Poll::Pending => panic!("block_on: future returned Pending"),
+        }
+    }
+
+    mockall::mock! {
+        Mlme {}
+        impl Mlme for Mlme {
+            fn ieee_address(&self) -> IeeeAddress;
+            async fn set_short_address(&self, address: ShortAddress);
+            async fn scan_network(
+                &self,
+                ty: ScanType,
+                channels: core::ops::Range<u8>,
+                duration: u8,
+            ) -> Result<ScanResult, MacError>;
+            async fn associate(
+                &self,
+                channel: u8,
+                dest: Address,
+                capabilities: zigbee_mac::CapabilityInformation,
+            ) -> Result<AssociationResponse, MacError>;
+            async fn poll_data(
+                &self,
+                coord_address: Address,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn receive(
+                &self,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn transmit_data(
+                &self,
+                dest: Address,
+                payload: &[u8],
+            ) -> Result<(), MacError>;
+        }
+    }
+
+    /// Delay that returns immediately, so `block_on` never sees `Pending`.
+    struct NoopDelay;
+
+    impl DelayNs for NoopDelay {
+        async fn delay_ns(&mut self, _ns: u32) {}
+    }
+
+    fn make_device(device_type: LogicalType) -> ZigbeeDevice<MockMlme> {
+        let mut mac = MockMlme::new();
+        mac.expect_ieee_address()
+            .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        let nlme = Nlme::new(mac);
+        let config = Config {
+            device_type,
+            ..Config::default()
+        };
+        ZigbeeDevice::new(config, nlme)
+    }
+
+    // NIB is a process-wide singleton with a non-cfg(test) `init()` (no
+    // `try_init`/`reset` outside the `zigbee` crate itself), so every case
+    // that needs it lives in one #[test] to keep initialization order
+    // deterministic across the crate's test binary.
+    #[test]
+    fn start_initialization_procedure_early_returns() {
+        nib::init();
+        zigbee::aps::aib::init();
+
+        // §7.1 step 2: not on a network (fresh NIB, network_address=0xffff)
+        let device = make_device(LogicalType::EndDevice);
+        let mut bdb = BaseDeviceBehavior::new(Config {
+            device_type: LogicalType::EndDevice,
+            ..Config::default()
+        });
+        let result = block_on(bdb.start_initialization_procedure(&device, &mut NoopDelay));
+        assert!(matches!(result, Ok(None)));
+        assert!(!bdb.bdb_node_is_on_a_network);
+
+        // §7.1 step 3: on a network, but not an end device — no mac calls
+        // are expected here since the router-side MockMlme has none set up
+        nib::get_ref().update_network_address(|value| *value = 0x1234);
+        let router_device = make_device(LogicalType::Router);
+        let mut router_bdb = BaseDeviceBehavior::new(Config {
+            device_type: LogicalType::Router,
+            ..Config::default()
+        });
+        let result =
+            block_on(router_bdb.start_initialization_procedure(&router_device, &mut NoopDelay));
+        assert!(matches!(result, Ok(None)));
+        assert!(router_bdb.bdb_node_is_on_a_network);
+    }
 }

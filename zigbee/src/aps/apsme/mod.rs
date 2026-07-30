@@ -34,6 +34,7 @@ use byte::BytesExt;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::sync::Event;
+use zigbee_types::sync::Signal;
 
 use super::aib;
 use super::aib::Aib;
@@ -102,11 +103,9 @@ pub(crate) struct Apsme {
     tc_exchange_active: AtomicBool,
     /// signaled when a TC link key was received and installed (§4.4.10)
     pub(crate) tc_key_received: Event,
-    /// signaled when the TC answered the key verification (§4.4.9)
-    pub(crate) tc_key_verified: Event,
-    /// status of the last Confirm-Key (§4.4.9), valid once
-    /// [`Self::tc_key_verified`] fired
-    tc_confirm_status: AtomicU8,
+    /// carries the Confirm-Key status (§4.4.9) once the TC answered the key
+    /// verification (0x00 = success)
+    pub(crate) tc_key_verified: Signal<u8>,
 }
 
 impl Apsme {
@@ -118,8 +117,7 @@ impl Apsme {
             aps_counter: AtomicU8::new(0),
             tc_exchange_active: AtomicBool::new(false),
             tc_key_received: Event::new(),
-            tc_key_verified: Event::new(),
-            tc_confirm_status: AtomicU8::new(0),
+            tc_key_verified: Signal::new(),
         }
     }
 
@@ -135,12 +133,6 @@ impl Apsme {
     /// are ignored again.
     pub(crate) fn end_tc_key_exchange(&self) {
         self.tc_exchange_active.store(false, Ordering::Release);
-    }
-
-    /// Status of the last Confirm-Key (0x00 = success), valid after
-    /// [`Self::tc_key_verified`] fired.
-    pub(crate) fn tc_confirm_status(&self) -> u8 {
-        self.tc_confirm_status.load(Ordering::Acquire)
     }
 
     /// Next APS counter value (§4.4.11), wrapping.
@@ -313,9 +305,7 @@ impl Apsme {
                 if confirm.status == 0x00 {
                     self.mark_tc_link_key_verified(aib);
                 }
-                self.tc_confirm_status
-                    .store(confirm.status, Ordering::Release);
-                self.tc_key_verified.signal();
+                self.tc_key_verified.signal(confirm.status);
             }
             // key transport (§4.4.3): the network key is obtained inline during
             // join; an unsolicited key update would be handled here
@@ -685,6 +675,7 @@ mod tests {
         use core::future::Future;
         use core::pin::pin;
         use core::task::Context;
+        use core::task::Poll;
         use core::task::Waker;
 
         let apsme = Apsme::new();
@@ -699,16 +690,20 @@ mod tests {
             aib.device_key_pair_set()[0].key_attributes,
             KeyAttribute::UnverifiedKey
         );
-        assert!(pin!(apsme.tc_key_verified.wait()).poll(&mut cx).is_ready());
-        assert_eq!(apsme.tc_confirm_status(), 0x01);
+        assert_eq!(
+            pin!(apsme.tc_key_verified.wait()).poll(&mut cx),
+            Poll::Ready(0x01)
+        );
 
         apsme.handle_aps_command(&aib, &confirm_key(0x00));
         assert_eq!(
             aib.device_key_pair_set()[0].key_attributes,
             KeyAttribute::VerifiedKey
         );
-        assert!(pin!(apsme.tc_key_verified.wait()).poll(&mut cx).is_ready());
-        assert_eq!(apsme.tc_confirm_status(), 0x00);
+        assert_eq!(
+            pin!(apsme.tc_key_verified.wait()).poll(&mut cx),
+            Poll::Ready(0x00)
+        );
     }
 
     #[test]

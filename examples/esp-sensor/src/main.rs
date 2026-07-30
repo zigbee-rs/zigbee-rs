@@ -25,7 +25,6 @@ use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
-use zigbee::zdp::device_annce::DeviceAnnce;
 use zigbee_base_device_behavior::BaseDeviceBehavior;
 use zigbee_cluster_library::basic;
 use zigbee_cluster_library::basic::BasicServer;
@@ -198,63 +197,73 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     if resume {
         println!(
-            "Resuming on network: addr={:#06x} pan={:#06x} channel={CHANNEL}",
+            "Resuming on network: addr={:#06x} pan={:#06x} channel={CHANNEL}, attempting rejoin...",
             *nib.network_address(),
             *nib.panid(),
         );
-        // announce the power cycle so the coordinator refreshes its state
-        let annce = DeviceAnnce {
-            nwk_addr: ShortAddress(*nib.network_address()),
-            ieee_addr: *nib.ieee_address(),
-            capability: CapabilityInformation(CAPABILITY),
-        };
-        if let Err(e) = device.device_annce(annce).await {
-            println!("Device_annce failed: {e:?}");
+    }
+
+    match bdb.start_initialization_procedure(device, &mut Delay).await {
+        Ok(Some(confirm)) if confirm.status == NlmeJoinStatus::Success => {
+            println!(
+                "Rejoined: addr={:#06x} pan={:#06x} channel={CHANNEL}",
+                *nib.network_address(),
+                *nib.panid(),
+            );
         }
-    } else {
-        println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
-        let join = bdb
-            .network_steering(
-                device,
-                &mut Delay,
-                IeeeAddress(EXTENDED_PAN_ID),
-                CHANNEL..CHANNEL + 1,
-                SCAN_DURATION,
-                CapabilityInformation(CAPABILITY),
-            )
-            .await;
-
-        match join {
-            Ok(confirm) if confirm.status == NlmeJoinStatus::Success => {
-                let nib = bdb.nib();
-                println!(
-                    "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
-                    *nib.network_address(),
-                    *nib.panid(),
-                    *nib.extended_panid(),
-                    nib.update_id()
-                );
-
-                let network_key = nib.security_material_set().first().unwrap().key;
-                println!("Network key installed: key={:02x?}", network_key);
-
-                let link_key = aib::get_ref()
-                    .device_key_pair_set()
-                    .first()
-                    .unwrap()
-                    .link_key;
-                println!("Link key installed: key={:02x?}", link_key);
+        init_result => {
+            // a prior rejoin attempt leaves the old network address/key
+            // material in the NIB; forget it before commissioning fresh so
+            // NLME-JOIN's "already joined" check does not reject it
+            if let Ok(Some(confirm)) = init_result {
+                println!("Rejoin failed ({:?}), forgetting network", confirm.status);
+                device.forget_network();
             }
-            Ok(confirm) => {
-                println!("Join failed: {:?}", confirm.status);
-                loop {
-                    Timer::after_secs(60).await;
+
+            println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
+            let join = bdb
+                .network_steering(
+                    device,
+                    &mut Delay,
+                    IeeeAddress(EXTENDED_PAN_ID),
+                    CHANNEL..CHANNEL + 1,
+                    SCAN_DURATION,
+                    CapabilityInformation(CAPABILITY),
+                )
+                .await;
+
+            match join {
+                Ok(confirm) if confirm.status == NlmeJoinStatus::Success => {
+                    let nib = bdb.nib();
+                    println!(
+                        "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
+                        *nib.network_address(),
+                        *nib.panid(),
+                        *nib.extended_panid(),
+                        nib.update_id()
+                    );
+
+                    let network_key = nib.security_material_set().first().unwrap().key;
+                    println!("Network key installed: key={:02x?}", network_key);
+
+                    let link_key = aib::get_ref()
+                        .device_key_pair_set()
+                        .first()
+                        .unwrap()
+                        .link_key;
+                    println!("Link key installed: key={:02x?}", link_key);
                 }
-            }
-            Err(e) => {
-                println!("Join error: {e:#}");
-                loop {
-                    Timer::after_secs(60).await;
+                Ok(confirm) => {
+                    println!("Join failed: {:?}", confirm.status);
+                    loop {
+                        Timer::after_secs(60).await;
+                    }
+                }
+                Err(e) => {
+                    println!("Join error: {e:#}");
+                    loop {
+                        Timer::after_secs(60).await;
+                    }
                 }
             }
         }

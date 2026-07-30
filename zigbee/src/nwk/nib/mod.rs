@@ -267,7 +267,9 @@ impl CapabilityInformation {
 impl_byte! {
     #[derive(Debug, Clone)]
     pub struct NwkNeighbor {
-        //pub extended_address: IeeeAddress,
+        /// IEEE address of the neighbor, learned from received frames that
+        /// carry it; `IeeeAddress(0)` while unknown.
+        pub extended_address: IeeeAddress,
         pub network_address: ShortAddress,
         pub device_type: DeviceType,
         #[ctx = ()]

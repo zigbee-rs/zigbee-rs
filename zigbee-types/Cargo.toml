@@ -12,6 +12,7 @@ atomic-waker.workspace = true
 byte.workspace = true
 itertools.workspace = true
 heapless.workspace = true
+spin.workspace = true
 embedded-storage.workspace = true
 
 zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
