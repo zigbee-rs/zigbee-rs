@@ -43,6 +43,8 @@ use zigbee_mac::mlme::ScanType;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
+use zigbee_types::sync::Signal;
+use zigbee_types::sync::with_timeout;
 
 use crate::nwk::frame::CommandFrame as NwkCommandFrame;
 use crate::nwk::frame::DataFrame as NwkDataFrame;
@@ -111,6 +113,9 @@ pub struct Nlme<M> {
     nwk_seq: AtomicU8,
     // requested timeout enum awaiting a response (§3.6.10.2); 0xff = none
     pending_timeout_request: AtomicU8,
+    // Rejoin Response (§3.4.7) handed from the receive path to the rejoin
+    // procedure waiting for it
+    rejoin_response: Signal<RejoinResponse>,
 }
 
 impl<M> Nlme<M>
@@ -129,6 +134,7 @@ where
             mac,
             nwk_seq: AtomicU8::new(0),
             pending_timeout_request: AtomicU8::new(NO_PENDING_TIMEOUT),
+            rejoin_response: Signal::new(),
         }
     }
 
@@ -182,20 +188,28 @@ where
         }
     }
 
-    /// Build a secured NWK command frame into `buf`, returning the total
-    /// frame length (§3.3.2).
+    /// Build a NWK command frame into `buf`, returning the total frame length
+    /// (§3.3.2).
+    ///
+    /// When `secure` is false the frame is sent in the clear, as required for
+    /// a Trust Center rejoin (§4.6.3.3.2).
     fn build_nwk_command_frame(
         &self,
         destination: ShortAddress,
         command: Command<'_>,
+        secure: bool,
         buf: &mut [u8],
     ) -> Result<usize, NetworkError> {
         let nib = self.nib();
+        // the destination IEEE address is carried whenever it is known
+        // (§3.4.6.2, §3.4.11.2)
+        let destination_ieee = self.neighbor_ieee_address(destination);
         let frame_control = NwkFrameControl(0)
             .set_frame_type(NwkFrameType::NwkCommand)
             .set_protocol_version(2)
             .set_discover_route(DiscoverRoute::Suppress)
-            .set_security_flag(true)
+            .set_security_flag(secure)
+            .set_destination_ieee_flag(destination_ieee.is_some())
             .set_source_ieee_flag(true);
 
         let header = NwkHeader {
@@ -204,16 +218,35 @@ where
             source: ShortAddress(*nib.network_address()),
             radius: 1,
             sequence_number: self.next_nwk_seq(),
-            destination_ieee: None,
+            destination_ieee,
             source_ieee: Some(*nib.ieee_address()),
             multicast_control: None,
             source_route_subframe: None,
         };
 
+        if !secure {
+            let offset = &mut 0;
+            buf.write_with(offset, header, ())?;
+            buf.write_with(offset, command, ())?;
+            return Ok(*offset);
+        }
+
         let nwk_frame = NwkFrame::NwkCommand(NwkCommandFrame { header, command });
         let cx = SecurityContext::get();
         let len = cx.encrypt_nwk_frame_in_place(nwk_frame, buf)?;
         Ok(len)
+    }
+
+    /// Build a failed NLME-JOIN.confirm (§3.2.2.13.3).
+    fn join_failure(status: NlmeJoinStatus) -> NlmeJoinConfirm {
+        NlmeJoinConfirm {
+            status,
+            network_address: ShortAddress(0xffff),
+            extended_pan_id: IeeeAddress(0u64),
+            channel: 0,
+            enhanced_beacon_type: false,
+            mac_interface_index: 0u8,
+        }
     }
 
     /// Send an End Device Timeout Request to the parent (§3.6.10.2).
@@ -231,7 +264,8 @@ where
         });
 
         let mut buf = [0u8; 256];
-        let len = self.build_nwk_command_frame(self.parent_short_address()?, command, &mut buf)?;
+        let len =
+            self.build_nwk_command_frame(self.parent_short_address()?, command, true, &mut buf)?;
         self.pending_timeout_request
             .store(requested_timeout, Ordering::Relaxed);
         self.mac
@@ -361,6 +395,33 @@ where
         Ok(addr)
     }
 
+    /// The IEEE address of a neighbor, once it has been learned from a
+    /// received frame carrying the source IEEE address field.
+    fn neighbor_ieee_address(&self, network_address: ShortAddress) -> Option<IeeeAddress> {
+        self.nib()
+            .neighbor_table()
+            .iter()
+            .find(|n| n.network_address == network_address)
+            .map(|n| n.extended_address)
+            .filter(|ieee| ieee.0 != 0)
+    }
+
+    /// Record the IEEE address a received frame reported for its source
+    /// (§3.4.6.2: it lets us address later commands by both addresses).
+    fn learn_neighbor_ieee_address(&self, header: &NwkHeader<'_>) {
+        let Some(source_ieee) = header.source_ieee else {
+            return;
+        };
+        self.nib().update_neighbor_table(|table| {
+            if let Some(neighbor) = table
+                .iter_mut()
+                .find(|n| n.network_address == header.source)
+            {
+                neighbor.extended_address = source_ieee;
+            }
+        });
+    }
+
     /// Find the parent's network address from the neighbor table.
     fn parent_short_address(&self) -> Result<ShortAddress, NetworkError> {
         let table = self.nib().neighbor_table();
@@ -421,12 +482,16 @@ where
         let nwk_frame = cx.decrypt_nwk_frame_in_place(frame_buf)?;
 
         match nwk_frame {
-            NwkFrame::Data(data_frame) => Ok(Some(data_frame)),
+            NwkFrame::Data(data_frame) => {
+                self.learn_neighbor_ieee_address(&data_frame.header);
+                Ok(Some(data_frame))
+            }
             // NWK command frames (link status, route requests, rejoin, ...) ride
             // the same receive path; let the NWK layer process them, then report
             // "no data" so the APS/ZDO caller skips this frame.
             NwkFrame::NwkCommand(command_frame) => {
-                self.handle_nwk_command(&command_frame.command);
+                self.learn_neighbor_ieee_address(&command_frame.header);
+                self.handle_nwk_command(command_frame.command);
                 Ok(None)
             }
             _ => Ok(None),
@@ -439,7 +504,7 @@ where
     /// handler can be filled in. Most are not yet acted upon — they are logged
     /// and ignored. Returning unit keeps the caller's receive loop simple; add
     /// a result type here if a handler needs to surface failures.
-    fn handle_nwk_command(&self, command: &Command<'_>) {
+    fn handle_nwk_command(&self, command: Command<'_>) {
         match command {
             // routing (§3.4.1–3.4.2): a sleepy end device routes via its parent,
             // so route discovery is currently a no-op.
@@ -452,9 +517,24 @@ where
             Command::NetworkUpdate(_) => log::trace!("[NWK] network update (ignored)"),
             // TODO: a Leave addressed to us should clear NIB state and re-commission.
             Command::Leave(_) => log::trace!("[NWK] leave (ignored)"),
-            // rejoin (§3.4.6–3.4.7): handled inline by the join/rejoin procedures.
+            // rejoin (§3.4.6–3.4.7): a request is parent-side only; a response
+            // is handed to the rejoin procedure waiting for it, which may be
+            // driven by another task than this receive path
             Command::RejoinRequest(_) => log::trace!("[NWK] rejoin request (ignored)"),
-            Command::RejoinResponse(_) => log::trace!("[NWK] rejoin response (ignored)"),
+            Command::RejoinResponse(response) => {
+                log::debug!(
+                    "[NWK] rejoin response: address={:?}, status={:#04x}",
+                    response.network_address,
+                    response.status
+                );
+                if response.status == u8::from(AssociationStatus::Successful) {
+                    // §3.4.7.3.1: the parent may hand out a different address
+                    // than the one the device rejoined with
+                    self.nib()
+                        .update_network_address(|value| *value = response.network_address.0);
+                }
+                self.rejoin_response.signal(response);
+            }
             // link management (§3.4.8, §3.4.13).
             Command::LinkStatus(_) => log::trace!("[NWK] link status (ignored)"),
             Command::LinkPowerDelta(_) => log::trace!("[NWK] link power delta (ignored)"),
@@ -509,6 +589,9 @@ where
             .iter()
             .filter_map(|pd| match pd.coord_address {
                 Address::Short(_pan_id, short_address) => Some(NwkNeighbor {
+                    // a beacon carries no IEEE address; learned later from
+                    // received frames
+                    extended_address: IeeeAddress(0),
                     network_address: ShortAddress(short_address.0),
                     device_type: if short_address.0 == NWK_COORDINATOR_ADDRESS {
                         DeviceType::Coordinator
@@ -601,14 +684,7 @@ where
         if request.rejoin_network == RejoinNetwork::NwkRejoin {
             return self.nwk_rejoin(request).await;
         }
-        let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
-            status,
-            network_address: ShortAddress(0xffff),
-            extended_pan_id: IeeeAddress(0u64),
-            channel: 0,
-            enhanced_beacon_type: false,
-            mac_interface_index: 0u8,
-        };
+        let fail = Self::join_failure;
 
         // --- Validate the request (§3.2.2.13.3) ---
 
@@ -755,23 +831,14 @@ where
     /// Request (§3.4.6) to the previously known parent and waits for the
     /// Rejoin Response (§3.4.7).
     ///
-    /// Only Secure Rejoin (§4.6.3.3.1) is implemented: the device must still
-    /// hold the network key it rejoins with, so `request.security_enabled`
-    /// must be `true`. Trust Center Rejoin (§4.6.3.3.2, unsecured, for a
-    /// device that lost its key) is not yet supported.
+    /// `request.security_enabled` selects the rejoin flavour: `true` secures
+    /// the Rejoin Request with the active network key (Secure Rejoin,
+    /// §4.6.3.3.1), `false` sends it unsecured (Trust Center Rejoin,
+    /// §4.6.3.3.2) for a device that no longer holds the key — the caller is
+    /// then responsible for obtaining the current network key from the Trust
+    /// Center.
     async fn nwk_rejoin(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
-        let fail = |status: NlmeJoinStatus| NlmeJoinConfirm {
-            status,
-            network_address: ShortAddress(0xffff),
-            extended_pan_id: IeeeAddress(0u64),
-            channel: 0,
-            enhanced_beacon_type: false,
-            mac_interface_index: 0u8,
-        };
-
-        if !request.security_enabled {
-            return fail(NlmeJoinStatus::InvalidRequest);
-        }
+        let fail = Self::join_failure;
 
         // a rejoin only makes sense against a network this device already
         // remembers (BDB §7.1 step 4 only reaches here when
@@ -799,13 +866,19 @@ where
             ),
         });
 
-        let mut buf = [0u8; 64];
-        let Ok(len) = self.build_nwk_command_frame(parent, command, &mut buf) else {
-            return fail(NlmeJoinStatus::InvalidRequest);
+        let mut buf = [0u8; 128];
+        let Ok(len) =
+            self.build_nwk_command_frame(parent, command, request.security_enabled, &mut buf)
+        else {
+            return fail(NlmeJoinStatus::MacError);
         };
         let Ok(parent_addr) = self.parent_address() else {
             return fail(NlmeJoinStatus::InvalidRequest);
         };
+
+        // arm before transmitting: the response is delivered by the receive
+        // path, which may be this procedure's own poll or a concurrent loop
+        self.rejoin_response.reset();
         if self
             .mac
             .transmit_data(parent_addr, &buf[..len])
@@ -815,9 +888,8 @@ where
             return fail(NlmeJoinStatus::MacError);
         }
 
-        // §3.4.7.1: delivered indirectly to a sleepy child, so poll for it
-        let Ok(response) = self
-            .poll_rejoin_response(REJOIN_RESPONSE_POLL_RETRIES)
+        let Some(response) = self
+            .await_rejoin_response(REJOIN_RESPONSE_POLL_RETRIES)
             .await
         else {
             return fail(NlmeJoinStatus::MacError);
@@ -833,8 +905,9 @@ where
             return fail(NlmeJoinStatus::MacError);
         }
 
-        self.nib()
-            .update_network_address(|value| *value = response.network_address.0);
+        // the receive path stored the assigned address; the hardware filter has
+        // to follow it
+        self.mac.set_short_address(response.network_address).await;
 
         NlmeJoinConfirm {
             status: NlmeJoinStatus::Success,
@@ -849,25 +922,41 @@ where
         }
     }
 
-    /// Poll the parent for the Rejoin Response to a just-sent Rejoin Request,
-    /// retrying up to `retries` times.
-    async fn poll_rejoin_response(&self, retries: u8) -> Result<RejoinResponse, NetworkError> {
+    /// Wait for the receive path to deliver the Rejoin Response (§3.4.7).
+    ///
+    /// A concurrently running receive loop may deliver it; otherwise the
+    /// bounded polling below does.
+    async fn await_rejoin_response(&self, retries: u8) -> Option<RejoinResponse> {
+        with_timeout(
+            self.rejoin_response.wait(),
+            self.poll_until_rejoin_response(retries),
+        )
+        .await
+        // the response may have arrived in the very poll that ended the polling
+        .or_else(|| self.rejoin_response.try_take())
+    }
+
+    /// Poll the parent until the Rejoin Response has been processed or
+    /// `retries` polls went unanswered.
+    ///
+    /// Drives reception for a caller whose receive loop is not running yet; a
+    /// data frame cannot be dispatched from here and is left to that loop.
+    async fn poll_until_rejoin_response(&self, retries: u8) {
         let mut buf = [0u8; 128];
         for _ in 0..retries {
-            let Some(len) = self.poll_parent(&mut buf).await? else {
-                continue;
-            };
-            let cx = SecurityContext::get();
-            let Ok(nwk_frame) = cx.decrypt_nwk_frame_in_place(&mut buf[..len]) else {
-                continue;
-            };
-            if let NwkFrame::NwkCommand(command_frame) = nwk_frame
-                && let Command::RejoinResponse(response) = command_frame.command
-            {
-                return Ok(response);
+            if self.rejoin_response.is_signaled() {
+                return;
+            }
+            match self.poll_parent(&mut buf).await {
+                Ok(Some(len)) => match self.process_received_nwk_frame(&mut buf[..len]) {
+                    Ok(Some(_)) => log::debug!("[NWK-REJOIN] polled data frame dropped"),
+                    Ok(None) => (),
+                    Err(e) => log::debug!("[NWK-REJOIN] polled frame not processed: {e:?}"),
+                },
+                Ok(None) => (),
+                Err(e) => log::debug!("[NWK-REJOIN] poll failed: {e:?}"),
             }
         }
-        Err(NetworkError::MacError(MacError::NoData))
     }
 
     /// Poll the coordinator for pending data, strip the NWK header, and
@@ -991,6 +1080,7 @@ mod tests {
         Mlme {}
         impl Mlme for Mlme {
             fn ieee_address(&self) -> IeeeAddress;
+            async fn set_short_address(&self, address: ShortAddress);
             async fn scan_network(
                 &self,
                 ty: ScanType,
@@ -1027,6 +1117,7 @@ mod tests {
     /// Create a default `NwkNeighbor` pre-filled for parent selection.
     fn make_neighbor(pan_id: u16, short_addr: u16, epid: u64, lqi: u8, depth: u8) -> NwkNeighbor {
         NwkNeighbor {
+            extended_address: IeeeAddress(0),
             network_address: ShortAddress(short_addr),
             device_type: if short_addr == 0 {
                 DeviceType::Coordinator
@@ -1483,16 +1574,27 @@ mod tests {
     }
 
     #[test]
-    fn nwk_rejoin_requires_security_enabled() {
-        // no mac expectations set: any call would panic the mock
-        let (_guard, nlme) = make_nlme(MockMlme::new());
+    fn nwk_rejoin_without_security_is_sent_unsecured() {
+        // §4.6.3.3.2: a Trust Center rejoin carries no NWK security
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .withf(|_dest, payload| {
+                let (header, _) = NwkHeader::try_read(payload, ()).unwrap();
+                !header.frame_control.security_flag()
+            })
+            .returning(|_, _| Ok(()));
+        mac.expect_poll_data()
+            .returning(|_, _| Err(MacError::NoData));
+
+        let (_guard, nlme) = make_nlme(mac);
         seed_joined_nib(&nlme);
 
         let mut req = rejoin_request(0xDEAD);
         req.security_enabled = false;
 
         let confirm = block_on(nlme.join(req));
-        assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+        assert_eq!(confirm.status, NlmeJoinStatus::MacError);
     }
 
     #[test]
@@ -1510,26 +1612,21 @@ mod tests {
         mac.expect_transmit_data()
             .times(1)
             .withf(|dest, payload| {
-                assert_eq!(
-                    *dest,
-                    Address::Short(PanId(0xAAAA), MacShortAddress(0x0000))
-                );
                 let mut buf = [0u8; 256];
                 buf[..payload.len()].copy_from_slice(payload);
-                let frame = SecurityContext::get()
-                    .decrypt_nwk_frame_in_place(&mut buf[..payload.len()])
-                    .unwrap();
-                let NwkFrame::NwkCommand(command_frame) = frame else {
-                    panic!("expected NWK command frame");
+                let Ok(NwkFrame::NwkCommand(command_frame)) =
+                    SecurityContext::get().decrypt_nwk_frame_in_place(&mut buf[..payload.len()])
+                else {
+                    return false;
                 };
                 let Command::RejoinRequest(request) = command_frame.command else {
-                    panic!("expected rejoin request");
+                    return false;
                 };
-                // rejoin_request() uses CapabilityInformation(0x80): allocate
-                // address set, device_type (end device) clear
-                assert_eq!(request.capability_information.device_type(), 0);
-                assert_eq!(request.capability_information.allocate_address(), 1);
-                true
+                *dest == Address::Short(PanId(0xAAAA), MacShortAddress(0x0000))
+                    // rejoin_request() uses CapabilityInformation(0x80):
+                    // allocate address set, device_type (end device) clear
+                    && request.capability_information.device_type() == 0
+                    && request.capability_information.allocate_address() == 1
             })
             .returning(|_, _| Ok(()));
         mac.expect_poll_data().times(1).returning(|_, buf| {
@@ -1537,6 +1634,11 @@ mod tests {
             buf[..response.len()].copy_from_slice(&response);
             Ok((response.len(), 200u8))
         });
+        // the assigned address has to reach the hardware filter
+        mac.expect_set_short_address()
+            .times(1)
+            .withf(|address| *address == ShortAddress(0x5678))
+            .returning(|_| ());
 
         let (_guard, nlme) = make_nlme(mac);
         seed_joined_nib(&nlme);
@@ -1545,6 +1647,22 @@ mod tests {
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
         assert_eq!(confirm.network_address, ShortAddress(0x5678));
         assert_eq!(*nlme.nib().network_address(), 0x5678);
+    }
+
+    #[test]
+    fn rejoin_response_from_receive_path_applies_address_and_signals() {
+        // a concurrent receive loop may retrieve the response instead of the
+        // rejoin procedure's own poll
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        nlme.handle_nwk_command(Command::RejoinResponse(RejoinResponse {
+            network_address: ShortAddress(0x5678),
+            status: 0x00,
+        }));
+
+        assert_eq!(*nlme.nib().network_address(), 0x5678);
+        block_on(nlme.rejoin_response.wait());
     }
 
     #[test]
@@ -1685,7 +1803,7 @@ mod tests {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
 
-        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
             EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
                 parent_information: 0b011,
@@ -1707,7 +1825,7 @@ mod tests {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
 
-        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
             EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_INCORRECT_VALUE,
                 parent_information: 0b001,
@@ -1723,7 +1841,7 @@ mod tests {
     fn end_device_timeout_response_unsolicited_ignored() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
 
-        nlme.handle_nwk_command(&Command::EndDeviceTimeoutResponse(
+        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
             EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
                 parent_information: 0b001,

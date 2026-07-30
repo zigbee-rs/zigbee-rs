@@ -658,6 +658,17 @@ impl Mlme for EspMlme<'_> {
         zigbee_types::IeeeAddress(self.ieee_address)
     }
 
+    async fn set_short_address(&self, address: zigbee_types::ShortAddress) {
+        self.inner
+            .lock()
+            .await
+            .driver
+            .update_driver_config(|config| {
+                config.promiscuous = false;
+                config.short_addr = Some(address.0);
+            });
+    }
+
     async fn scan_network(
         &self,
         ty: ScanType,

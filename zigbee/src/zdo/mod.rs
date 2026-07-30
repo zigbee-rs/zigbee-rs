@@ -134,7 +134,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// Forgets the joined network so the next boot re-commissions: clears the
-    /// network address and security material.
+    /// network address, the network key and the link keys negotiated with the
+    /// Trust Center.
     ///
     /// With flash-backed information bases, flush the storage before
     /// resetting so this state survives the reboot.
@@ -142,6 +143,18 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let nib = nib::get_ref();
         nib.update_network_address(|value| *value = 0xffff);
         nib.update_security_material_set(|set| set.clear());
+        self.reset_trust_center_link_keys();
+    }
+
+    /// Drops the link keys negotiated with the Trust Center so commissioning
+    /// starts from the default TC link key again (§4.4.10).
+    ///
+    /// Link keys are per-network: a stale key pair also carries its anti-replay
+    /// counters, which reject the Transport-Key of a new join.
+    pub fn reset_trust_center_link_keys(&self) {
+        let aib = aib::get_ref();
+        aib.update_device_key_pair_set(|set| set.clear());
+        aib.update_trust_center_address(|value| *value = IeeeAddress(0xffff_ffff_ffff_ffff));
     }
 
     /// Access the owned NWK management entity (used by BDB during
@@ -371,8 +384,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     ///
     /// Bound the wait with an executor timeout.
     pub async fn wait_tc_link_key_verified(&self) -> u8 {
-        self.apsme.tc_key_verified.wait().await;
-        self.apsme.tc_confirm_status()
+        self.apsme.tc_key_verified.wait().await
     }
 
     /// Receive and dispatch one inbound APS data frame.

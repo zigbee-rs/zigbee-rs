@@ -36,6 +36,14 @@ pub trait Mlme {
     /// e.g. read from efuse.
     fn ieee_address(&self) -> IeeeAddress;
 
+    /// MLME-SET.request of `macShortAddress` (IEEE 802.15.4 §7.4.2).
+    ///
+    /// Applies the address the network layer was assigned, so the hardware
+    /// filter accepts unicasts sent to it. [`Self::associate`] already does
+    /// this for the address it obtained; the NWK layer calls this when an
+    /// address is assigned by other means, e.g. a rejoin response.
+    async fn set_short_address(&self, address: ShortAddress);
+
     async fn scan_network(
         &self,
         ty: ScanType,

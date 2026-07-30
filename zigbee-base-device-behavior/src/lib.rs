@@ -60,6 +60,7 @@ use zigbee_mac::mlme::Mlme;
 use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
+use zigbee_types::sync::with_timeout;
 
 /// Base Device Behavior (BDB) commissioning manager.
 ///
@@ -104,13 +105,15 @@ impl BaseDeviceBehavior {
     /// [`Self::network_steering`].
     ///
     /// Otherwise it attempts an NWK rejoin (§3.2.2.13.3) against the
-    /// remembered network and returns the resulting confirm. A rejoin
-    /// failure is not retried here — per §7.1 step 5 that is the caller's
-    /// responsibility (e.g. falling back to [`Self::network_steering`] after
-    /// [`ZigbeeDevice::forget_network`]).
+    /// remembered network and, on success, renegotiates the end-device
+    /// timeout (§3.6.10.2) and broadcasts a Device_annce before returning the
+    /// confirm. A rejoin failure is not retried here — per §7.1 step 5 that is
+    /// the caller's responsibility (e.g. falling back to
+    /// [`Self::network_steering`] after [`ZigbeeDevice::forget_network`]).
     pub async fn start_initialization_procedure<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
     ) -> Result<Option<NlmeJoinConfirm>, NetworkError> {
         let nib = self.nib();
 
@@ -140,6 +143,10 @@ impl BaseDeviceBehavior {
 
         // §7.1 step 5
         if confirm.status == NlmeJoinStatus::Success {
+            // §3.6.10.2: the timeout is renegotiated after every rejoin, even
+            // with the same parent
+            Self::negotiate_end_device_timeout(device, delay).await;
+
             log::debug!("[BDB] step 5: rejoin succeeded, broadcasting Device_annce");
             Self::device_annce(device, capability_information).await?;
             self.bdb_commissioning_status = BdbCommissioningStatus::Success;
@@ -175,6 +182,11 @@ impl BaseDeviceBehavior {
             "[BDB] start network steering, EPID={extended_pan_id:?}, channels={channels:?}"
         );
         self.bdb_commissioning_status = BdbCommissioningStatus::InProgress;
+
+        // a node steering onto a network holds no valid link keys for it: any
+        // left over from an earlier network would reject the Trust Center's
+        // Transport-Key (§4.4.10)
+        device.reset_trust_center_link_keys();
 
         // §8.2 step 1
         device
@@ -403,21 +415,6 @@ impl BaseDeviceBehavior {
 }
 
 /// resolve `fut`, or `None` if `timeout` fires first
-async fn with_timeout<F: Future>(fut: F, timeout: impl Future<Output = ()>) -> Option<F::Output> {
-    let mut fut = pin!(fut);
-    let mut timeout = pin!(timeout);
-    poll_fn(move |cx| {
-        if let Poll::Ready(value) = fut.as_mut().poll(cx) {
-            return Poll::Ready(Some(value));
-        }
-        match timeout.as_mut().poll(cx) {
-            Poll::Ready(()) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    })
-    .await
-}
-
 #[derive(Debug, Error)]
 pub enum BdbError {
     #[error("network error")]
@@ -469,6 +466,7 @@ mod tests {
         Mlme {}
         impl Mlme for Mlme {
             fn ieee_address(&self) -> IeeeAddress;
+            async fn set_short_address(&self, address: ShortAddress);
             async fn scan_network(
                 &self,
                 ty: ScanType,
@@ -498,6 +496,13 @@ mod tests {
         }
     }
 
+    /// Delay that returns immediately, so `block_on` never sees `Pending`.
+    struct NoopDelay;
+
+    impl DelayNs for NoopDelay {
+        async fn delay_ns(&mut self, _ns: u32) {}
+    }
+
     fn make_device(device_type: LogicalType) -> ZigbeeDevice<MockMlme> {
         let mut mac = MockMlme::new();
         mac.expect_ieee_address()
@@ -525,7 +530,7 @@ mod tests {
             device_type: LogicalType::EndDevice,
             ..Config::default()
         });
-        let result = block_on(bdb.start_initialization_procedure(&device));
+        let result = block_on(bdb.start_initialization_procedure(&device, &mut NoopDelay));
         assert!(matches!(result, Ok(None)));
         assert!(!bdb.bdb_node_is_on_a_network);
 
@@ -537,7 +542,8 @@ mod tests {
             device_type: LogicalType::Router,
             ..Config::default()
         });
-        let result = block_on(router_bdb.start_initialization_procedure(&router_device));
+        let result =
+            block_on(router_bdb.start_initialization_procedure(&router_device, &mut NoopDelay));
         assert!(matches!(result, Ok(None)));
         assert!(router_bdb.bdb_node_is_on_a_network);
     }

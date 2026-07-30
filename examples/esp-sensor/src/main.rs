@@ -203,7 +203,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         );
     }
 
-    match bdb.start_initialization_procedure(device).await {
+    match bdb.start_initialization_procedure(device, &mut Delay).await {
         Ok(Some(confirm)) if confirm.status == NlmeJoinStatus::Success => {
             println!(
                 "Rejoined: addr={:#06x} pan={:#06x} channel={CHANNEL}",
