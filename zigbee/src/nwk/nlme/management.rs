@@ -165,12 +165,46 @@ pub struct NlmeDirectJoinRequest {}
 /// 3.2.2.17 - NLME-DIRECT-JOIN.confirm
 pub struct NlmeDirectJoinConfirm {}
 
-/// 3.2.2.18 - NLME-LEAVE.request
-pub struct NlmeLeaveRequest {}
-/// 3.2.2.19 - NLME-LEAVE.indication
-pub struct NlmeLeaveIndication {}
-/// 3.2.2.20 - NLME-LEAVE.confirm
-pub struct NlmeLeaveConfirm {}
+/// 3.2.2.18 - NLME-LEAVE.request (Table 3-26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NlmeLeaveRequest {
+    /// IEEE address of the device to remove, or `None` for this device to
+    /// remove itself.
+    pub device_address: Option<IeeeAddress>,
+    /// Also ask the leaving device to remove its own children.
+    pub remove_children: bool,
+    /// Ask the leaving device to rejoin the network afterwards.
+    pub rejoin: bool,
+}
+/// 3.2.2.19 - NLME-LEAVE.indication (Table 3-27).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NlmeLeaveIndication {
+    /// IEEE address of the device that left, or `None` if this device was
+    /// removed by its parent.
+    pub device_address: Option<IeeeAddress>,
+    pub rejoin: bool,
+}
+/// 3.2.2.20 - NLME-LEAVE.confirm (Table 3-28).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NlmeLeaveConfirm {
+    pub status: NlmeLeaveStatus,
+    /// Echoes the request's `device_address`, or `None` for a self-leave.
+    pub device_address: Option<IeeeAddress>,
+}
+
+/// Status codes for NLME-LEAVE.confirm and Mgmt_Leave_rsp (Table 3-28).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NlmeLeaveStatus {
+    Success,
+    /// Not currently joined, or the request is otherwise malformed.
+    InvalidRequest,
+    /// `device_address` does not name a known end-device child.
+    UnknownDevice,
+    /// The MAC sub-layer failed to transmit the leave command frame.
+    MacError,
+    /// The requester is not allowed to remove this device (§3.6.1.10.3.1).
+    NotAuthorized,
+}
 
 /// 3.2.2.21 - NLME-RESET.request
 pub struct NlmeResetRequest {}

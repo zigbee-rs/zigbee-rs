@@ -37,6 +37,16 @@ impl_byte! {
 
 pub const NWK_COORDINATOR_ADDRESS: u16 = 0x0000;
 
+/// Network address of a device that is not joined (§3.6.1.10.4).
+pub const NWK_UNASSIGNED_ADDRESS: u16 = 0xffff;
+
+/// Broadcast to all devices (§3.6.5, Table 3-68).
+pub const NWK_BROADCAST_ALL: u16 = 0xffff;
+
+/// Lowest reserved broadcast address; anything above is a broadcast (Table
+/// 3-68).
+pub const NWK_BROADCAST_ADDRESS_MIN: u16 = 0xfff8;
+
 /// Neighbor table relationship values (Table 3-63).
 pub mod relationship {
     /// The neighbor is the parent of this device.

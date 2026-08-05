@@ -31,6 +31,8 @@ use crate::nwk::nib;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
+use crate::nwk::nlme::management::NlmeLeaveRequest;
+use crate::nwk::nlme::management::NlmeLeaveStatus;
 use crate::security::SecurityContext;
 
 /// Number of MAC poll attempts when waiting for the Trust Center to deliver the
@@ -357,6 +359,26 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.joined.wait_set().await;
     }
 
+    /// Close the receive loop's join gate when the NWK layer reports that this
+    /// device was removed from the network (NLME-LEAVE.indication with a NULL
+    /// device address, §3.2.2.19).
+    ///
+    /// The loop then parks until the higher layer has re-commissioned or
+    /// rejoined, instead of polling a parent that dropped this device.
+    fn close_gate_on_leave_indication(&self) {
+        let Some(indication) = self.nlme.take_leave_indication() else {
+            return;
+        };
+        if indication.device_address.is_some() {
+            return;
+        }
+        log::info!(
+            "[ZDO] removed from the network (rejoin={})",
+            indication.rejoin
+        );
+        self.joined.reset();
+    }
+
     /// Arm the TC link key exchange (BDB §10.2.5): key-transport commands
     /// are honored and stale progress events are cleared. Disarm with
     /// [`Self::end_tc_link_key_exchange`] when the exchange concludes.
@@ -437,6 +459,10 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
         let mut out = [0u8; 128];
 
+        // a NWK Leave command consumed by the NWK layer surfaces here as an
+        // NLME-LEAVE.indication rather than as a dispatchable frame
+        self.close_gate_on_leave_indication();
+
         // non-dispatchable frame (NWK command handled by the NWK layer; an APS
         // command is handled at its arrival point): wait for the next frame
         let Some(indication) = indication else {
@@ -454,8 +480,30 @@ impl<M: Mlme> ZigbeeDevice<M> {
             "[ZDO] rx profile={profile:#06x} cluster={cluster:#06x} from {src:#06x} ep {src_endpoint}->{dst_endpoint}"
         );
 
+        // deferred until after the response below has actually gone out: the
+        // leave procedure clears the NWK security material this reply is
+        // encrypted with, so executing it first would leave the reply
+        // unsendable.
+        let mut leave_after_reply = None;
+
         // (response cluster, profile, dst endpoint, src endpoint, length)
-        let response = if profile == ZDP_PROFILE_ID {
+        let response = if profile == ZDP_PROFILE_ID && cluster == descriptor::MGMT_LEAVE_REQ {
+            let destination = match indication.dst_address {
+                Address::Network(dst) => ShortAddress(dst),
+                _ => ShortAddress(*self.nlme.nib().network_address()),
+            };
+            self.build_mgmt_leave_rsp(indication.asdu, ShortAddress(src), destination, &mut out)
+                .map(|(len, request)| {
+                    leave_after_reply = request;
+                    (
+                        descriptor::MGMT_LEAVE_RSP,
+                        ZDP_PROFILE_ID,
+                        ZDO_ENDPOINT,
+                        ZDO_ENDPOINT,
+                        len,
+                    )
+                })
+        } else if profile == ZDP_PROFILE_ID {
             self.build_zdp_response(cluster, indication.asdu, cfg, &mut out)
                 .map(|(rsp_cluster, len)| {
                     (rsp_cluster, ZDP_PROFILE_ID, ZDO_ENDPOINT, ZDO_ENDPOINT, len)
@@ -490,7 +538,59 @@ impl<M: Mlme> ZigbeeDevice<M> {
         } else {
             log::trace!("[ZDO] no response for cluster {cluster:#06x}");
         }
+
+        if let Some(request) = leave_after_reply {
+            let confirm = self.nlme.leave(request).await;
+            log::info!(
+                "[ZDO] leaving network after Mgmt_Leave_req: {:?}",
+                confirm.status
+            );
+            // a self-leave yields a confirm, not an indication (§3.2.2.18), so
+            // close the gate here
+            self.joined.reset();
+        }
         Ok(())
+    }
+
+    /// Build a Mgmt_Leave_rsp payload (§2.4.4.4.5), returning its length and
+    /// the NLME-LEAVE.request the caller must issue once the response has been
+    /// sent.
+    ///
+    /// The request is validated as a leave request per §3.6.1.10.3.1, which
+    /// governs the Mgmt_Leave_req just as it does the NWK Leave command — an
+    /// end device is only removed by its parent. Only a request naming this
+    /// device (or the NULL address) is honored; removing a child requires
+    /// acting as its parent, which this stack does not yet support.
+    fn build_mgmt_leave_rsp(
+        &self,
+        asdu: &[u8],
+        source: ShortAddress,
+        destination: ShortAddress,
+        out: &mut [u8],
+    ) -> Option<(usize, Option<NlmeLeaveRequest>)> {
+        let request = descriptor::parse_mgmt_leave_req(asdu)?;
+
+        let own_ieee = *self.nlme.nib().ieee_address();
+        let is_self = request.device_address.is_none_or(|addr| addr == own_ieee);
+
+        let (status, leave) = if !is_self {
+            (NlmeLeaveStatus::UnknownDevice, None)
+        } else if !self.nlme.accepts_leave_request(source, destination) {
+            (NlmeLeaveStatus::NotAuthorized, None)
+        } else {
+            (
+                NlmeLeaveStatus::Success,
+                Some(NlmeLeaveRequest {
+                    device_address: None,
+                    remove_children: request.remove_children,
+                    rejoin: request.rejoin,
+                }),
+            )
+        };
+
+        let len =
+            descriptor::mgmt_leave_rsp(request.seq, descriptor::leave_status(status), out).ok()?;
+        Some((len, leave))
     }
 
     /// Build the ZDP `*_rsp` payload for a discovery request, echoing the
@@ -557,6 +657,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
     /// end device polls the parent for buffered unicasts every
     /// `poll_interval_ms` — keep it below the parent's indirect-transaction
     /// persistence time (~7.68 s).
+    ///
+    /// A leave takes the device off the network and parks the loop until it
+    /// has been re-commissioned.
     pub async fn rx_loop(
         &self,
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
@@ -577,12 +680,16 @@ impl<M: Mlme> ZigbeeDevice<M> {
             .receiver_on_when_idle()
         {
             loop {
+                // dispatching a leave closes the gate again, parking the loop
+                // until the higher layer has re-commissioned
+                self.wait_until_joined().await;
                 if let Err(e) = self.receive_and_dispatch(cfg, handler).await {
                     log::debug!("[ZDO] rx dispatch error: {e:?}");
                 }
             }
         }
         loop {
+            self.wait_until_joined().await;
             if let Err(e) = self.poll_and_dispatch(cfg, handler).await {
                 log::debug!("[ZDO] rx dispatch error: {e:?}");
             }

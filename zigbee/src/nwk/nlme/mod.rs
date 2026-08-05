@@ -24,6 +24,10 @@ use management::NlmeEdScanRequest;
 use management::NlmeJoinConfirm;
 use management::NlmeJoinRequest;
 use management::NlmeJoinStatus;
+use management::NlmeLeaveConfirm;
+use management::NlmeLeaveIndication;
+use management::NlmeLeaveRequest;
+use management::NlmeLeaveStatus;
 use management::NlmeNetworkDiscoveryConfirm;
 use management::NlmeNetworkFormationConfirm;
 use management::NlmeNetworkFormationRequest;
@@ -53,6 +57,8 @@ use crate::nwk::frame::command::Command;
 use crate::nwk::frame::command::end_device_timeout_request;
 use crate::nwk::frame::command::end_device_timeout_request::EndDeviceTimeoutRequest;
 use crate::nwk::frame::command::end_device_timeout_response::EndDeviceTimeoutResponse;
+use crate::nwk::frame::command::leave::CommandOptions as LeaveCommandOptions;
+use crate::nwk::frame::command::leave::Leave;
 use crate::nwk::frame::command::rejoin_request;
 use crate::nwk::frame::command::rejoin_request::RejoinRequest;
 use crate::nwk::frame::command::rejoin_response::RejoinResponse;
@@ -64,7 +70,10 @@ use crate::nwk::nib;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
+use crate::nwk::nib::NWK_BROADCAST_ADDRESS_MIN;
+use crate::nwk::nib::NWK_BROADCAST_ALL;
 use crate::nwk::nib::NWK_COORDINATOR_ADDRESS;
+use crate::nwk::nib::NWK_UNASSIGNED_ADDRESS;
 use crate::nwk::nib::Nib;
 use crate::nwk::nib::NwkNeighbor;
 use crate::nwk::nib::link_cost_from_lqi;
@@ -116,6 +125,9 @@ pub struct Nlme<M> {
     // Rejoin Response (§3.4.7) handed from the receive path to the rejoin
     // procedure waiting for it
     rejoin_response: Signal<RejoinResponse>,
+    // NLME-LEAVE.indication (§3.2.2.19) raised by the receive path for the
+    // higher layer, which decides whether to re-commission or rejoin
+    leave_indication: Signal<NlmeLeaveIndication>,
 }
 
 impl<M> Nlme<M>
@@ -135,7 +147,22 @@ where
             nwk_seq: AtomicU8::new(0),
             pending_timeout_request: AtomicU8::new(NO_PENDING_TIMEOUT),
             rejoin_response: Signal::new(),
+            leave_indication: Signal::new(),
         }
+    }
+
+    /// 3.2.2.19 - take a pending NLME-LEAVE.indication, if any.
+    ///
+    /// Reports that this device was removed from the network (device address
+    /// `None`), or that a neighbor left it. The indication stays pending until
+    /// taken.
+    pub fn take_leave_indication(&self) -> Option<NlmeLeaveIndication> {
+        self.leave_indication.try_take()
+    }
+
+    /// 3.2.2.19 - wait for the next NLME-LEAVE.indication.
+    pub async fn wait_leave_indication(&self) -> NlmeLeaveIndication {
+        self.leave_indication.wait().await
     }
 
     fn next_nwk_seq(&self) -> u8 {
@@ -457,7 +484,7 @@ where
         let Some(len) = self.poll_parent(buf).await? else {
             return Ok(None);
         };
-        self.process_received_nwk_frame(&mut buf[..len])
+        self.process_received_nwk_frame(&mut buf[..len]).await
     }
 
     /// Passively wait for the next inbound NWK frame and process it.
@@ -470,11 +497,11 @@ where
         buf: &'a mut [u8],
     ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
         let (len, _lqi) = self.mac.receive(buf).await?;
-        self.process_received_nwk_frame(&mut buf[..len])
+        self.process_received_nwk_frame(&mut buf[..len]).await
     }
 
     /// Decrypt one inbound NWK frame and hand NWK commands to the NWK layer.
-    fn process_received_nwk_frame<'a>(
+    async fn process_received_nwk_frame<'a>(
         &self,
         frame_buf: &'a mut [u8],
     ) -> Result<Option<NwkDataFrame<'a>>, NetworkError> {
@@ -491,7 +518,8 @@ where
             // "no data" so the APS/ZDO caller skips this frame.
             NwkFrame::NwkCommand(command_frame) => {
                 self.learn_neighbor_ieee_address(&command_frame.header);
-                self.handle_nwk_command(command_frame.command);
+                self.handle_nwk_command(&command_frame.header, command_frame.command)
+                    .await;
                 Ok(None)
             }
             _ => Ok(None),
@@ -504,7 +532,7 @@ where
     /// handler can be filled in. Most are not yet acted upon — they are logged
     /// and ignored. Returning unit keeps the caller's receive loop simple; add
     /// a result type here if a handler needs to surface failures.
-    fn handle_nwk_command(&self, command: Command<'_>) {
+    async fn handle_nwk_command(&self, header: &NwkHeader<'_>, command: Command<'_>) {
         match command {
             // routing (§3.4.1–3.4.2): a sleepy end device routes via its parent,
             // so route discovery is currently a no-op.
@@ -515,8 +543,7 @@ where
             Command::NetworkStatus(_) => log::trace!("[NWK] network status (ignored)"),
             Command::NetworkReport(_) => log::trace!("[NWK] network report (ignored)"),
             Command::NetworkUpdate(_) => log::trace!("[NWK] network update (ignored)"),
-            // TODO: a Leave addressed to us should clear NIB state and re-commission.
-            Command::Leave(_) => log::trace!("[NWK] leave (ignored)"),
+            Command::Leave(leave) => self.handle_leave_command(header, &leave).await,
             // rejoin (§3.4.6–3.4.7): a request is parent-side only; a response
             // is handed to the rejoin procedure waiting for it, which may be
             // driven by another task than this receive path
@@ -569,6 +596,230 @@ where
             }
             Command::Reserved(id) => log::trace!("[NWK] reserved command {id:#04x} (ignored)"),
         }
+    }
+
+    /// Process an inbound Leave command frame (§3.6.1.10.3).
+    ///
+    /// TODO: a router receiving a notification from its parent with the remove
+    /// children sub-field set must rebroadcast the leave to its own children.
+    async fn handle_leave_command(&self, header: &NwkHeader<'_>, leave: &Leave) {
+        let options = leave.command_options;
+        let is_from_parent = self
+            .parent_short_address()
+            .is_ok_and(|parent| parent == header.source);
+
+        if !options.request() {
+            // notification: the sender left the network on its own initiative —
+            // it is no longer a neighbor regardless of the rejoin flag.
+            self.nib().update_neighbor_table(|table| {
+                table.retain(|n| n.network_address != header.source);
+            });
+
+            if is_from_parent {
+                // our parent has dropped us: we are no longer on the network,
+                // and the indication carries a NULL device address (§3.6.1.10.3)
+                self.nib().update_extended_panid(|value| *value = 0);
+                log::info!("[NWK] removed by parent (leave notification)");
+                self.leave_indication.signal(NlmeLeaveIndication {
+                    device_address: None,
+                    rejoin: options.rejoin(),
+                });
+            } else {
+                log::debug!(
+                    "[NWK] neighbor {:?} left the network (rejoin={})",
+                    header.source_ieee,
+                    options.rejoin()
+                );
+                self.leave_indication.signal(NlmeLeaveIndication {
+                    device_address: header.source_ieee,
+                    rejoin: options.rejoin(),
+                });
+            }
+            return;
+        }
+
+        // request == 1: someone is asking us to leave (§3.6.1.10.3.1)
+        if !self.accepts_leave_request(header.source, header.destination) {
+            return;
+        }
+
+        if let Err(e) = self
+            .leave_network(options.remove_children(), options.rejoin())
+            .await
+        {
+            log::warn!("[NWK] failed to announce leave: {e:?}");
+        }
+    }
+
+    /// Validate a leave request against §3.6.1.10.3.1, which governs both the
+    /// NWK Leave (request) command and the ZDO Mgmt_Leave_req.
+    ///
+    /// `source` is the network address of the sending device, `destination`
+    /// the address the request was addressed to.
+    pub fn accepts_leave_request(&self, source: ShortAddress, destination: ShortAddress) -> bool {
+        // step 1: the coordinator never leaves, and a broadcast request is
+        // dropped without further processing
+        if *self.nib().network_address() == NWK_COORDINATOR_ADDRESS
+            || destination.0 >= NWK_BROADCAST_ADDRESS_MIN
+        {
+            log::trace!("[NWK] leave request dropped (coordinator or broadcast destination)");
+            return false;
+        }
+
+        // step 2: a router honors any sender while nwkLeaveRequestAllowed is
+        // set, ignoring the neighbor relationship
+        if self.nib().capability_information().device_type() {
+            let allowed = *self.nib().leave_request_allowed();
+            if !allowed {
+                log::trace!("[NWK] leave request refused (nwkLeaveRequestAllowed is FALSE)");
+            }
+            return allowed;
+        }
+
+        // step 3: an end device is only removed by its parent
+        let is_from_parent = self
+            .parent_short_address()
+            .is_ok_and(|parent| parent == source);
+        if !is_from_parent {
+            log::trace!("[NWK] leave request refused (sender {source:?} is not our parent)");
+        }
+        is_from_parent
+    }
+
+    /// 3.2.2.18
+    ///
+    /// Only self-removal (`device_address` `None` or this device's own IEEE
+    /// address) is implemented: removing a child requires acting as its
+    /// parent, which this stack does not yet support.
+    pub async fn leave(&self, request: NlmeLeaveRequest) -> NlmeLeaveConfirm {
+        if *self.nib().network_address() == NWK_UNASSIGNED_ADDRESS {
+            return NlmeLeaveConfirm {
+                status: NlmeLeaveStatus::InvalidRequest,
+                device_address: request.device_address,
+            };
+        }
+
+        let is_self = request
+            .device_address
+            .is_none_or(|addr| addr == *self.nib().ieee_address());
+        if !is_self {
+            return NlmeLeaveConfirm {
+                status: NlmeLeaveStatus::UnknownDevice,
+                device_address: request.device_address,
+            };
+        }
+
+        let status = match self
+            .leave_network(request.remove_children, request.rejoin)
+            .await
+        {
+            Ok(()) => NlmeLeaveStatus::Success,
+            Err(_) => NlmeLeaveStatus::MacError,
+        };
+        NlmeLeaveConfirm {
+            status,
+            device_address: None,
+        }
+    }
+
+    /// §3.6.1.10.1 + §3.6.1.10.4: announce this device's own removal from the
+    /// network, then apply the local leave procedure.
+    ///
+    /// The local leave runs whether or not the announcement made it onto the
+    /// air; the transmit result only feeds the NLME-LEAVE.confirm status.
+    async fn leave_network(&self, remove_children: bool, rejoin: bool) -> Result<(), NetworkError> {
+        let result = self.announce_leave(remove_children, rejoin).await;
+        self.local_leave(rejoin);
+        result
+    }
+
+    /// §3.6.1.10.1: transmit this device's own leave command frame, with the
+    /// request sub-field set to 0 — a notification, never a request addressed
+    /// to someone else.
+    async fn announce_leave(
+        &self,
+        remove_children: bool,
+        rejoin: bool,
+    ) -> Result<(), NetworkError> {
+        let is_router_or_coordinator = self.nib().capability_information().device_type()
+            || *self.nib().network_address() == NWK_COORDINATOR_ADDRESS;
+
+        let mut buf = [0u8; 64];
+        if is_router_or_coordinator {
+            let command = Command::Leave(Leave {
+                command_options: LeaveCommandOptions(0)
+                    .set_remove_children(remove_children)
+                    .set_rejoin(rejoin),
+            });
+            let len = self.build_nwk_command_frame(
+                ShortAddress(NWK_BROADCAST_ALL),
+                command,
+                true,
+                &mut buf,
+            )?;
+            self.mac
+                .transmit_data(
+                    Address::Short(
+                        PanId(*self.nib().panid()),
+                        MacShortAddress(NWK_BROADCAST_ALL),
+                    ),
+                    &buf[..len],
+                )
+                .await?;
+            return Ok(());
+        }
+
+        // an end device unicasts to its parent and sends the remove children
+        // sub-field as 0; only the rejoin flag is carried over
+        let command = Command::Leave(Leave {
+            command_options: LeaveCommandOptions(0).set_rejoin(rejoin),
+        });
+        let len =
+            self.build_nwk_command_frame(self.parent_short_address()?, command, true, &mut buf)?;
+        let result = self
+            .mac
+            .transmit_data(self.parent_address()?, &buf[..len])
+            .await;
+        // §3.6.1.10.1: an end device clears the extended PAN id right after
+        // transmitting, ahead of the rest of the local leave process.
+        self.nib().update_extended_panid(|value| *value = 0);
+        result.map_err(Into::into)
+    }
+
+    /// §3.6.1.10.4: the local half of the leave procedure.
+    fn local_leave(&self, rejoin: bool) {
+        if rejoin {
+            // step 1: with Rejoin set the NIB is kept, so the remembered
+            // network is still there for a later NLME-JOIN.request with
+            // `RejoinNetwork::NwkRejoin`; driving that is the higher layer's
+            // call, which the NLME-LEAVE.indication/confirm hands it.
+            log::info!("[NWK] left the network, rejoin requested");
+            return;
+        }
+
+        self.clear_nib_on_leave();
+    }
+
+    /// §3.6.1.10.4 (Rejoin = FALSE): clear the NIB attributes describing
+    /// network membership, leaving the device unjoined.
+    fn clear_nib_on_leave(&self) {
+        let nib = self.nib();
+        nib.update_neighbor_table(|value| value.clear());
+        nib.update_route_table(|value| value.clear());
+        nib.update_manager_addr(|value| *value = 0x0000);
+        nib.update_update_id(|value| *value = 0x00);
+        nib.update_network_address(|value| *value = NWK_UNASSIGNED_ADDRESS);
+        nib.update_group_idtable(|value| value.clear());
+        nib.update_extended_panid(|value| *value = 0);
+        nib.update_route_record_table(|value| value.clear());
+        nib.update_is_concentrator(|value| *value = false);
+        nib.update_concentrator_radius(|value| *value = 0);
+        nib.update_security_material_set(|value| value.clear());
+        nib.update_active_key_seq_number(|value| *value = 0x00);
+        nib.update_address_map(|value| value.clear());
+        nib.update_panid(|value| *value = 0xffff);
+        nib.update_tx_total(|value| *value = 0);
+        nib.update_parent_information(|value| *value = 0x00);
     }
 
     /// 3.2.2.3
@@ -948,7 +1199,7 @@ where
                 return;
             }
             match self.poll_parent(&mut buf).await {
-                Ok(Some(len)) => match self.process_received_nwk_frame(&mut buf[..len]) {
+                Ok(Some(len)) => match self.process_received_nwk_frame(&mut buf[..len]).await {
                     Ok(Some(_)) => log::debug!("[NWK-REJOIN] polled data frame dropped"),
                     Ok(None) => (),
                     Err(e) => log::debug!("[NWK-REJOIN] polled frame not processed: {e:?}"),
@@ -1656,10 +1907,13 @@ mod tests {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         seed_joined_nib(&nlme);
 
-        nlme.handle_nwk_command(Command::RejoinResponse(RejoinResponse {
-            network_address: ShortAddress(0x5678),
-            status: 0x00,
-        }));
+        block_on(nlme.handle_nwk_command(
+            &dummy_header(0x0000),
+            Command::RejoinResponse(RejoinResponse {
+                network_address: ShortAddress(0x5678),
+                status: 0x00,
+            }),
+        ));
 
         assert_eq!(*nlme.nib().network_address(), 0x5678);
         block_on(nlme.rejoin_response.wait());
@@ -1713,6 +1967,22 @@ mod tests {
     // -------------------------------------------------------------------
     // end device timeout tests (§3.6.10)
     // -------------------------------------------------------------------
+
+    /// A minimal NWK header for feeding `handle_nwk_command` in tests; the
+    /// source address is the only field most handlers inspect.
+    fn dummy_header(source: u16) -> NwkHeader<'static> {
+        NwkHeader {
+            frame_control: NwkFrameControl(0).set_frame_type(NwkFrameType::NwkCommand),
+            destination: ShortAddress(0x0000),
+            source: ShortAddress(source),
+            radius: 1,
+            sequence_number: 0,
+            destination_ieee: None,
+            source_ieee: None,
+            multicast_control: None,
+            source_route_subframe: None,
+        }
+    }
 
     /// Seed the global NIB with a joined-network state: parent neighbor,
     /// addresses, and NWK security material.
@@ -1803,11 +2073,12 @@ mod tests {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
 
-        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
-            EndDeviceTimeoutResponse {
+        block_on(nlme.handle_nwk_command(
+            &dummy_header(0x0000),
+            Command::EndDeviceTimeoutResponse(EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
                 parent_information: 0b011,
-            },
+            }),
         ));
 
         let nib = nlme.nib();
@@ -1825,11 +2096,12 @@ mod tests {
         let (_guard, nlme) = make_nlme(MockMlme::new());
         nlme.pending_timeout_request.store(0x03, Ordering::Relaxed);
 
-        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
-            EndDeviceTimeoutResponse {
+        block_on(nlme.handle_nwk_command(
+            &dummy_header(0x0000),
+            Command::EndDeviceTimeoutResponse(EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_INCORRECT_VALUE,
                 parent_information: 0b001,
-            },
+            }),
         ));
 
         let nib = nlme.nib();
@@ -1841,16 +2113,261 @@ mod tests {
     fn end_device_timeout_response_unsolicited_ignored() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
 
-        nlme.handle_nwk_command(Command::EndDeviceTimeoutResponse(
-            EndDeviceTimeoutResponse {
+        block_on(nlme.handle_nwk_command(
+            &dummy_header(0x0000),
+            Command::EndDeviceTimeoutResponse(EndDeviceTimeoutResponse {
                 status: EndDeviceTimeoutResponse::STATUS_SUCCESS,
                 parent_information: 0b001,
-            },
+            }),
         ));
 
         let nib = nlme.nib();
         assert_eq!(*nib.parent_information(), 0x00);
         assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
+    }
+
+    // -------------------------------------------------------------------
+    // leave tests (§3.2.2.18, §3.6.1.10)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn leave_not_joined_is_invalid() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let confirm = block_on(nlme.leave(NlmeLeaveRequest {
+            device_address: None,
+            remove_children: false,
+            rejoin: false,
+        }));
+        assert_eq!(confirm.status, NlmeLeaveStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn leave_other_device_is_unknown() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.leave(NlmeLeaveRequest {
+            device_address: Some(IeeeAddress(0x1111_1111_1111_1111)),
+            remove_children: false,
+            rejoin: false,
+        }));
+        assert_eq!(confirm.status, NlmeLeaveStatus::UnknownDevice);
+    }
+
+    #[test]
+    fn leave_self_end_device_unicasts_to_parent_and_clears_nib() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .withf(|dest, payload| {
+                assert_eq!(
+                    *dest,
+                    Address::Short(PanId(0xAAAA), MacShortAddress(0x0000))
+                );
+                let mut buf = [0u8; 256];
+                buf[..payload.len()].copy_from_slice(payload);
+                let frame = SecurityContext::get()
+                    .decrypt_nwk_frame_in_place(&mut buf[..payload.len()])
+                    .unwrap();
+                let NwkFrame::NwkCommand(command_frame) = frame else {
+                    panic!("expected NWK command frame");
+                };
+                let Command::Leave(leave) = command_frame.command else {
+                    panic!("expected leave command");
+                };
+                assert!(!leave.command_options.request());
+                assert!(!leave.command_options.rejoin());
+                assert!(!leave.command_options.remove_children());
+                true
+            })
+            .returning(|_, _| Ok(()));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        // §3.6.1.10.1: an end device sends the remove children sub-field as 0
+        // even when the request asked for it
+        let confirm = block_on(nlme.leave(NlmeLeaveRequest {
+            device_address: None,
+            remove_children: true,
+            rejoin: false,
+        }));
+        assert_eq!(confirm.status, NlmeLeaveStatus::Success);
+        assert_eq!(confirm.device_address, None);
+
+        let nib = nlme.nib();
+        assert_eq!(*nib.network_address(), 0xffff);
+        assert_eq!(*nib.extended_panid(), 0);
+        assert!(nib.neighbor_table().is_empty());
+        assert!(nib.security_material_set().is_empty());
+    }
+
+    #[test]
+    fn leave_self_clears_nib_even_when_transmit_fails() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .returning(|_, _| Err(MacError::NoAck));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.leave(NlmeLeaveRequest {
+            device_address: None,
+            remove_children: false,
+            rejoin: false,
+        }));
+        // §3.6.1.10.1: the local leave runs regardless of the confirm status
+        assert_eq!(confirm.status, NlmeLeaveStatus::MacError);
+        assert_eq!(*nlme.nib().network_address(), NWK_UNASSIGNED_ADDRESS);
+        assert!(nlme.nib().security_material_set().is_empty());
+    }
+
+    #[test]
+    fn leave_request_to_broadcast_address_is_dropped() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let header = NwkHeader {
+            destination: ShortAddress(0xfffd),
+            ..dummy_header(0x0000)
+        };
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0).set_request(true),
+        };
+        // no transmit_data expectation set: a call here would panic the mock
+        block_on(nlme.handle_nwk_command(&header, Command::Leave(leave)));
+
+        assert_eq!(*nlme.nib().network_address(), 0x1234);
+    }
+
+    #[test]
+    fn leave_notification_from_parent_raises_indication() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0).set_rejoin(true),
+        };
+        block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
+
+        // §3.6.1.10.3: removed by the parent -> NULL device address
+        assert_eq!(
+            nlme.take_leave_indication(),
+            Some(NlmeLeaveIndication {
+                device_address: None,
+                rejoin: true,
+            })
+        );
+    }
+
+    #[test]
+    fn leave_self_with_rejoin_leaves_nib_untouched() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data().times(1).returning(|_, _| Ok(()));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let confirm = block_on(nlme.leave(NlmeLeaveRequest {
+            device_address: None,
+            remove_children: false,
+            rejoin: true,
+        }));
+        assert_eq!(confirm.status, NlmeLeaveStatus::Success);
+
+        let nib = nlme.nib();
+        // rejoin requested: the NIB is left intact for the (not yet
+        // implemented) rejoin procedure, aside from the extended PAN id
+        // which §3.6.1.10.1 clears unconditionally for an end device.
+        assert_eq!(*nib.network_address(), 0x1234);
+        assert_eq!(*nib.extended_panid(), 0);
+        assert!(!nib.neighbor_table().is_empty());
+    }
+
+    #[test]
+    fn leave_notification_removes_only_the_notifying_neighbor() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+        nlme.nib().update_neighbor_table(|table| {
+            let _ = table.push(make_neighbor(0xAAAA, 0x5678, 0xBEEF, 200, 1));
+        });
+        assert_eq!(nlme.nib().neighbor_table().len(), 2);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0),
+        };
+        block_on(nlme.handle_nwk_command(&dummy_header(0x5678), Command::Leave(leave)));
+
+        let nib = nlme.nib();
+        assert_eq!(nib.neighbor_table().len(), 1);
+        assert_eq!(
+            nib.neighbor_table()[0].network_address,
+            ShortAddress(0x0000)
+        );
+        // not our parent -> we are still joined
+        assert_ne!(*nib.network_address(), 0xffff);
+    }
+
+    #[test]
+    fn leave_notification_from_parent_marks_device_removed() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0),
+        };
+        block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
+
+        let nib = nlme.nib();
+        assert_eq!(*nib.extended_panid(), 0);
+        assert!(nib.neighbor_table().is_empty());
+    }
+
+    #[test]
+    fn leave_request_from_parent_triggers_self_removal() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data().times(1).returning(|_, _| Ok(()));
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0).set_request(true),
+        };
+        block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
+
+        assert_eq!(*nlme.nib().network_address(), 0xffff);
+    }
+
+    #[test]
+    fn leave_request_from_non_parent_is_ignored() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0).set_request(true),
+        };
+        // no transmit_data expectation set: a call here would panic the mock
+        block_on(nlme.handle_nwk_command(&dummy_header(0x9999), Command::Leave(leave)));
+
+        assert_eq!(*nlme.nib().network_address(), 0x1234);
+    }
+
+    #[test]
+    fn leave_request_dropped_for_coordinator() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+        seed_joined_nib(&nlme);
+        nlme.nib().update_network_address(|value| *value = 0x0000);
+
+        let leave = Leave {
+            command_options: LeaveCommandOptions(0).set_request(true),
+        };
+        // no transmit_data expectation set: a call here would panic the mock
+        block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
+
+        assert_eq!(*nlme.nib().network_address(), 0x0000);
     }
 
     #[test]
