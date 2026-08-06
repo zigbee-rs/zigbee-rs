@@ -492,7 +492,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 Address::Network(dst) => ShortAddress(dst),
                 _ => ShortAddress(*self.nlme.nib().network_address()),
             };
-            self.build_mgmt_leave_rsp(indication.asdu, ShortAddress(src), destination, &mut out)
+            self.build_mgmt_leave_rsp(indication.asdu, destination, &mut out)
                 .map(|(len, request)| {
                     leave_after_reply = request;
                     (
@@ -557,14 +557,18 @@ impl<M: Mlme> ZigbeeDevice<M> {
     /// sent.
     ///
     /// The request is validated as a leave request per §3.6.1.10.3.1, which
-    /// governs the Mgmt_Leave_req just as it does the NWK Leave command — an
-    /// end device is only removed by its parent. Only a request naming this
-    /// device (or the NULL address) is honored; removing a child requires
-    /// acting as its parent, which this stack does not yet support.
+    /// governs the Mgmt_Leave_req just as it does the NWK Leave command. Its
+    /// end-device rule tests the MAC source of the delivering frame, which for
+    /// a child is always its parent — the ZDP originator (a management
+    /// application, typically on the coordinator) is a different address and
+    /// not what the rule is about.
+    ///
+    /// Only a request naming this device (or the NULL address) is honored;
+    /// removing a child requires acting as its parent, which this stack does
+    /// not yet support.
     fn build_mgmt_leave_rsp(
         &self,
         asdu: &[u8],
-        source: ShortAddress,
         destination: ShortAddress,
         out: &mut [u8],
     ) -> Option<(usize, Option<NlmeLeaveRequest>)> {
@@ -575,7 +579,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
         let (status, leave) = if !is_self {
             (NlmeLeaveStatus::UnknownDevice, None)
-        } else if !self.nlme.accepts_leave_request(source, destination) {
+        } else if !self.nlme.accepts_leave_request(destination, true) {
             (NlmeLeaveStatus::NotAuthorized, None)
         } else {
             (

@@ -638,8 +638,13 @@ where
             return;
         }
 
-        // request == 1: someone is asking us to leave (§3.6.1.10.3.1)
-        if !self.accepts_leave_request(header.source, header.destination) {
+        // request == 1: someone is asking us to leave (§3.6.1.10.3.1). A leave
+        // request is sent by the parent itself, so its NWK source address is
+        // the sender the spec tests.
+        let from_parent = self
+            .parent_short_address()
+            .is_ok_and(|parent| parent == header.source);
+        if !self.accepts_leave_request(header.destination, from_parent) {
             return;
         }
 
@@ -654,9 +659,12 @@ where
     /// Validate a leave request against §3.6.1.10.3.1, which governs both the
     /// NWK Leave (request) command and the ZDO Mgmt_Leave_req.
     ///
-    /// `source` is the network address of the sending device, `destination`
-    /// the address the request was addressed to.
-    pub fn accepts_leave_request(&self, source: ShortAddress, destination: ShortAddress) -> bool {
+    /// `destination` is the address the request was addressed to.
+    /// `from_parent` says whether it reached this device over the parent link:
+    /// the spec tests the MAC source address of the delivering frame, which is
+    /// the parent for anything a child receives — not the originator of a
+    /// relayed ZDP request.
+    pub fn accepts_leave_request(&self, destination: ShortAddress, from_parent: bool) -> bool {
         // step 1: the coordinator never leaves, and a broadcast request is
         // dropped without further processing
         if *self.nib().network_address() == NWK_COORDINATOR_ADDRESS
@@ -677,13 +685,10 @@ where
         }
 
         // step 3: an end device is only removed by its parent
-        let is_from_parent = self
-            .parent_short_address()
-            .is_ok_and(|parent| parent == source);
-        if !is_from_parent {
-            log::trace!("[NWK] leave request refused (sender {source:?} is not our parent)");
+        if !from_parent {
+            log::trace!("[NWK] leave request refused (sender is not our parent)");
         }
-        is_from_parent
+        from_parent
     }
 
     /// 3.2.2.18
