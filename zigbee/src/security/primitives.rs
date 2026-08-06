@@ -15,11 +15,11 @@ use itertools::Itertools;
 
 use crate::security::SecurityError;
 
-/// AES-MMO (Matyas-Meyer-Oseas) hash function implementation
-/// Used for Zigbee key derivation as specified in section 4.5.3
-/// Simplified for 16-byte (128-bit) inputs only
+/// AES-MMO hash function used for Zigbee key derivation, section 4.5.3.
+///
+/// Simplified for 16-byte (128-bit) inputs only.
 pub struct Aes128Mmo {
-    state: [u8; Self::BLOCK_SIZE], // 128-bit hash state
+    state: [u8; Self::BLOCK_SIZE],
 }
 
 #[allow(
@@ -50,7 +50,6 @@ impl Aes128Mmo {
         self.update_impl(data.iter().copied())
     }
 
-    /// Update the hash with a single 128-bit block
     fn update_impl(&mut self, data: impl Iterator<Item = u8>) -> Result<(), SecurityError> {
         let data = data.into_iter();
         let (_, Some(length)) = data.size_hint() else {
@@ -127,17 +126,14 @@ impl Default for Aes128Mmo {
     }
 }
 
-/// HMAC implementation using AES-MMO hash function
-/// Follows RFC 2104 HMAC specification
+/// HMAC over the AES-MMO hash function, following RFC 2104.
 pub struct HmacAes128Mmo;
 
 impl HmacAes128Mmo {
-    const IPAD: u8 = 0x36; // Inner padding byte
-    const OPAD: u8 = 0x5c; // Outer padding byte
+    const IPAD: u8 = 0x36;
+    const OPAD: u8 = 0x5c;
 
-    /// Convenience method to compute HMAC in one step
-    /// $\text{HMAC}(K, M) = H((K \oplus \text{opad}) || H((K \oplus
-    /// \text{ipad}) || M))$
+    /// Computes HMAC(key, data) using AES-MMO as the underlying hash.
     pub fn hmac(key: &[u8], data: &[u8]) -> Result<[u8; Aes128Mmo::BLOCK_SIZE], SecurityError> {
         if key.len() == Aes128Mmo::BLOCK_SIZE {
             return Self::hmac_impl(key, data);

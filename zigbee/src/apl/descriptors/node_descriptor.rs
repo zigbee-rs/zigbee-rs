@@ -76,9 +76,7 @@ impl NodeDescriptor<'_> {
 
 impl_byte! {
     #[tag(u8)]
-    // 2.3.2.3.1 Logical Type Field
-    // The logical type field of the node descriptor is three bits in length and
-    // specifies the device type of the ZigBee node.
+    /// Logical type field (2.3.2.3.1): device type of the ZigBee node.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum LogicalType {
         Coordinator = 0b000,
@@ -86,7 +84,6 @@ impl_byte! {
         EndDevice = 0b010,
         #[fallback = true]
         Reserved(u8),
-        // 011 - 111 reserved
     }
 }
 
@@ -96,18 +93,10 @@ impl Default for LogicalType {
     }
 }
 
-// 2.3.2.3.4 APS Flags Field
-// The APS flags field of the node descriptor is three bits in length and
-// specifies the application support sub-layer capabilities of the node.
-// This field is currently not supported and shall be set to zero.
+// APS flags field (2.3.2.3.4): unsupported, always zero
 
-// 2.3.2.3.5 Frequency Band Field
-// The frequency band field of the node descriptor is five bits in length and
-// specifies the frequency bands that are supported by the underlying IEEE
-// 802.15.4 radio(s) utilized by the node. For each frequency band supported by
-// any  physically present underlying IEEE 802.15.4 radio, the corresponding bit
-// of the frequency band field, shall be set to 1. All other bits shall be set
-// to 0.
+/// Frequency band field (2.3.2.3.5): frequency bands supported by the
+/// underlying IEEE 802.15.4 radio(s).
 pub struct FrequencyBands(u8);
 
 #[repr(u8)]
@@ -129,40 +118,25 @@ impl FrequencyBands {
     }
 }
 
-// 2.3.2.3.6 MAC Capability Flags Field
-// The MAC capability flags field is eight bits in length and specifies the node
-// capabilities, as required by the IEEE  802.15.4-2015 MAC sub-layer [B1].
+/// MAC capability flags field (2.3.2.3.6), as required by the IEEE
+/// 802.15.4-2015 MAC sub-layer.
 pub struct MacCapabilities(u8);
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub enum MacCapabilityFlag {
-    /// The alternate PAN coordinator sub-field is one bit in length and shall
-    /// be set to 1 if this node is capable of becoming a PAN coordinator.
-    /// Otherwise, the alternative PAN coordinator sub-field shall be set to 0.
+    /// Set if this node is capable of becoming a PAN coordinator.
     AlternatePanCoordinator = 0,
-    /// The device type sub-field is one bit in length and shall be set to 1 if
-    /// this node is a full function device (FFD). Otherwise, the device
-    /// type sub-field shall be set to 0, indicating a reduced function device
-    /// (RFD).
+    /// Set if this node is a full function device (FFD), unset for a reduced
+    /// function device (RFD).
     DeviceType = 1,
-    /// The power source sub-field is one bit in length and shall be set to 1 if
-    /// the current power source is mains power. Otherwise, the power source
-    /// sub-field shall be set to 0. This information is derived from the
-    /// node current power source field of the node power descriptor.
+    /// Set if the current power source is mains power.
     PowerSource = 2,
-    /// The receiver on when idle sub-field is one bit in length and shall be
-    /// set to 1 if the device does not disable its receiver to conserve power
-    /// during idle periods. Otherwise, the receiver on when idle sub-field
-    /// shall be set to 0.
+    /// Set if the device does not disable its receiver to conserve power
+    /// during idle periods.
     ReceiverOnWhenIdle = 3,
-    /// The security capability sub-field is one bit in length and shall be set
-    /// to 1 if the device is capable of sending and receiving frames
-    /// secured using the security suite specified in [B1]. Otherwise, the
-    /// security capability sub-field shall be set to 0.
+    /// Set if the device supports the ZigBee security suite.
     SecurityCapability = 6,
-    /// The allocate address sub-field is one bit in length and shall be set to
-    /// 0 or 1
     AllocateAddress = 7,
 }
 
@@ -218,45 +192,12 @@ mod tests {
 
     #[test]
     fn creating_node_descriptor_should_succeed() {
-        // given
-        // logical_type = LogicalType::Router
-        // complex_descriptor_available = true
-        // user_descriptor_available = true
-        // 00011001 = 0x19
-
-        // APS flags unsupported and set to 0
-        // frequency_bands = { High }
-        // 01000000 = 0x40
-
-        // mac_capabilities = { AllocateAddress, SecurityCapability }
-        // 11000000 = 0xC0
-
-        // manufacturer_code = 42
-        // 00000000 00101010 = 0x002A
-
-        // maximum_buffer_size = 8
-        // 00001000 = 0x08
-
-        // maximum_incoming_transfer_size = 500
-        // 00000001 11110100 = 0x01F4
-
-        // server_mask = { PrimaryTrustCenter, BackupBindingTableCache }
-        // stack_compliance_revision = 22
-        // 00101100 00001001 = 0x2C09
-
-        // maximum_outgoing_transfer_size = 1000
-        // 00000011 11101000 = 0x03E8
-
-        // descriptor_capabilities = { ExtendedActiveEndpontListAvailable }
-        // 00000001 = 0x01
         let bytes = [
             0x19, 0x40, 0xC0, 0x2A, 0x00, 0x08, 0xF4, 0x01, 0x09, 0x2C, 0xE8, 0x03, 0x01,
         ];
 
-        // when
         let node_descriptor = NodeDescriptor::try_read(&bytes, ()).unwrap().0;
 
-        // then
         assert_eq!(node_descriptor.logical_type(), LogicalType::Router);
         assert!(node_descriptor.complex_descriptor_available());
         assert!(node_descriptor.user_descriptor_available());

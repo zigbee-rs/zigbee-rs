@@ -12,7 +12,7 @@ impl_byte! {
         /// Requested timeout enumeration (0–14, Table 3.52).
         pub requested_timeout: u8,
         /// Requested configuration bitmask; all bits reserved, must be 0
-        /// (§3.4.11.3.2).
+        /// (3.4.11.3.2).
         pub end_device_configuration: u8,
     }
 }

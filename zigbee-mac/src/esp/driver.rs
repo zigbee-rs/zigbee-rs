@@ -11,9 +11,9 @@ use esp_radio::ieee802154::ReceivedFrame;
 
 use crate::mlme::MacError;
 
-/// Outcome of a transmission, reported by the radio's tx-done / tx-failed
-/// interrupts. `Failed` covers no-ACK (after the hardware's 200 ms ACK wait),
-/// CCA-busy and coex aborts.
+// Outcome of a transmission, reported by the radio's tx-done / tx-failed
+// interrupts. Failed covers no-ack (after the hardware's 200ms ack wait),
+// cca-busy and coex aborts
 #[derive(Clone, Copy)]
 enum TxEvent {
     Done,
@@ -23,25 +23,20 @@ enum TxEvent {
 static TX_SIGNAL: Signal<CriticalSectionRawMutex, TxEvent> = Signal::new();
 static RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Safety net above the hardware's 200 ms ACK wait; with both tx-done and
-/// tx-failed wired, exceeding this means a genuinely lost interrupt.
+// safety net above the hardware's 200ms ack wait; exceeding this with both
+// tx-done and tx-failed wired means a genuinely lost interrupt
 const TX_DONE_TIMEOUT_MS: u64 = 250;
 
-/// Derive an EUI-64 extended address from a 6-byte EUI-48 MAC.
-///
-/// Inserts `0xFF, 0xFE` after the OUI (first 3 bytes) per the
-/// IEEE EUI-64 conversion convention:
-///   `AA:BB:CC:DD:EE:FF` → `AA:BB:CC:FF:FE:DD:EE:FF`
+// inserts 0xFF, 0xFE after the OUI per the IEEE EUI-64 conversion convention:
+// AA:BB:CC:DD:EE:FF -> AA:BB:CC:FF:FE:DD:EE:FF
 fn eui48_to_eui64(mac: [u8; 6]) -> u64 {
     u64::from_be_bytes([mac[0], mac[1], mac[2], 0xFF, 0xFE, mac[3], mac[4], mac[5]])
 }
 
-/// Await the next RX-available signal.
-///
-/// Operates only on the module-global signal, so it can be awaited **without
-/// holding the driver lock** — letting a receive loop idle-wait while a
-/// concurrent transmit still acquires the lock. Does not reset beforehand, so a
-/// signal raised between a queue drain and this call is not lost.
+// awaits only the module-global signal (not the driver lock), so a receive
+// loop can idle-wait while a concurrent transmit still acquires the lock.
+// does not reset beforehand, so a signal raised between a queue drain and
+// this call is not lost
 pub(crate) async fn wait_rx_signal() {
     RX_SIGNAL.wait().await;
 }
@@ -138,7 +133,7 @@ impl<'a> Ieee802154Driver<'a> {
 
     /// The frame-pending bit of the acknowledgment to the most recent
     /// transmission, if one was received. `Some(true)` means the recipient has
-    /// data buffered for this device (IEEE 802.15.4 §7.2.1.1.3).
+    /// data buffered for this device (IEEE 802.15.4 7.2.1.1.3).
     pub fn last_ack_frame_pending(&self) -> Option<bool> {
         // data[0] is the PHR length; data[1] is the low byte of the MAC frame
         // control field, whose bit 4 is the frame-pending flag

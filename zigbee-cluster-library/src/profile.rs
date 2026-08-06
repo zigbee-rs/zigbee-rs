@@ -5,7 +5,7 @@
 //! allocated by the Zigbee Alliance; the set below covers the public
 //! profiles in current use and is not exhaustive.
 //!
-//! See Zigbee R22 §2.3.2 (PDU Format) and the public Zigbee profile ID
+//! See Zigbee R22 2.3.2 (PDU Format) and the public Zigbee profile ID
 //! registry.
 
 /// Zigbee Device Profile (ZDP) — used by the ZDO on endpoint 0.

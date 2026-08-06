@@ -11,11 +11,8 @@ pub mod header;
 /// APS Frame
 #[derive(Debug)]
 pub enum Frame<'a> {
-    /// Data Frame
     Data(DataFrame<'a>),
-    /// Command Frame
     ApsCommand(CommandFrame),
-    /// Ack
     Acknowledgement(Header),
 }
 

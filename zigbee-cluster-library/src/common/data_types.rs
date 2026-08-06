@@ -137,12 +137,7 @@ impl<'a> TryRead<'a, u8> for ZclDataType<'a> {
             0x30 | 0x31 => Self::Enum(bytes.read_with(offset, identifier)?),
             0x38..=0x3A => Self::Float(bytes.read_with(offset, identifier)?),
             0x41..=0x44 => Self::String(bytes.read_with(offset, identifier)?),
-            // still need to handle these variants
-            // could use an iterator/lazy parser or over-engineer a visitor pattern maybe?
-            //0x48 => Self::Array(bytes.read_with(offset, identifier)?),
-            //0x4C => Self::Structure(bytes.read_with(offset, identifier)?),
-            //0x50 => Self::Set(bytes.read_with(offset, identifier)?),
-            //0x51 => Self::Bag(bytes.read_with(offset, identifier)?),
+            // TODO: Array, Structure, Set, Bag (0x48, 0x4C, 0x50, 0x51)
             0xE0..=0xE2 => Self::Time(bytes.read_with(offset, identifier)?),
             0xE8..=0xEA => Self::Identifier(bytes.read_with(offset, identifier)?),
             0xF0 | 0xF1 => Self::Misc(bytes.read_with(offset, identifier)?),
@@ -900,26 +895,20 @@ mod tests {
 
     #[test]
     fn parse_nodata() {
-        // given
         let input: &[u8] = &[0x00];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x00).unwrap();
 
-        // then
         assert_eq!(len, 0);
         assert!(matches!(data, ZclDataType::NoData));
     }
 
     #[test]
     fn parse_data() {
-        // given
         let input: &[u8] = &[0x01];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x08).unwrap();
 
-        // then
         assert_eq!(len, 1);
         assert!(matches!(data, ZclDataType::Data(_)));
         if let ZclDataType::Data(value) = data {
@@ -931,13 +920,10 @@ mod tests {
 
     #[test]
     fn parse_bool() {
-        // given
         let input: &[u8] = &[0x01];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x10).unwrap();
 
-        // then
         assert_eq!(len, 1);
         assert!(matches!(data, ZclDataType::Bool(_)));
         if let ZclDataType::Bool(value) = data {
@@ -949,13 +935,10 @@ mod tests {
 
     #[test]
     fn parse_enum() {
-        // given
         let input: &[u8] = &[0x1d, 0x10];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x31).unwrap();
 
-        // then
         assert_eq!(len, 2);
         assert!(matches!(data, ZclDataType::Enum(_)));
         if let ZclDataType::Enum(value) = data {
@@ -967,13 +950,10 @@ mod tests {
 
     #[test]
     fn parse_float() {
-        // given
         let input: &[u8] = &[0x1d, 0x10];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x38).unwrap();
 
-        // then
         assert_eq!(len, 2);
         assert!(matches!(data, ZclDataType::Float(_)));
         if let ZclDataType::Float(value) = data {
@@ -985,13 +965,10 @@ mod tests {
 
     #[test]
     fn parse_string() {
-        // given
         let input: &[u8] = &[0x05, b'H', b'e', b'l', b'l', b'o'];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0x42).unwrap();
 
-        // then
         assert_eq!(len, input.len());
         assert!(matches!(data, ZclDataType::String(_)));
         if let ZclDataType::String(value) = data {
@@ -1003,14 +980,10 @@ mod tests {
 
     #[test]
     fn parse_time() {
-        // given
         let input: &[u8] = &[0x1d, 0x10, 0x4F, 0x46];
 
-        // when
         let (data, _) = ZclDataType::try_read(input, 0xE2).unwrap();
 
-        // then
-        // assert_eq!(len, 2);
         assert!(matches!(data, ZclDataType::Time(_)));
         if let ZclDataType::Time(value) = data {
             assert_eq!(value, TimeType::UTCTime(1_179_586_589));
@@ -1021,13 +994,10 @@ mod tests {
 
     #[test]
     fn parse_identifier() {
-        // given
         let input: &[u8] = &[0x1d, 0x11];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0xE8).unwrap();
 
-        // then
         assert_eq!(len, 2);
         assert!(matches!(data, ZclDataType::Identifier(_)));
         if let ZclDataType::Identifier(value) = data {
@@ -1039,15 +1009,12 @@ mod tests {
 
     #[test]
     fn parse_misc() {
-        // given
         let input: &[u8] = &[
             0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10, 0x1d, 0x10,
         ];
 
-        // when
         let (data, len) = ZclDataType::try_read(input, 0xF0).unwrap();
 
-        // then
         assert_eq!(len, 8);
         assert!(matches!(data, ZclDataType::Misc(_)));
         if let ZclDataType::Misc(value) = data {

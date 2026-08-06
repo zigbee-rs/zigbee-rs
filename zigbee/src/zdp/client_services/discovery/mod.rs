@@ -113,7 +113,7 @@ pub struct ParentAnnce {
     children: Vec<ChildInfo, { 255 * size_of::<ChildInfo>() }>,
 }
 
-// 2.4.3.1.13 User_Desc_set
+/// 2.4.3.1.13 User_Desc_set
 pub struct UserDescSet<'a> {
     /// NWK address for the request.
     nwk_addr_of_interest: ShortAddress,
@@ -159,6 +159,5 @@ pub struct NodeDescStoreReq {
     nwk_addr: ShortAddress,
     /// IEEE Address for the Local Device.
     ieee_addr: IeeeAddress,
-    // Node Descriptor
-    //node_descriptor: NodeDescriptor<'a>,
+    // TODO: node descriptor field
 }

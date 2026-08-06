@@ -37,14 +37,11 @@ mod tests {
 
     #[test]
     fn unpack_header_without_manufacturer_code() {
-        // given
         let input = [0x18, 0x01, 0x0a];
 
-        // when
         let (header, _) =
             ZclHeader::try_read(&input, ()).expect("Could not read ZclHeader in test");
 
-        // then
         assert_eq!(header.frame_control.frame_type(), FrameType::GlobalCommand);
         assert!(!header.frame_control.is_manufacturer_specific());
         assert_eq!(header.manufacturer_code, None);
@@ -57,14 +54,11 @@ mod tests {
 
     #[test]
     fn unpack_header_with_manufacturer_code() {
-        // given
         let input = [0x1c, 0x11, 0x12, 0x02, 0x0a];
 
-        // when
         let (header, _) =
             ZclHeader::try_read(&input, ()).expect("Could not read ZclHeader in test");
 
-        // then
         assert_eq!(header.frame_control.frame_type(), FrameType::GlobalCommand);
         assert!(header.frame_control.is_manufacturer_specific());
         assert_eq!(header.manufacturer_code, Some(ManufacturerCode(4625)));

@@ -114,11 +114,9 @@ macro_rules! test_branches_command_identifier {
         $(
             #[test]
             fn $name() {
-                // when
                 let (command_identifier, _) = CommandIdentifier::try_read($input, byte::LE)
                     .expect("Could not read CommandIdentifier in test");
 
-                // then
                 assert_eq!(command_identifier, $want);
             }
         )+

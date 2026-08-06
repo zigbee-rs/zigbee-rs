@@ -6,10 +6,10 @@
 //! including configuration and provision of notifications of relative humidity
 //! measurements.
 
-/// Cluster identifier (ZCL §4.7).
+/// Cluster identifier (ZCL 4.7).
 pub const CLUSTER_ID: u16 = 0x0405;
 
-/// Attribute identifiers (ZCL §4.7.2.2.1).
+/// Attribute identifiers (ZCL 4.7.2.2.1).
 pub mod attribute {
     /// `MeasuredValue` (`Uint16`, hundredths of a percent).
     pub const MEASURED_VALUE: u16 = 0x0000;

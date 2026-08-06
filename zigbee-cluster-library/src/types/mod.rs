@@ -52,7 +52,6 @@ pub use descriptors::AccessFlags;
 pub use descriptors::AccessTypestate;
 pub use descriptors::AttrInfo;
 pub use descriptors::Attribute;
-// pub use descriptors::AttributeDescriptor;
 pub use descriptors::ClientToServer;
 pub use descriptors::Cluster;
 pub use descriptors::ClusterKey;

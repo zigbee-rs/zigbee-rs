@@ -268,8 +268,8 @@ impl ClusterKey {
     }
 }
 
-/// Attribute descriptor for gateways, bridges, and logging tools that process
-/// attributes without compile-time schema knowledge.
+// attribute descriptor for gateways, bridges, and logging tools that process
+// attributes without compile-time schema knowledge
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AttributeDescriptor {

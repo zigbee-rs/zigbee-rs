@@ -87,7 +87,7 @@ pub mod management;
 const NO_PENDING_TIMEOUT: u8 = 0xff;
 
 // poll attempts while waiting for the parent to deliver a buffered Rejoin
-// Response (§3.4.7.1: indirect transmission for a sleepy child)
+// Response (3.4.7.1: indirect transmission for a sleepy child)
 const REJOIN_RESPONSE_POLL_RETRIES: u8 = 20;
 
 #[derive(Debug, Error)]
@@ -112,7 +112,7 @@ impl From<byte::Error> for NetworkError {
     }
 }
 
-/// Network Layer Management Entity (§3.2.2).
+/// Network Layer Management Entity (3.2.2).
 ///
 /// Provides the management service access point (NLME-SAP) that allows
 /// the next higher layer to interact with the NWK layer: network
@@ -120,12 +120,12 @@ impl From<byte::Error> for NetworkError {
 pub struct Nlme<M> {
     mac: M,
     nwk_seq: AtomicU8,
-    // requested timeout enum awaiting a response (§3.6.10.2); 0xff = none
+    // requested timeout enum awaiting a response (3.6.10.2); 0xff = none
     pending_timeout_request: AtomicU8,
-    // Rejoin Response (§3.4.7) handed from the receive path to the rejoin
+    // Rejoin Response (3.4.7) handed from the receive path to the rejoin
     // procedure waiting for it
     rejoin_response: Signal<RejoinResponse>,
-    // NLME-LEAVE.indication (§3.2.2.19) raised by the receive path for the
+    // NLME-LEAVE.indication (3.2.2.19) raised by the receive path for the
     // higher layer, which decides whether to re-commission or rejoin
     leave_indication: Signal<NlmeLeaveIndication>,
 }
@@ -216,10 +216,10 @@ where
     }
 
     /// Build a NWK command frame into `buf`, returning the total frame length
-    /// (§3.3.2).
+    /// (3.3.2).
     ///
     /// When `secure` is false the frame is sent in the clear, as required for
-    /// a Trust Center rejoin (§4.6.3.3.2).
+    /// a Trust Center rejoin (4.6.3.3.2).
     fn build_nwk_command_frame(
         &self,
         destination: ShortAddress,
@@ -229,7 +229,7 @@ where
     ) -> Result<usize, NetworkError> {
         let nib = self.nib();
         // the destination IEEE address is carried whenever it is known
-        // (§3.4.6.2, §3.4.11.2)
+        // (3.4.6.2, 3.4.11.2)
         let destination_ieee = self.neighbor_ieee_address(destination);
         let frame_control = NwkFrameControl(0)
             .set_frame_type(NwkFrameType::NwkCommand)
@@ -264,7 +264,7 @@ where
         Ok(len)
     }
 
-    /// Build a failed NLME-JOIN.confirm (§3.2.2.13.3).
+    /// Build a failed NLME-JOIN.confirm (3.2.2.13.3).
     fn join_failure(status: NlmeJoinStatus) -> NlmeJoinConfirm {
         NlmeJoinConfirm {
             status,
@@ -276,7 +276,7 @@ where
         }
     }
 
-    /// Send an End Device Timeout Request to the parent (§3.6.10.2).
+    /// Send an End Device Timeout Request to the parent (3.6.10.2).
     ///
     /// Requests the timeout enumeration from `nwkEndDeviceTimeoutDefault`.
     /// The parent's response is consumed by the receive path and updates
@@ -286,7 +286,7 @@ where
         let requested_timeout = *self.nib().end_device_timeout_default();
         let command = Command::EndDeviceTimeoutRequest(EndDeviceTimeoutRequest {
             requested_timeout,
-            // all bits reserved, must be 0 (§3.4.11.3.2)
+            // all bits reserved, must be 0 (3.4.11.3.2)
             end_device_configuration: 0x00,
         });
 
@@ -302,7 +302,7 @@ where
     }
 
     /// Recommended maximum poll interval in milliseconds, allowing three
-    /// keepalives per negotiated timeout period (§3.6.10.3).
+    /// keepalives per negotiated timeout period (3.6.10.3).
     ///
     /// Returns `None` when no timeout was negotiated or the parent does not
     /// support the MAC data poll keepalive method.
@@ -321,7 +321,7 @@ where
         nib::get_ref()
     }
 
-    /// Select parent candidates from the neighbor table (§3.6.1.4.1.1).
+    /// Select parent candidates from the neighbor table (3.6.1.4.1.1).
     fn select_parent_candidates(
         &self,
         extended_pan_id: IeeeAddress,
@@ -331,12 +331,9 @@ where
         log::debug!("[NWK-JOIN] neighbor table: {table:#?}");
         let stack_profile = self.nib().stack_profile();
 
-        // Determine the most recent update_id among all matching neighbors.
-        //
-        // §3.6.1.4.1.1: "the determination of most recent needs to take into
-        // account that the update id will wrap back to zero."  We treat the
-        // update_id as a modular counter: an id `b` is considered newer than
-        // `a` when the signed difference `(b - a) as i8` is positive.
+        // 3.6.1.4.1.1: the update id wraps back to zero, so it is treated as
+        // a modular counter - an id `b` is newer than `a` when the signed
+        // difference `(b - a) as i8` is positive
         let mut matching = table.iter().filter(|n| {
             n.extended_pan_id == extended_pan_id && n.permit_joining && n.potential_parent == 1
         });
@@ -356,31 +353,28 @@ where
                 }
             });
 
-        // Collect indices of eligible parents.
         let mut candidates: heapless::Vec<usize, 16> = table
             .iter()
             .enumerate()
             .filter(|(_, n)| {
-                // (1) Correct network
+                // correct network, accepting joins of the right type, low
+                // enough link cost, a potential parent, and on the most
+                // recent update id
                 n.extended_pan_id == extended_pan_id
-                // (2) Accepting joins of correct type
                     && n.permit_joining
                     && if join_as_router {
                         n.router_capacity
                     } else {
                         n.end_device_capacity
                     }
-                // (3) Link cost ≤ 3
                     && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
-                // (4) Potential parent
                     && n.potential_parent == 1
-                // (5) Most recent update id
                     && n.update_id == best_update_id
             })
             .map(|(i, _)| i)
             .collect();
 
-        // When nwkStackProfile == 1 prefer minimum depth (§3.6.1.4.1.1).
+        // nwkStackProfile == 1 prefers minimum depth (3.6.1.4.1.1)
         if *stack_profile == 1 {
             candidates.sort_unstable_by_key(|&i| table[i].depth);
         }
@@ -406,7 +400,7 @@ where
     }
 
     /// Clear parent information and the negotiated end-device timeout; a
-    /// fresh join invalidates both (§3.6.1.4.1.1, §3.6.10.2).
+    /// fresh join invalidates both (3.6.1.4.1.1, 3.6.10.2).
     fn reset_parent_negotiation(&self) {
         let nib = self.nib();
         nib.update_parent_information(|value| *value = 0);
@@ -434,7 +428,7 @@ where
     }
 
     /// Record the IEEE address a received frame reported for its source
-    /// (§3.4.6.2: it lets us address later commands by both addresses).
+    /// (3.4.6.2: it lets us address later commands by both addresses).
     fn learn_neighbor_ieee_address(&self, header: &NwkHeader<'_>) {
         let Some(source_ieee) = header.source_ieee else {
             return;
@@ -459,7 +453,7 @@ where
         Ok(parent.network_address)
     }
 
-    /// Issue one MLME-POLL to the parent (§3.6.6).
+    /// Issue one MLME-POLL to the parent (3.6.6).
     ///
     /// Returns the raw MAC payload length, or `None` when nothing was buffered.
     async fn poll_parent(&self, buf: &mut [u8]) -> Result<Option<usize>, NetworkError> {
@@ -471,7 +465,7 @@ where
         }
     }
 
-    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved NWK
+    /// Poll the parent once (MLME-POLL, 3.6.6) and process the retrieved NWK
     /// frame, if any.
     ///
     /// A sleepy end device only receives buffered unicasts by polling.
@@ -515,7 +509,7 @@ where
             }
             // NWK command frames (link status, route requests, rejoin, ...) ride
             // the same receive path; let the NWK layer process them, then report
-            // "no data" so the APS/ZDO caller skips this frame.
+            // "no data" so the APS/ZDO caller skips this frame
             NwkFrame::NwkCommand(command_frame) => {
                 self.learn_neighbor_ieee_address(&command_frame.header);
                 self.handle_nwk_command(&command_frame.header, command_frame.command)
@@ -526,7 +520,7 @@ where
         }
     }
 
-    /// Process an inbound NWK command frame (§3.4).
+    /// Process an inbound NWK command frame (3.4).
     ///
     /// Scaffolding extension point: every NWK command variant is matched so a
     /// handler can be filled in. Most are not yet acted upon — they are logged
@@ -534,17 +528,17 @@ where
     /// a result type here if a handler needs to surface failures.
     async fn handle_nwk_command(&self, header: &NwkHeader<'_>, command: Command<'_>) {
         match command {
-            // routing (§3.4.1–3.4.2): a sleepy end device routes via its parent,
-            // so route discovery is currently a no-op.
+            // routing (3.4.1-3.4.2): a sleepy end device routes via its parent,
+            // so route discovery is currently a no-op
             Command::RouteRequest(_) => log::trace!("[NWK] route request (ignored)"),
             Command::RouteReply(_) => log::trace!("[NWK] route reply (ignored)"),
             Command::RouteRecord(_) => log::trace!("[NWK] route record (ignored)"),
-            // network maintenance (§3.4.3, §3.4.9, §3.4.10).
+            // network maintenance (3.4.3, 3.4.9, 3.4.10)
             Command::NetworkStatus(_) => log::trace!("[NWK] network status (ignored)"),
             Command::NetworkReport(_) => log::trace!("[NWK] network report (ignored)"),
             Command::NetworkUpdate(_) => log::trace!("[NWK] network update (ignored)"),
             Command::Leave(leave) => self.handle_leave_command(header, &leave).await,
-            // rejoin (§3.4.6–3.4.7): a request is parent-side only; a response
+            // rejoin (3.4.6–3.4.7): a request is parent-side only; a response
             // is handed to the rejoin procedure waiting for it, which may be
             // driven by another task than this receive path
             Command::RejoinRequest(_) => log::trace!("[NWK] rejoin request (ignored)"),
@@ -555,24 +549,24 @@ where
                     response.status
                 );
                 if response.status == u8::from(AssociationStatus::Successful) {
-                    // §3.4.7.3.1: the parent may hand out a different address
+                    // 3.4.7.3.1: the parent may hand out a different address
                     // than the one the device rejoined with
                     self.nib()
                         .update_network_address(|value| *value = response.network_address.0);
                 }
                 self.rejoin_response.signal(response);
             }
-            // link management (§3.4.8, §3.4.13).
+            // link management (3.4.8, 3.4.13)
             Command::LinkStatus(_) => log::trace!("[NWK] link status (ignored)"),
             Command::LinkPowerDelta(_) => log::trace!("[NWK] link power delta (ignored)"),
-            // end-device timeout requests are parent-side only (§3.4.11)
+            // end-device timeout requests are parent-side only (3.4.11)
             Command::EndDeviceTimeoutRequest(_) => {
                 log::trace!("[NWK] end-device timeout request (ignored)");
             }
-            // §3.6.10.2: on SUCCESS store the Parent Information bitmask and
-            // the negotiated timeout; otherwise the parent keeps its default.
-            // TODO: timeout-request keepalive method (bit 1) and Parent Link
-            // Failure (NWK status 0x09) on keepalive failure
+            // 3.6.10.2: on success store the parent information bitmask and
+            // the negotiated timeout, otherwise the parent keeps its default
+            // TODO: timeout-request keepalive method (bit 1) and parent link
+            // failure (NWK status 0x09) on keepalive failure
             Command::EndDeviceTimeoutResponse(response) => {
                 let pending = self
                     .pending_timeout_request
@@ -598,7 +592,7 @@ where
         }
     }
 
-    /// Process an inbound Leave command frame (§3.6.1.10.3).
+    /// Process an inbound Leave command frame (3.6.1.10.3).
     ///
     /// TODO: a router receiving a notification from its parent with the remove
     /// children sub-field set must rebroadcast the leave to its own children.
@@ -610,14 +604,14 @@ where
 
         if !options.request() {
             // notification: the sender left the network on its own initiative —
-            // it is no longer a neighbor regardless of the rejoin flag.
+            // it is no longer a neighbor regardless of the rejoin flag
             self.nib().update_neighbor_table(|table| {
                 table.retain(|n| n.network_address != header.source);
             });
 
             if is_from_parent {
                 // our parent has dropped us: we are no longer on the network,
-                // and the indication carries a NULL device address (§3.6.1.10.3)
+                // and the indication carries a NULL device address (3.6.1.10.3)
                 self.nib().update_extended_panid(|value| *value = 0);
                 log::info!("[NWK] removed by parent (leave notification)");
                 self.leave_indication.signal(NlmeLeaveIndication {
@@ -638,9 +632,9 @@ where
             return;
         }
 
-        // request == 1: someone is asking us to leave (§3.6.1.10.3.1). A leave
+        // request == 1: someone is asking us to leave (3.6.1.10.3.1). A leave
         // request is sent by the parent itself, so its NWK source address is
-        // the sender the spec tests.
+        // the sender the spec tests
         let from_parent = self
             .parent_short_address()
             .is_ok_and(|parent| parent == header.source);
@@ -656,7 +650,7 @@ where
         }
     }
 
-    /// Validate a leave request against §3.6.1.10.3.1, which governs both the
+    /// Validate a leave request against 3.6.1.10.3.1, which governs both the
     /// NWK Leave (request) command and the ZDO Mgmt_Leave_req.
     ///
     /// `destination` is the address the request was addressed to.
@@ -727,7 +721,7 @@ where
         }
     }
 
-    /// §3.6.1.10.1 + §3.6.1.10.4: announce this device's own removal from the
+    /// 3.6.1.10.1 + 3.6.1.10.4: announce this device's own removal from the
     /// network, then apply the local leave procedure.
     ///
     /// The local leave runs whether or not the announcement made it onto the
@@ -738,7 +732,7 @@ where
         result
     }
 
-    /// §3.6.1.10.1: transmit this device's own leave command frame, with the
+    /// 3.6.1.10.1: transmit this device's own leave command frame, with the
     /// request sub-field set to 0 — a notification, never a request addressed
     /// to someone else.
     async fn announce_leave(
@@ -785,19 +779,19 @@ where
             .mac
             .transmit_data(self.parent_address()?, &buf[..len])
             .await;
-        // §3.6.1.10.1: an end device clears the extended PAN id right after
-        // transmitting, ahead of the rest of the local leave process.
+        // 3.6.1.10.1: an end device clears the extended PAN id right after
+        // transmitting, ahead of the rest of the local leave process
         self.nib().update_extended_panid(|value| *value = 0);
         result.map_err(Into::into)
     }
 
-    /// §3.6.1.10.4: the local half of the leave procedure.
+    /// 3.6.1.10.4: the local half of the leave procedure.
     fn local_leave(&self, rejoin: bool) {
         if rejoin {
             // step 1: with Rejoin set the NIB is kept, so the remembered
             // network is still there for a later NLME-JOIN.request with
             // `RejoinNetwork::NwkRejoin`; driving that is the higher layer's
-            // call, which the NLME-LEAVE.indication/confirm hands it.
+            // call, which the NLME-LEAVE.indication/confirm hands it
             log::info!("[NWK] left the network, rejoin requested");
             return;
         }
@@ -805,7 +799,7 @@ where
         self.clear_nib_on_leave();
     }
 
-    /// §3.6.1.10.4 (Rejoin = FALSE): clear the NIB attributes describing
+    /// 3.6.1.10.4 (Rejoin = FALSE): clear the NIB attributes describing
     /// network membership, leaving the device unjoined.
     fn clear_nib_on_leave(&self) {
         let nib = self.nib();
@@ -838,8 +832,8 @@ where
             .scan_network(ScanType::Active, channels, duration)
             .await?;
 
-        // Populate the neighbor table with mandatory fields (Table 3-63)
-        // and optional discovery-time fields (Table 3-64).
+        // populate the neighbor table with mandatory fields (Table 3-63)
+        // and optional discovery-time fields (Table 3-64)
         let neighbor_table = scan_result
             .pan_descriptor
             .iter()
@@ -887,7 +881,7 @@ where
         self.nib()
             .update_neighbor_table(|value| *value = StorageVec(neighbor_table));
 
-        // Build network descriptors for the confirm primitive.
+        // build network descriptors for the confirm primitive
         let network_descriptors = scan_result
             .pan_descriptor
             .into_iter()
@@ -934,7 +928,7 @@ where
 
     /// 3.2.2.13
     // the association candidate loop is a single state machine; splitting it
-    // up would scatter the §3.6.1.4.1.1 bookkeeping across functions
+    // up would scatter the 3.6.1.4.1.1 bookkeeping across functions
     #[allow(clippy::too_many_lines)]
     pub async fn join(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
         if request.rejoin_network == RejoinNetwork::NwkRejoin {
@@ -942,23 +936,19 @@ where
         }
         let fail = Self::join_failure;
 
-        // --- Validate the request (§3.2.2.13.3) ---
-
-        // Only MAC association is handled here.
-        // Orphan (0x01) and channel change (0x03) are not yet implemented.
+        // validate the request (3.2.2.13.3); orphan (0x01) and channel
+        // change (0x03) are not yet implemented
         if request.rejoin_network != RejoinNetwork::Association {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
 
-        // A device already joined must not re-associate (§3.6.1.4.1.1).
+        // a device already joined must not re-associate (3.6.1.4.1.1)
         if *self.nib().network_address() != 0xffff {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
 
-        // --- Parent selection (§3.6.1.4.1.1) ---
-
-        // Whether joining as router or end device, set nwkParentInformation
-        // to 0 before searching (spec requirement).
+        // parent selection (3.6.1.4.1.1): reset nwkParentInformation before
+        // searching, per spec
         self.reset_parent_negotiation();
 
         let join_as_router = request.capability_information.device_type();
@@ -972,20 +962,19 @@ where
 
         log::debug!("[NWK-JOIN] neighbor candidates: {candidates:?}");
 
-        // Build MAC CapabilityInformation from NWK CapabilityInformation
-        // bitmap (Table 3-62).
+        // build MAC CapabilityInformation from NWK CapabilityInformation
+        // bitmap (Table 3-62)
         let mac_caps = Self::build_mac_capabilities(&request.capability_information);
 
-        // Store in NIB (§3.6.1.4.1.1: "the capability information shall be
-        // stored as the value of the nwkCapabilityInformation NIB attribute").
+        // 3.6.1.4.1.1: the capability information shall be stored as the
+        // value of the nwkCapabilityInformation NIB attribute
         self.nib()
             .update_capability_information(|value| *value = request.capability_information);
 
-        // --- Try each candidate in order (§3.6.1.4.1.1) ---
+        // try each candidate in order (3.6.1.4.1.1)
         let mut last_status = NlmeJoinStatus::NotPermitted;
 
         for &candidate_idx in &candidates {
-            // Read the neighbor info we need before the async call.
             let table = self.nib().neighbor_table();
             let neighbor = &table[candidate_idx];
             let channel = neighbor.logical_channel;
@@ -993,12 +982,10 @@ where
             let dest = Address::Short(pan_id, MacShortAddress(neighbor.network_address.0));
             drop(table);
 
-            // Issue MLME-ASSOCIATE.request to MAC sub-layer.
             match self.mac.associate(channel, dest, mac_caps).await {
                 Ok(response) => {
                     match response.status {
                         AssociationStatus::Successful => {
-                            // --- Success: update NIB (§3.6.1.4.1.1) ---
                             let assigned_addr = response.association_address;
                             self.nib()
                                 .update_network_address(|value| *value = assigned_addr.0);
@@ -1008,8 +995,8 @@ where
                                 .update_extended_panid(|value| *value = request.extended_pan_id.0);
                             self.nib().update_panid(|value| *value = pan_id.0);
 
-                            // Read parent fields before the clearing loop
-                            // zeroes them (§3.6.1.4.1.1).
+                            // read parent fields before the clearing loop
+                            // zeroes them (3.6.1.4.1.1)
                             let parent_update_id =
                                 self.nib().neighbor_table()[candidate_idx].update_id;
                             let parent_channel =
@@ -1017,12 +1004,10 @@ where
                             self.nib()
                                 .update_update_id(|value| *value = parent_update_id);
 
-                            // Update the neighbor table: set the relationship
-                            // field to 0x00 (parent) and clear optional
-                            // Table 3-64 fields on all entries (they should
-                            // not be retained after joining).
-                            // TODO: retain only entries belonging to the
-                            // joined network.
+                            // set the relationship field to parent and clear
+                            // optional Table 3-64 fields on all entries, which
+                            // should not be retained after joining
+                            // TODO: retain only entries belonging to the joined network
                             self.nib().update_neighbor_table(|table| {
                                 table[candidate_idx].relationship = relationship::PARENT;
                                 for neighbor in table.iter_mut() {
@@ -1048,8 +1033,8 @@ where
                             };
                         }
                         AssociationStatus::NetworkAtCapacity => {
-                            // Mark this neighbor as not a potential parent so
-                            // we don't retry (§3.6.1.4.1.1).
+                            // mark this neighbor as not a potential parent so
+                            // we don't retry (3.6.1.4.1.1)
                             self.nib().update_neighbor_table(|table| {
                                 table[candidate_idx].potential_parent = 0;
                             });
@@ -1061,44 +1046,41 @@ where
                             });
                             last_status = NlmeJoinStatus::PanAccessDenied;
                         }
+                        // other status codes are treated as a generic MAC-level failure
                         _ => {
-                            // Other status codes (FastAssociationSuccesful,
-                            // HoppingSequenceOffsetDuplication, etc.) are
-                            // treated as a generic MAC-level failure.
                             last_status = NlmeJoinStatus::MacError;
                         }
                     }
                 }
                 Err(_mac_err) => {
-                    // MAC-level failure (no ack, radio error, etc.)
                     last_status = NlmeJoinStatus::MacError;
                 }
             }
         }
 
-        // All candidates exhausted — return the last error status.
+        // all candidates exhausted
         fail(last_status)
     }
 
-    /// NLME-JOIN.request with `RejoinNetwork::NwkRejoin` (§3.2.2.13.3).
+    /// NLME-JOIN.request with `RejoinNetwork::NwkRejoin` (3.2.2.13.3).
     ///
     /// Reconnects to a network this device remembers — extended PAN id,
     /// parent, network key — without a fresh MLME-SCAN: it unicasts a Rejoin
-    /// Request (§3.4.6) to the previously known parent and waits for the
-    /// Rejoin Response (§3.4.7).
+    /// Request (3.4.6) to the previously known parent and waits for the
+    /// Rejoin Response (3.4.7).
     ///
     /// `request.security_enabled` selects the rejoin flavour: `true` secures
     /// the Rejoin Request with the active network key (Secure Rejoin,
-    /// §4.6.3.3.1), `false` sends it unsecured (Trust Center Rejoin,
-    /// §4.6.3.3.2) for a device that no longer holds the key — the caller is
+    /// 4.6.3.3.1), `false` sends it unsecured (Trust Center Rejoin,
+    /// 4.6.3.3.2) for a device that no longer holds the key — the caller is
     /// then responsible for obtaining the current network key from the Trust
     /// Center.
     async fn nwk_rejoin(&self, request: NlmeJoinRequest) -> NlmeJoinConfirm {
         let fail = Self::join_failure;
 
         // a rejoin only makes sense against a network this device already
-        // remembers (BDB §7.1 step 4 only reaches here when
-        // bdbNodeIsOnANetwork is TRUE and the extended PAN id is known).
+        // remembers (BDB 7.1 step 4 only reaches here when
+        // bdbNodeIsOnANetwork is TRUE and the extended PAN id is known)
         if *self.nib().network_address() == 0xffff
             || *self.nib().extended_panid() != request.extended_pan_id.0
         {
@@ -1109,7 +1091,7 @@ where
         };
 
         // whether joining or rejoining, nwkParentInformation is reset
-        // (§3.2.2.13.3)
+        // (3.2.2.13.3)
         self.reset_parent_negotiation();
         self.nib()
             .update_capability_information(|value| *value = request.capability_information);
@@ -1171,14 +1153,14 @@ where
             extended_pan_id: request.extended_pan_id,
             // the operating channel isn't tracked in the NIB — the caller is
             // responsible for having the radio already tuned to it (BDB
-            // §7.1 step 4 passes ScanChannels=0: no scan is performed here).
+            // 7.1 step 4 passes ScanChannels=0: no scan is performed here)
             channel: 0,
             enhanced_beacon_type: false,
             mac_interface_index: 0u8,
         }
     }
 
-    /// Wait for the receive path to deliver the Rejoin Response (§3.4.7).
+    /// Wait for the receive path to deliver the Rejoin Response (3.4.7).
     ///
     /// A concurrently running receive loop may deliver it; otherwise the
     /// bounded polling below does.
@@ -1216,7 +1198,7 @@ where
     }
 
     /// Poll the coordinator for pending data, strip the NWK header, and
-    /// return the APS payload (§3.6.2).
+    /// return the APS payload (3.6.2).
     pub async fn poll_nwk_data<'a>(
         &self,
         buf: &'a mut [u8],
@@ -1232,8 +1214,8 @@ where
                     return Ok(data_frame);
                 }
                 // keep polling: nothing buffered, a NWK command frame, or ambient
-                // traffic the pre-key joiner cannot decode (SecurityError/ParseError).
-                // the NWK-unsecured transport-key (§4.6.3.7.2) stays buffered for a
+                // traffic the pre-key joiner cannot decode (SecurityError/ParseError)
+                // the NWK-unsecured transport-key (4.6.3.7.2) stays buffered for a
                 // later poll
                 Ok(None) | Err(NetworkError::SecurityError(_) | NetworkError::ParseError) => (),
                 Err(e) => return Err(e),
@@ -1243,7 +1225,7 @@ where
         Err(NetworkError::MacError(MacError::NoData))
     }
 
-    /// Broadcast an NWK data frame (§3.6.5).
+    /// Broadcast an NWK data frame (3.6.5).
     ///
     /// Wraps `payload` in a NWK header addressed to `destination` and
     /// transmits it as a MAC broadcast.
@@ -1258,14 +1240,14 @@ where
     ) -> Result<(), NetworkError> {
         let mut buf = [0u8; 256];
         let total_len = self.build_nwk_data_frame(destination, secure, payload, &mut buf)?;
-        // §3.6.5: a sleepy end device unicasts broadcasts to its parent,
+        // 3.6.5: a sleepy end device unicasts broadcasts to its parent,
         // which relays them into the network on its behalf
         let mac_dest = self.parent_address()?;
         self.mac.transmit_data(mac_dest, &buf[..total_len]).await?;
         Ok(())
     }
 
-    /// Send an NWK data frame to a specific destination (§3.6.3).
+    /// Send an NWK data frame to a specific destination (3.6.3).
     ///
     /// Wraps `payload` in a NWK header addressed to `destination` and
     /// transmits it via the parent (for end devices) or directly.
@@ -1302,11 +1284,8 @@ mod tests {
     // tests share a global NIB singleton — serialize access
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    // -------------------------------------------------------------------
-    // Minimal async block_on — the mock futures resolve immediately so a
-    // single poll is sufficient.
-    // -------------------------------------------------------------------
-
+    // minimal async block_on — the mock futures resolve immediately so a
+    // single poll is sufficient
     #[allow(clippy::panic)]
     fn block_on<F: Future>(f: F) -> F::Output {
         use core::pin::pin;
@@ -1366,11 +1345,7 @@ mod tests {
         }
     }
 
-    // -------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------
-
-    /// Create a default `NwkNeighbor` pre-filled for parent selection.
+    // creates a default `NwkNeighbor` pre-filled for parent selection
     fn make_neighbor(pan_id: u16, short_addr: u16, epid: u64, lqi: u8, depth: u8) -> NwkNeighbor {
         NwkNeighbor {
             extended_address: IeeeAddress(0),
@@ -1423,10 +1398,6 @@ mod tests {
             security_enabled: false,
         }
     }
-
-    // -------------------------------------------------------------------
-    // select_parent_candidates tests
-    // -------------------------------------------------------------------
 
     #[test]
     fn select_parent_no_neighbors() {
@@ -1591,10 +1562,6 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0], 0);
     }
-
-    // -------------------------------------------------------------------
-    // join() integration tests (using MockMlme)
-    // -------------------------------------------------------------------
 
     #[test]
     fn join_successful_association() {
@@ -1774,10 +1741,6 @@ mod tests {
         assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
     }
 
-    // -------------------------------------------------------------------
-    // NWK rejoin tests (§3.2.2.13.3, §3.4.6/.7)
-    // -------------------------------------------------------------------
-
     fn rejoin_request(epid: u64) -> NlmeJoinRequest {
         NlmeJoinRequest {
             extended_pan_id: IeeeAddress(epid),
@@ -1831,7 +1794,7 @@ mod tests {
 
     #[test]
     fn nwk_rejoin_without_security_is_sent_unsecured() {
-        // §4.6.3.3.2: a Trust Center rejoin carries no NWK security
+        // 4.6.3.3.2: a Trust Center rejoin carries no NWK security
         let mut mac = MockMlme::new();
         mac.expect_transmit_data()
             .times(1)
@@ -1968,10 +1931,6 @@ mod tests {
         let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::MacError);
     }
-
-    // -------------------------------------------------------------------
-    // end device timeout tests (§3.6.10)
-    // -------------------------------------------------------------------
 
     /// A minimal NWK header for feeding `handle_nwk_command` in tests; the
     /// source address is the only field most handlers inspect.
@@ -2131,10 +2090,6 @@ mod tests {
         assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
     }
 
-    // -------------------------------------------------------------------
-    // leave tests (§3.2.2.18, §3.6.1.10)
-    // -------------------------------------------------------------------
-
     #[test]
     fn leave_not_joined_is_invalid() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
@@ -2191,7 +2146,7 @@ mod tests {
         let (_guard, nlme) = make_nlme(mac);
         seed_joined_nib(&nlme);
 
-        // §3.6.1.10.1: an end device sends the remove children sub-field as 0
+        // 3.6.1.10.1: an end device sends the remove children sub-field as 0
         // even when the request asked for it
         let confirm = block_on(nlme.leave(NlmeLeaveRequest {
             device_address: None,
@@ -2223,7 +2178,7 @@ mod tests {
             remove_children: false,
             rejoin: false,
         }));
-        // §3.6.1.10.1: the local leave runs regardless of the confirm status
+        // 3.6.1.10.1: the local leave runs regardless of the confirm status
         assert_eq!(confirm.status, NlmeLeaveStatus::MacError);
         assert_eq!(*nlme.nib().network_address(), NWK_UNASSIGNED_ADDRESS);
         assert!(nlme.nib().security_material_set().is_empty());
@@ -2257,7 +2212,7 @@ mod tests {
         };
         block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
 
-        // §3.6.1.10.3: removed by the parent -> NULL device address
+        // 3.6.1.10.3: removed by the parent -> NULL device address
         assert_eq!(
             nlme.take_leave_indication(),
             Some(NlmeLeaveIndication {
@@ -2285,7 +2240,7 @@ mod tests {
         let nib = nlme.nib();
         // rejoin requested: the NIB is left intact for the (not yet
         // implemented) rejoin procedure, aside from the extended PAN id
-        // which §3.6.1.10.1 clears unconditionally for an end device.
+        // which 3.6.1.10.1 clears unconditionally for an end device
         assert_eq!(*nib.network_address(), 0x1234);
         assert_eq!(*nib.extended_panid(), 0);
         assert!(!nib.neighbor_table().is_empty());

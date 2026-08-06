@@ -25,13 +25,13 @@ use thiserror::Error;
 
 pub mod types;
 
-// BDB 5.1 | Table 1
+// BDB 5.1, table 1
 const BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 10;
 const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
 const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
 const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
-/// bdbcTcLinkKeyExchangeTimeout in milliseconds
+// bdbcTcLinkKeyExchangeTimeout in milliseconds
 const TC_LINK_KEY_EXCHANGE_TIMEOUT_MS: u32 = BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT as u32 * 1_000;
 
 use types::BdbCommissioningStatus;
@@ -74,7 +74,7 @@ pub struct BaseDeviceBehavior {
     bdb_node_is_on_a_network: bool,
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
-    /// Whether network steering performs the TC link key exchange (BDB §8.2
+    /// Whether network steering performs the TC link key exchange (BDB 8.2
     /// step 12). Disable for trust centers that never answer REQUEST-KEY to
     /// keep the default global TC link key and skip the retry stalls.
     pub tc_link_key_exchange_enabled: bool,
@@ -96,7 +96,7 @@ impl BaseDeviceBehavior {
         nib::get_ref()
     }
 
-    /// Initialization procedure (BDB §7.1).
+    /// Initialization procedure (BDB 7.1).
     ///
     /// Persistent state (NIB/AIB) must already be restored by the caller
     /// before constructing the [`Nlme`]/[`ZigbeeDevice`] — that is step 1.
@@ -104,12 +104,9 @@ impl BaseDeviceBehavior {
     /// returns `Ok(None)` and the caller should invoke
     /// [`Self::network_steering`].
     ///
-    /// Otherwise it attempts an NWK rejoin (§3.2.2.13.3) against the
-    /// remembered network and, on success, renegotiates the end-device
-    /// timeout (§3.6.10.2) and broadcasts a Device_annce before returning the
-    /// confirm. A rejoin failure is not retried here — per §7.1 step 5 that is
-    /// the caller's responsibility (e.g. falling back to
-    /// [`Self::network_steering`] after [`ZigbeeDevice::forget_network`]).
+    /// A rejoin failure is not retried here — the caller is responsible for
+    /// falling back to [`Self::network_steering`] after
+    /// [`ZigbeeDevice::forget_network`].
     pub async fn start_initialization_procedure<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
@@ -117,20 +114,20 @@ impl BaseDeviceBehavior {
     ) -> Result<Option<NlmeJoinConfirm>, NetworkError> {
         let nib = self.nib();
 
-        // §7.1 step 2
+        // BDB 7.1 step 2
         self.bdb_node_is_on_a_network = *nib.network_address() != 0xffff;
         if !self.bdb_node_is_on_a_network {
             return Ok(None);
         }
 
-        // §7.1 step 3: only an end device attempts an automatic rejoin here;
-        // a router's channel-verification step (§7.1 steps 6-7) is not yet
-        // implemented.
+        // BDB 7.1 step 3: only an end device attempts an automatic rejoin
+        // here; a router's channel-verification step (7.1 steps 6-7) is not
+        // yet implemented
         if !self.is_end_device() {
             return Ok(None);
         }
 
-        // §7.1 step 4
+        // BDB 7.1 step 4
         log::debug!("[BDB] step 4: attempt NWK rejoin");
         let capability_information = *nib.capability_information();
         let request = NlmeJoinRequest {
@@ -141,9 +138,9 @@ impl BaseDeviceBehavior {
         };
         let confirm = device.nlme().join(request).await;
 
-        // §7.1 step 5
+        // BDB 7.1 step 5
         if confirm.status == NlmeJoinStatus::Success {
-            // §3.6.10.2: the timeout is renegotiated after every rejoin, even
+            // 3.6.10.2: the timeout is renegotiated after every rejoin, even
             // with the same parent
             Self::negotiate_end_device_timeout(device, delay).await;
 
@@ -158,13 +155,10 @@ impl BaseDeviceBehavior {
         Ok(Some(confirm))
     }
 
-    /// Network steering procedure for a node NOT on a network
-    /// (BDB §8.2).
+    /// Network steering procedure for a node not on a network (BDB 8.2).
     ///
-    /// Performs NLME-NETWORK-DISCOVERY on the given channels, then
-    /// NLME-JOIN for the specified extended PAN ID, the APS transport key
-    /// exchange to obtain the network key from the Trust Center, and
-    /// finally the TC link key exchange.
+    /// Discovers and joins the network at `extended_pan_id`, then exchanges
+    /// keys with the Trust Center.
     ///
     /// The receive loop task must be spawned before calling this: it idles
     /// until the join completes (`ZigbeeDevice::rx_loop`), then delivers the
@@ -185,16 +179,16 @@ impl BaseDeviceBehavior {
 
         // a node steering onto a network holds no valid link keys for it: any
         // left over from an earlier network would reject the Trust Center's
-        // Transport-Key (§4.4.10)
+        // Transport-Key (4.4.10)
         device.reset_trust_center_link_keys();
 
-        // §8.2 step 1
+        // BDB 8.2 step 1
         device
             .nlme()
             .network_discovery(channels, scan_duration)
             .await?;
 
-        // §8.2 step 5
+        // BDB 8.2 step 5
         let request = NlmeJoinRequest {
             extended_pan_id,
             rejoin_network: RejoinNetwork::Association,
@@ -207,19 +201,19 @@ impl BaseDeviceBehavior {
             return Ok(confirm);
         }
 
-        // §8.2 step 9
+        // BDB 8.2 step 9
         log::debug!("[BDB] step 9: poll for network key (transport-key)");
         device.poll_transport_key().await?;
         log::debug!("[BDB] step 9: network key installed");
 
-        // §3.6.10.2: negotiate the end-device timeout with the parent
+        // 3.6.10.2: negotiate the end-device timeout with the parent
         Self::negotiate_end_device_timeout(device, delay).await;
 
-        // §8.2 step 11
+        // BDB 8.2 step 11
         log::debug!("[BDB] step 11: broadcast Device_annce");
         Self::device_annce(device, capability_information).await?;
 
-        // §8.2 step 12, §10.2.5
+        // BDB 8.2 step 12, BDB 10.2.5
         if self.tc_link_key_exchange_enabled {
             log::debug!("[BDB] step 12: TC link key exchange");
             // non-fatal: a TC allowing legacy devices may never answer the
@@ -239,7 +233,7 @@ impl BaseDeviceBehavior {
         Ok(confirm)
     }
 
-    /// Broadcast a ZDO Device_annce (§2.4.3.1.11, BDB §8.2 step 11).
+    // broadcast a ZDO Device_annce (2.4.3.1.11, BDB 8.2 step 11)
     async fn device_annce<M: Mlme>(
         device: &ZigbeeDevice<M>,
         capability_information: CapabilityInformation,
@@ -253,11 +247,8 @@ impl BaseDeviceBehavior {
         device.device_annce(annce).await
     }
 
-    /// Negotiate the end-device timeout with the parent (§3.6.10.2).
-    ///
-    /// Sends an End Device Timeout Request; the concurrently running receive
-    /// loop consumes the parent's response and updates the NIB. Non-fatal: a
-    /// legacy parent never answers and keeps its default timeout.
+    // negotiate the end-device timeout with the parent (3.6.10.2); non-fatal
+    // if a legacy parent never answers, it keeps its default timeout
     async fn negotiate_end_device_timeout<M: Mlme>(
         device: &ZigbeeDevice<M>,
         delay: &mut impl DelayNs,
@@ -281,16 +272,9 @@ impl BaseDeviceBehavior {
         log::warn!("[BDB] no end-device timeout response, assuming legacy parent");
     }
 
-    /// Trust Center link key exchange procedure (BDB §10.2.5).
-    ///
-    /// Replaces the default TC link key (key A) with a unique key (key B)
-    /// through a three-phase exchange: REQUEST-KEY → TRANSPORT-KEY →
-    /// VERIFY-KEY → CONFIRM-KEY.
-    ///
-    /// The receive loop consumes the Trust Center's replies and updates the
-    /// AIB; this procedure only drives the timing: it sends the requests and
-    /// awaits the stack's progress events for `bdbcTcLinkKeyExchangeTimeout`
-    /// each.
+    // TC link key exchange procedure (BDB 10.2.5): REQUEST-KEY ->
+    // TRANSPORT-KEY -> VERIFY-KEY -> CONFIRM-KEY; the receive loop consumes
+    // the Trust Center's replies, this only drives the timing
     async fn tc_link_key_exchange<M: Mlme>(
         &mut self,
         device: &ZigbeeDevice<M>,
@@ -315,8 +299,8 @@ impl BaseDeviceBehavior {
 
         log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
 
-        // §10.2.5 steps 6-9: the receive loop installs the transported key as
-        // unverified and signals reception
+        // BDB 10.2.5 steps 6-9: the receive loop installs the transported
+        // key as unverified and signals reception
         let mut attempts = 0u8;
         loop {
             device
@@ -348,7 +332,7 @@ impl BaseDeviceBehavior {
             }
         }
 
-        // §10.2.5 step 9: the unverified key is now in the AIB
+        // BDB 10.2.5 step 9: the unverified key is now in the AIB
         let new_key = aib
             .device_key_pair_set()
             .iter()
@@ -356,12 +340,11 @@ impl BaseDeviceBehavior {
             .map(|k| k.link_key)
             .ok_or(NetworkError::NoTransportKey)?;
 
-        // §10.2.5 steps 10-13
-        // §4.4.10.7.4
+        // BDB 10.2.5 steps 10-13, 4.4.10.7.4
         let hash = HmacAes128Mmo::hmac(new_key.as_slice(), &[0x03]).map_err(|_| {
             NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
         })?;
-        // §4.4.10.7.3
+        // 4.4.10.7.3
         let device_addr = *nib::get_ref().ieee_address();
 
         let mut attempts = 0u8;
@@ -414,7 +397,6 @@ impl BaseDeviceBehavior {
     }
 }
 
-/// resolve `fut`, or `None` if `timeout` fires first
 #[derive(Debug, Error)]
 pub enum BdbError {
     #[error("network error")]
@@ -496,7 +478,7 @@ mod tests {
         }
     }
 
-    /// Delay that returns immediately, so `block_on` never sees `Pending`.
+    // returns immediately, so block_on never sees Pending
     struct NoopDelay;
 
     impl DelayNs for NoopDelay {
@@ -524,7 +506,6 @@ mod tests {
         nib::init();
         zigbee::aps::aib::init();
 
-        // §7.1 step 2: not on a network (fresh NIB, network_address=0xffff)
         let device = make_device(LogicalType::EndDevice);
         let mut bdb = BaseDeviceBehavior::new(Config {
             device_type: LogicalType::EndDevice,
@@ -534,8 +515,6 @@ mod tests {
         assert!(matches!(result, Ok(None)));
         assert!(!bdb.bdb_node_is_on_a_network);
 
-        // §7.1 step 3: on a network, but not an end device — no mac calls
-        // are expected here since the router-side MockMlme has none set up
         nib::get_ref().update_network_address(|value| *value = 0x1234);
         let router_device = make_device(LogicalType::Router);
         let mut router_bdb = BaseDeviceBehavior::new(Config {

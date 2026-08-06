@@ -1,4 +1,4 @@
-//! NLME service primitives (§3.2.2)
+//! NLME service primitives (3.2.2)
 //!
 //! Request, confirm, and indication types for all NLME-SAP primitives.
 #[cfg(feature = "alloc")]
@@ -202,7 +202,7 @@ pub enum NlmeLeaveStatus {
     UnknownDevice,
     /// The MAC sub-layer failed to transmit the leave command frame.
     MacError,
-    /// The requester is not allowed to remove this device (§3.6.1.10.3.1).
+    /// The requester is not allowed to remove this device (3.6.1.10.3.1).
     NotAuthorized,
 }
 

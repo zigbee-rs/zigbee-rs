@@ -10,7 +10,6 @@
 #![deny(clippy::panic, unused_must_use)]
 #![warn(
     clippy::missing_safety_doc,
-    //missing_docs,
     clippy::pedantic,
     clippy::nursery,
     clippy::tests_outside_test_module,
@@ -70,7 +69,7 @@ pub mod aps;
 pub mod nwk;
 pub mod security;
 pub mod storage;
-/// ZigBee Device Profile (§2.4).
+/// ZigBee Device Profile (2.4).
 pub mod zdp;
 
 // ZDO is not directly called by the application — it is controlled by BDB or
@@ -78,7 +77,5 @@ pub mod zdp;
 #[doc(hidden)]
 pub mod zdo;
 
-// Logical type
 pub use apl::descriptors::node_descriptor::LogicalType;
-// Device object config
 pub use zdo::config::Config;

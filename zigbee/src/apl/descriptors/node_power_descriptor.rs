@@ -76,24 +76,23 @@ impl NodePowerDescriptor<'_> {
     }
 }
 
-// 2.3.2.4.1 Current Power Mode Field
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
+    /// Current power mode field (2.3.2.4.1).
     pub enum CurrentPowerMode {
-        // Receiver synchronized with the receiver on when  idle subfield of the node descriptor.
+        /// Synchronized with the receiver-on-when-idle subfield of the node descriptor.
         Synchronized = 0b0000,
-        // Receiver comes on periodically as defined by the  node power descriptor.
+        /// Comes on periodically as defined by the node power descriptor.
         Periodically = 0b0001,
-        // Receiver comes on when stimulated, for example,  by a user pressing a button.
+        /// Comes on when stimulated, e.g. by a user pressing a button.
         Stimulated = 0b0010,
-        // 0011 - 1111 reserved
         #[fallback = true]
         Reserved(u8),
     }
 }
 
-// 2.3.2.4.2 Available Power Sources Field
+/// Available power sources field (2.3.2.4.2).
 pub struct AvailablePowerSources(u8);
 
 #[repr(u8)]
@@ -110,10 +109,10 @@ impl AvailablePowerSources {
     }
 }
 
-// 2.3.2.4.3 Current Power Source Field
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
+    /// Current power source field (2.3.2.4.3).
     pub enum CurrentPowerSource {
         ConstantMainPower = 0b000,
         RechargeableBattery = 0b010,
@@ -123,10 +122,10 @@ impl_byte! {
     }
 }
 
-// 2.3.2.4.4 Current Power Source Level Field
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, PartialEq, Eq)]
+    /// Current power source level field (2.3.2.4.4).
     pub enum CurrentPowerSourceLevel {
         Critical = 0b0000,
         OneThird = 0b0100,
@@ -143,20 +142,10 @@ mod tests {
 
     #[test]
     fn creating_node_power_descriptor_should_succeed() {
-        // given
-        // current_power_mode = CurrentPowerMode::Synchronized
-        // available_power_sources = { ConstantMainPower, DisposableBattery }
-        // 01010000 = 0x50
-
-        // current_power_source = CurrentPowerSource::DisposableBattery
-        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
-        // 10000100 = 0x84
         let bytes: [u8; 2] = [0x50, 0x84];
 
-        // when
         let node_power_descriptor = NodePowerDescriptor::try_read(&bytes, byte::LE);
 
-        // then
         assert!(node_power_descriptor.is_ok());
         let node_power_descriptor = node_power_descriptor.unwrap().0;
         assert_eq!(
@@ -190,19 +179,9 @@ mod tests {
 
     #[test]
     fn creating_node_power_descriptor_should_fail() {
-        // given
-        // current_power_mode = CurrentPowerMode::Synchronized
-        // available_power_sources = { ConstantMainPower, DisposableBattery }
-        // 01010000 = 0x50
-
-        // current_power_source = CurrentPowerSource::RechargeableBattery
-        // current_power_source_level = CurrentPowerSourceLevel::TwoThirds
-        // 10000010 = 0x82
         let bytes: [u8; 2] = [0x50, 0x82];
 
-        // when
         let node_power_descriptor = NodePowerDescriptor::try_read(&bytes, byte::LE);
-        // then
         assert!(node_power_descriptor.is_err());
         assert_eq!(
             node_power_descriptor.unwrap_err(),

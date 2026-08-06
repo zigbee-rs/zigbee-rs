@@ -37,10 +37,10 @@ impl_byte! {
 
 pub const NWK_COORDINATOR_ADDRESS: u16 = 0x0000;
 
-/// Network address of a device that is not joined (§3.6.1.10.4).
+/// Network address of a device that is not joined (3.6.1.10.4).
 pub const NWK_UNASSIGNED_ADDRESS: u16 = 0xffff;
 
-/// Broadcast to all devices (§3.6.5, Table 3-68).
+/// Broadcast to all devices (3.6.5, Table 3-68).
 pub const NWK_BROADCAST_ALL: u16 = 0xffff;
 
 /// Lowest reserved broadcast address; anything above is a broadcast (Table
@@ -92,31 +92,27 @@ const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
 const MAX_SECURITY_KEYS: usize = 1;
 
-/// Maximum acceptable link cost for parent selection (§3.6.1.4.1.1).
+/// Maximum acceptable link cost for parent selection (3.6.1.4.1.1).
 pub const MAX_PARENT_LINK_COST: u8 = 3;
 
-/// Compute the link cost from an LQI value (§3.6.3.1).
+/// Computes the link cost (1-7, lower is better) from an LQI value
+/// (3.6.3.1).
 ///
-/// The link cost is a value in the range 1–7 representing the estimated
-/// number of transmission attempts required to successfully deliver a frame
-/// over a given link.  Lower is better.
-///
-/// The mapping from LQI to link cost is implementation-defined.  We use a
-/// simple threshold table suitable for IEEE 802.15.4 2.4 GHz PHY where LQI
-/// is typically in the range 0–255.
+/// The LQI-to-cost mapping is implementation-defined; this uses a threshold
+/// table suitable for IEEE 802.15.4 2.4 GHz PHY.
 pub fn link_cost_from_lqi(lqi: u8) -> u8 {
     match lqi {
-        // Excellent link (≥ -55 dBm)
+        // excellent link (>= -55 dBm)
         128..=255 => 1,
-        // Good link (≥ -65 dBm)
+        // good link (>= -65 dBm)
         77..=127 => 2,
-        // Acceptable (≥ -75 dBm)
+        // acceptable (>= -75 dBm)
         26..=76 => 3,
-        // Marginal
+        // marginal
         11..=25 => 5,
-        // Poor
+        // poor
         1..=10 => 6,
-        // Very poor
+        // very poor
         0 => 7,
     }
 }
@@ -224,7 +220,7 @@ construct_ib! {
         parent_information: u8 = 0x00,
         #[storage_key = 37]
         end_device_timeout_default: u8 = 0x08,
-        // negotiated timeout enumeration (§3.6.10.2); 0xff = not negotiated
+        // negotiated timeout enumeration (3.6.10.2); 0xff = not negotiated
         #[storage_key = 39]
         end_device_timeout: u8 = 0xff,
         #[ctx = ()]
@@ -232,7 +228,7 @@ construct_ib! {
         #[storage_key = 38]
         leave_request_without_rejoin_allowed: bool = true,
         ieee_address: IeeeAddress, // read only
-        // mac_interface_table: StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>,
+        // TODO: mac_interface_table (StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>) not yet implemented
     }
 }
 
@@ -285,24 +281,14 @@ impl_byte! {
         #[ctx = ()]
         pub rx_on_when_idle: bool,
         pub end_device_configuration: u16,
-        // unused
-        //timeout_counter: u32,
-        //device_timeout: u32,
         pub relationship: u8,
         pub transmit_failure: u8,
         pub lqi: u8,
         pub outgoing_cost: u8,
         pub age: u8,
-        // optional
-        //incoming_beacon_timestamp: u8,
-        //beacon_transmission_time: u8,
         #[ctx = ()]
         pub keepalive_received: bool,
-        // we only support 1 mac interface currently
-        //mac_interface_index: u8,
-        // optional
-        //mac_unicast_bytes_transmitted: u32,
-        //mac_unicast_bytes_received: u32,
+        // mac_interface_index omitted: only one mac interface is supported
 
         // table 3-64: optional discovery-time fields, cleared after joining
 

@@ -1,9 +1,5 @@
-//! Information Base Maintenance
-//!
-//! See Section 2.2.4.4
-//!
-//! This set of primitives defines how the next higher layer of a device can
-//! read and write attributes in the AIB
+//! APSME primitive types for binding, group management, and AIB access
+//! (2.2.4.3 - 2.2.4.5).
 #![allow(dead_code)]
 #![allow(missing_docs)]
 use crate::aps::types::Address;
@@ -113,13 +109,13 @@ pub struct ApsmeAddGroupConfirm {}
 /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveGroupRequest {}
-/// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
+/// 2.2.4.5.4 - APSME-REMOVE-GROUP.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveGroupConfirm {}
 
 /// 2.2.4.5.5 - APSME-REMOVE-ALL-GROUPS.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsRequest {}
-/// 2.2.4.5.6 - APSME-REMOVE-ALL-GROUPs.request
+/// 2.2.4.5.6 - APSME-REMOVE-ALL-GROUPS.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApsmeRemoveAllGroupsConfirm {}

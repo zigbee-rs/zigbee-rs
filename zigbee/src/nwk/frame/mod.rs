@@ -55,13 +55,11 @@ impl<'a> TryRead<'a, SecurityContext<'a>> for Frame<'a> {
     #[allow(clippy::ptr_cast_constness, clippy::as_ptr_cast_mut)]
     fn try_read(bytes: &'a [u8], cx: SecurityContext) -> byte::Result<(Self, usize)> {
         let len = bytes.len();
-        // SAFETY: we read the whole byte slice which is not used afterwards
-        // we can safely cast it to &mut [u8]
+        // SAFETY: the slice is not used afterwards, so casting away constness is sound
         let bytes: &'a mut [u8] =
             unsafe { slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, len) };
         let frame = cx.decrypt_nwk_frame_in_place(bytes)?;
-        // we are always reading the full frame
-        // since the "rest" is in frame.payload
+        // the full frame is always consumed; the "rest" lives in frame.payload
         Ok((frame, len))
     }
 }
@@ -81,9 +79,7 @@ pub struct DataFrame<'a> {
 }
 
 impl<'a> DataFrame<'a> {
-    /// # Safety
-    ///
-    /// Ensure that the buffer referenced by `self` is mutable locally.
+    // SAFETY: caller must ensure the buffer referenced by `self` is mutable locally
     pub(crate) unsafe fn payload_as_mut(&mut self) -> &'a mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.payload.as_ptr().cast_mut(), self.payload.len()) }
     }
@@ -119,13 +115,7 @@ mod tests {
 
     #[test]
     fn command_with_security() {
-        //let (frame, _) = Frame::try_read(CMD_FRAME,
-        // SecurityContext::no_security()).unwrap();
-        // let Frame::NwkCommand(frame) = frame else {
-        //    unreachable!()
-        //};
-
-        //assert!(frame.header.frame_control.security_flag());
-        //assert_eq!(frame.aux_header.unwrap().security_control.0, 0x28);
+        // TODO: parse CMD_FRAME with a real SecurityContext and assert the
+        // decrypted command frame's security flag and aux header
     }
 }

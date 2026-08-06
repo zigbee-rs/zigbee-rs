@@ -1,4 +1,4 @@
-//! 2.2.8.2.1  Binding Table
+//! 2.2.8.2.1 Binding Table
 use heapless::Vec;
 use thiserror::Error;
 
@@ -18,7 +18,7 @@ pub(crate) struct Binding {
     cluster_id: u16,
 }
 
-/// 2.2.8.2
+// 2.2.8.2
 pub(crate) struct ApsBindingTable {
     // TODO: limit the size
     entries: Vec<Binding, 265>,

@@ -760,11 +760,8 @@ impl<T: ZclStructSchema> ZclHasNull for StructOf<T> {
     }
 }
 
-/// Determine the byte length of `count` encoded elements in `payload`.
-///
-/// For fixed-size schemas, validates length arithmetic and (when
-/// `!ALL_PATTERNS_VALID`) decodes each element to catch invalid bit patterns.
-/// For variable-size schemas, decodes each element once to find boundaries.
+// byte length of `count` encoded elements; for fixed-size schemas with
+// !ALL_PATTERNS_VALID, decodes each element to catch invalid bit patterns
 fn compute_payload_len<S: ZclSchema>(payload: &[u8], count: u16) -> Result<usize, ZclError> {
     if let Some(elem_size) = S::ENCODED_SIZE {
         let total = (count as usize)
@@ -805,11 +802,8 @@ fn decode_schema_value<S: ZclSchema>(bytes: &[u8]) -> Result<(S::Value<'_>, usiz
     Ok((value, used))
 }
 
-/// O(n^2) pairwise raw-slice uniqueness check. No allocation.
-///
-/// For fixed-size elements: compares fixed-length byte windows directly.
-/// For variable-size elements: re-scans from start for each inner comparison.
-/// Called only for `Set<RawUniqueSet>` after element structure is validated.
+// O(n^2) pairwise raw-slice uniqueness check, no allocation; called only for
+// Set<RawUniqueSet> after element structure is validated
 fn validate_set_uniqueness<S: ZclSchema>(payload: &[u8], count: u16) -> Result<(), ZclError> {
     if let Some(elem_size) = S::ENCODED_SIZE {
         for i in 0..count as usize {

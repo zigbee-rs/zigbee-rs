@@ -11,7 +11,7 @@ pub use transport_key::*;
 pub use verify_key::*;
 
 impl_byte! {
-    // §4.4.10, Table 4-27
+    // 4.4.10, Table 4-27
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Command {

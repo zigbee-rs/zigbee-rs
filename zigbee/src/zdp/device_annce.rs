@@ -1,4 +1,4 @@
-//! ZDP Device_annce frame payload (§2.4.3.1.11)
+//! ZDP Device_annce frame payload (2.4.3.1.11)
 //!
 //! Broadcast by a device that has joined or re-joined a network to notify
 //! other devices of its short address, IEEE address, and capabilities.
@@ -13,7 +13,7 @@ use crate::nwk::nib::CapabilityInformation;
 pub const CLUSTER_ID: u16 = 0x0013;
 
 impl_byte! {
-    /// ZDP Device_annce payload (§2.4.3.1.11).
+    /// ZDP Device_annce payload (2.4.3.1.11).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct DeviceAnnce {
         /// NWK address for the local device.

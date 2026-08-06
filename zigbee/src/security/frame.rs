@@ -10,9 +10,7 @@ impl_byte! {
     /// See Section 4.5.1.
     #[derive(Debug, Clone, Copy)]
     pub struct AuxFrameHeader {
-        /// Security control
         pub security_control: SecurityControl,
-        /// Frame counter
         pub frame_counter: u32,
         /// Set only if [`SecurityControl::extended_nonce`] is `true`.
         #[parse_if = security_control.extended_nonce()]

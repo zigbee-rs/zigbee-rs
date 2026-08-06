@@ -89,14 +89,11 @@ mod tests {
 
     #[test]
     fn unpack_frame_control() {
-        // given
         let input = [0x18];
 
-        // when
         let (frame_control, _) =
             FrameControl::try_read(&input, ()).expect("Could not read FrameControl in test.");
 
-        // then
         assert_eq!(frame_control.frame_type(), FrameType::GlobalCommand);
         assert!(!frame_control.is_manufacturer_specific());
         assert!(frame_control.direction());
@@ -105,14 +102,11 @@ mod tests {
 
     #[test]
     fn frame_control_with_local_command() {
-        // given
         let input = [0x19];
 
-        // when
         let (frame_control, _) =
             FrameControl::try_read(&input, ()).expect("Could not read FrameControl in test.");
 
-        // then
         assert_eq!(frame_control.frame_type(), FrameType::ClusterCommand);
         assert!(!frame_control.is_manufacturer_specific());
         assert!(frame_control.direction());
@@ -121,14 +115,11 @@ mod tests {
 
     #[test]
     fn frame_control_with_manufacturer_specific_flag() {
-        // given
         let input = [0x1d];
 
-        // when
         let (frame_control, _) =
             FrameControl::try_read(&input, ()).expect("Could not read FrameControl in test.");
 
-        // then
         assert_eq!(frame_control.frame_type(), FrameType::ClusterCommand);
         assert!(frame_control.is_manufacturer_specific());
         assert!(frame_control.direction());
@@ -136,7 +127,7 @@ mod tests {
     }
     #[test]
     fn frame_type_reserved_covers_both_reserved_values() {
-        // Frame type bits 0b10 and 0b11 are both Reserved per spec.
+        // frame type bits 0b10 and 0b11 are both reserved per spec
         let fc_10 = FrameControl(0b0000_0010);
         let fc_11 = FrameControl(0b0000_0011);
         assert_eq!(fc_10.frame_type(), FrameType::Reserved);
@@ -145,14 +136,11 @@ mod tests {
 
     #[test]
     fn frame_control_with_direction_server_to_client() {
-        // given
         let input = [0x0d];
 
-        // when
         let (frame_control, _) =
             FrameControl::try_read(&input, ()).expect("Could not read FrameControl in test.");
 
-        // then
         assert_eq!(frame_control.frame_type(), FrameType::ClusterCommand);
         assert!(frame_control.is_manufacturer_specific());
         assert!(frame_control.direction());

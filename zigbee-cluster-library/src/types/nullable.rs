@@ -196,8 +196,8 @@ impl ZclHasNull for f32 {
         v.is_nan().then_some(4)
     }
     fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        // Canonical quiet NaN (0x7FC00000 LE) — matches zigpy and common ZCL stacks.
-        // Any NaN decodes as null; we encode the canonical form for interop.
+        // canonical quiet NaN (0x7FC00000 LE) — matches zigpy and common ZCL stacks;
+        // any NaN decodes as null, we encode the canonical form for interop
         buf.get_mut(..4)
             .map(|s| {
                 s.copy_from_slice(&[0x00, 0x00, 0xC0, 0x7F]);
@@ -216,7 +216,7 @@ impl ZclHasNull for f64 {
         v.is_nan().then_some(8)
     }
     fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        // Quiet NaN (0x7FF8000000000000 LE), matches zigpy.
+        // quiet NaN (0x7FF8000000000000 LE), matches zigpy
         buf.get_mut(..8)
             .map(|s| {
                 s.copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x7F]);

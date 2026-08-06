@@ -1,6 +1,6 @@
 pub use crate::header::manufacturer_code::ManufacturerCode;
 
-/// ZCL wire data type identifier (ZCL spec rev8 §2.6.2).
+/// ZCL wire data type identifier (ZCL spec rev8 2.6.2).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TypeId {

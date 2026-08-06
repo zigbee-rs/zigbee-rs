@@ -7,8 +7,6 @@
 //!
 //! [ZigBee Cluster Library Rev 8]: https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf
 #![no_std]
-//#![deny(clippy::unwrap_used)]
-// #![deny(clippy::panic, unused_must_use)]
 #![warn(
     // missing_docs,
     // unreachable_pub,

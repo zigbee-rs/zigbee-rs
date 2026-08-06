@@ -25,10 +25,10 @@ use crate::header::command_identifier::CommandIdentifier;
 use crate::header::frame_control::FrameControl;
 use crate::payload::ZclFramePayload;
 
-/// Cluster identifier (ZCL §3.2).
+/// Cluster identifier (ZCL 3.2).
 pub const CLUSTER_ID: u16 = 0x0000;
 
-/// Attribute identifiers (ZCL §3.2.2.2).
+/// Attribute identifiers (ZCL 3.2.2.2).
 pub mod attribute {
     /// `ZCLVersion` (`uint8`).
     pub const ZCL_VERSION: u16 = 0x0000;
@@ -59,7 +59,7 @@ pub struct BasicServer<'a> {
     pub hw_version: u8,
     pub manufacturer_name: &'a str,
     pub model_identifier: &'a str,
-    /// `PowerSource` enum8 (ZCL §3.2.2.2.9), e.g. `0x01` = mains, `0x03` =
+    /// `PowerSource` enum8 (ZCL 3.2.2.2.9), e.g. `0x01` = mains, `0x03` =
     /// battery.
     pub power_source: u8,
 }
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn read_manufacturer_model_and_unknown() {
         // ZCL Read Attributes (global cmd 0x00, client->server) for
-        // ManufacturerName (0x0004), ModelIdentifier (0x0005), unknown (0x9999).
+        // ManufacturerName (0x0004), ModelIdentifier (0x0005), unknown (0x9999)
         let request = [
             0x00, 0x2a, 0x00, // frame control, seq, command id (ReadAttributes)
             0x04, 0x00, // 0x0004

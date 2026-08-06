@@ -4,7 +4,7 @@
 //! and the ZDO. It generates the APS PDU and hands it to the NWK layer for
 //! encryption and routing.
 //!
-//! See Zigbee R22 §2.2.4.1.
+//! See Zigbee R22 2.2.4.1.
 #![allow(dead_code)]
 
 use super::types::Address;

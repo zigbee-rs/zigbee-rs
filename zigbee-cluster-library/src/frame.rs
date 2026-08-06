@@ -210,7 +210,7 @@ impl<'a> TryRead<'a, ()> for Status {
     fn try_read(bytes: &'a [u8], _: ()) -> byte::Result<(Self, usize)> {
         let offset = &mut 0;
         let raw: u8 = bytes.read_with(offset, ctx::LE)?;
-        // Errata: deprecated wire bytes are substituted for their replacements.
+        // errata: deprecated wire bytes are substituted for their replacements
         let status = match raw {
             0x82..=0x84 => Self::UnsupCommand,
             0x8a | 0xc4 => Self::Success,
@@ -226,8 +226,8 @@ impl<'a> TryRead<'a, ()> for Status {
 impl TryWrite<()> for Status {
     fn try_write(self, bytes: &mut [u8], _: ()) -> byte::Result<usize> {
         let offset = &mut 0;
-        // Errata: deprecated variants are substituted for their replacements on the
-        // wire.
+        // errata: deprecated variants are substituted for their replacements on the
+        // wire
         let raw: u8 = match self {
             Self::Unknown => return Err(bad_input!("unknown ZCL status")),
             Self::UnsupGeneralCommand
@@ -473,17 +473,14 @@ mod tests {
 
     #[test]
     fn parse_attribute_report_payload() {
-        // given
         let input: &[u8] = &[
             0x00, 0x00, // identifier
             0x29, 0xab, 0x03,
         ];
 
-        // when
         let (report, _) = AttributeReport::try_read(input, ())
             .expect("Failed to read AttributeReport payload in test");
 
-        // then
         assert_eq!(report.attribute_id, 0u16);
         assert_eq!(report.value, ZclDataType::SignedInt(SignedN::Int16(939)));
     }
@@ -491,7 +488,6 @@ mod tests {
     #[allow(clippy::panic)]
     #[test]
     fn zcl_general_command() {
-        // given
         let input: &[u8] = &[
             0x18, // frame control
             0x01, // sequence number
@@ -499,10 +495,8 @@ mod tests {
             0x00, 0x00, 0x29, 0x3f, 0x0a, // payload
         ];
 
-        // when
         let (frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
 
-        // then
         assert!(matches!(frame.payload, ZclFramePayload::GeneralCommand(_)));
 
         if let ZclFramePayload::GeneralCommand(cmd) = frame.payload {
@@ -525,7 +519,6 @@ mod tests {
     #[allow(clippy::panic)]
     #[test]
     fn cluster_specific_command() {
-        // given
         let input: &[u8] = &[
             0x19, // frame control
             0x01, // sequence number
@@ -533,10 +526,8 @@ mod tests {
             0x00, 0x00, 0x29, 0x3f, 0x0a, // payload
         ];
 
-        // when
         let (frame, _) = ZclFrame::try_read(input, ()).expect("Failed to read ZclFrame");
 
-        // then
         let expected = &[0x00, 0x00, 0x29, 0x3f, 0x0a];
         assert!(matches!(
             frame.payload,
@@ -700,7 +691,7 @@ mod tests {
 
     #[test]
     fn write_attributes_response_all_success_roundtrips() {
-        // All writes succeeded: single SUCCESS record, no attribute id.
+        // all writes succeeded: single SUCCESS record, no attribute id
         let input: &[u8] = &[
             0x18, // frame control: global, server to client, default response disabled
             0x13, // sequence number
@@ -731,8 +722,8 @@ mod tests {
 
     #[test]
     fn write_attributes_response_failure_records_roundtrip() {
-        // Some writes failed: only the failed records are present, each with attribute
-        // id.
+        // some writes failed: only the failed records are present, each with attribute
+        // id
         let input: &[u8] = &[
             0x18, // frame control: global, server to client, default response disabled
             0x14, // sequence number
@@ -763,7 +754,7 @@ mod tests {
 
     #[test]
     fn write_attributes_response_parses_mixed_success_and_failure_gracefully() {
-        // Non-compliant senders may mix SUCCESS with failures; parse gracefully.
+        // non-compliant senders may mix SUCCESS with failures; parse gracefully
         let input: &[u8] = &[
             0x18, // frame control
             0x15, // sequence number
@@ -789,7 +780,7 @@ mod tests {
 
     #[test]
     fn write_attributes_response_normalizes_mixed_to_failures_on_write() {
-        // TryWrite drops SUCCESS records when failures are present.
+        // TryWrite drops SUCCESS records when failures are present
         let mut records = Vec::<WriteAttributeStatus, 16>::new();
         records
             .push(WriteAttributeStatus {
@@ -830,7 +821,7 @@ mod tests {
 
     #[test]
     fn write_attributes_response_normalizes_multiple_success_to_single() {
-        // Multiple SUCCESS records collapse to a single SUCCESS on write.
+        // multiple SUCCESS records collapse to a single SUCCESS on write
         let mut records = Vec::<WriteAttributeStatus, 16>::new();
         records
             .push(WriteAttributeStatus {
@@ -977,7 +968,6 @@ mod tests {
         assert!(spurious_value.try_write(&mut buf, ()).is_err());
     }
 
-    // Status::TryRead
     #[test]
     fn status_try_read_canonical_bytes() {
         let cases: &[(u8, Status)] = &[
@@ -989,7 +979,7 @@ mod tests {
             (0x81, Status::UnsupCommand),
             (0x82, Status::UnsupCommand),
             (0x83, Status::UnsupCommand),
-            (0x84, Status::UnsupCommand), // oops!
+            (0x84, Status::UnsupCommand),
             (0x85, Status::InvalidField),
             (0x86, Status::UnsupportedAttribute),
             (0x87, Status::InvalidValue),
@@ -1045,7 +1035,6 @@ mod tests {
         assert!(Status::try_read(&[], ()).is_err());
     }
 
-    // Status::TryWrite
     #[allow(deprecated)]
     #[test]
     fn status_try_write_encodes_expected_byte() {
@@ -1091,7 +1080,6 @@ mod tests {
         assert!(Status::Unknown.try_write(&mut buf, ()).is_err());
     }
 
-    // WriteAttribute TryRead/TryWrite
     #[test]
     fn write_attribute_roundtrips() {
         let input: &[u8] = &[
@@ -1110,8 +1098,6 @@ mod tests {
         assert_eq!(written, input.len());
         assert_eq!(&buf[..written], input);
     }
-
-    // WriteAttributeStatus TryWrite error branches
 
     #[test]
     fn write_attribute_status_success_with_attribute_id_is_error() {
@@ -1133,7 +1119,6 @@ mod tests {
         assert!(record.try_write(&mut buf, ()).is_err());
     }
 
-    // AttributeReport TryRead/TryWrite
     #[test]
     fn attribute_report_roundtrips() {
         let input: &[u8] = &[
@@ -1154,7 +1139,6 @@ mod tests {
         assert_eq!(&buf[..written], input);
     }
 
-    // DefaultResponse TryRead/TryWrite
     #[test]
     fn default_response_direct_roundtrips() {
         let input: &[u8] = &[0x02, 0x86]; // command_id=2, UnsupportedAttribute

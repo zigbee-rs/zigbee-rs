@@ -2,7 +2,7 @@ use zigbee_macros::impl_byte;
 use zigbee_types::IeeeAddress;
 
 impl_byte! {
-    /// Confirm-Key Command Frame (§4.4.10.9, Table 4-27, command id 0x10)
+    /// Confirm-Key Command Frame (4.4.10.9, Table 4-27, command id 0x10)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct ConfirmKey {
         /// Status of the verify-key operation (0x00 = success)

@@ -19,6 +19,6 @@ pub mod aib;
 /// information base (AIB).
 pub mod apsme;
 mod binding;
-/// APS frame formats (§2.2.5).
+/// APS frame formats (2.2.5).
 pub mod frame;
 pub mod security;

@@ -13,8 +13,7 @@ use crate::storage::round_up;
 // upper byte of the flash map key namespaces the AIB
 const TAG: u16 = 0x0100;
 
-/// Restores all persisted AIB fields; missing or unparsable items keep
-/// their defaults.
+// missing or unparsable items keep their defaults
 pub(crate) async fn restore<F: NorFlash>(map: &mut FlashMap<F>, aib: &Aib) {
     for id in AibId::VARIANTS {
         let Some(key) = id.storage_key() else {
@@ -31,7 +30,7 @@ pub(crate) async fn restore<F: NorFlash>(map: &mut FlashMap<F>, aib: &Aib) {
     let _ = aib.take_dirty();
 }
 
-/// Persists all AIB fields modified since the last call.
+// persists all AIB fields modified since the last call
 pub(crate) async fn flush<F: NorFlash>(map: &mut FlashMap<F>, shadow: &mut Shadow, aib: &Aib) {
     let dirty = aib.take_dirty();
     if dirty == 0 {

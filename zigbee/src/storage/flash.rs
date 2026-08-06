@@ -12,9 +12,9 @@ use super::StorageDriver;
 use crate::aps::aib;
 use crate::nwk::nib;
 
-/// outgoing frame counters are stored this far ahead of the live value
+// outgoing frame counters are stored this far ahead of the live value
 const HEADROOM: u32 = 1024;
-/// incoming frame counters are stored rounded down to this granularity
+// incoming frame counters are stored rounded down to this granularity
 const WINDOW: u32 = 1024;
 
 pub(crate) const DATA: usize = {
@@ -27,8 +27,8 @@ const SCRATCH: usize = DATA + 64;
 // every map item must fit into one flash sector (4 KiB on esp32)
 const _: () = assert!(SCRATCH <= 4096);
 
-/// Last-stored normalized image of a counter-bearing field; used to skip
-/// writes while counters stay within their stored headroom.
+// last-stored normalized image of a counter-bearing field, used to skip
+// writes while counters stay within their stored headroom
 pub(crate) type Shadow = ([u8; DATA], usize);
 
 // next counter value a rebooted device may use; two boundaries ahead so
@@ -43,10 +43,8 @@ pub(crate) const fn round_down(counter: u32) -> u32 {
     (counter / WINDOW) * WINDOW
 }
 
-/// Key-value flash map shared by the information bases.
-///
-/// `data` is the staging buffer: encode a field into it, then persist the
-/// prefix with [`Self::store`].
+// key-value flash map shared by the information bases; `data` is the
+// staging buffer, encode a field into it then persist the prefix via store
 pub(crate) struct FlashMap<F: NorFlash> {
     map: MapStorage<u16, F, NoCache>,
     scratch: [u8; SCRATCH],
@@ -70,7 +68,7 @@ impl<F: NorFlash> FlashMap<F> {
             .flatten()
     }
 
-    /// Persists `data[..len]` under `key`; wear-leveled and crash-safe.
+    // persists data[..len] under key; wear-leveled and crash-safe
     pub(crate) async fn store(&mut self, key: u16, len: usize) -> bool {
         let value: &[u8] = &self.data[..len];
         self.map
@@ -258,7 +256,6 @@ mod tests {
 
         nib.update_network_address(|value| *value = 0x1234);
         assert_eq!(nib.take_dirty(), 1 << (NibId::network_address as u64));
-        // drained
         assert_eq!(nib.take_dirty(), 0);
     }
 
@@ -274,7 +271,6 @@ mod tests {
     fn setter_signals_change() {
         let (nib, _) = fresh_ibs();
         nib.update_network_address(|value| *value = 0x4321);
-        // must not hang: the setter raised the module change signal
         block_on(nib::changed());
     }
 
@@ -283,7 +279,6 @@ mod tests {
         let (nib, _) = fresh_ibs();
         let mut buf = [0u8; NibId::MAX_FIELD_SIZE];
 
-        // empty table encodes as just its u16 length, not its capacity
         let len = nib.export_field(NibId::neighbor_table, &mut buf).unwrap();
         assert_eq!(len, 2);
 
@@ -298,14 +293,12 @@ mod tests {
         let restored = nib2.security_material_set();
         assert_eq!(restored.first().unwrap().outgoing_frame_counter, 7);
         assert_eq!(restored.first().unwrap().key.0, [0xaa; 16]);
-        // import must not mark dirty
         assert_eq!(nib2.take_dirty(), 0);
     }
 
     #[test]
     fn import_of_garbage_keeps_default() {
         let (nib, _) = fresh_ibs();
-        // too short for a u16
         assert!(!nib.import_field(NibId::network_address, &[0x01]));
         assert_eq!(*nib.network_address(), 0xffff);
     }
@@ -351,7 +344,6 @@ mod tests {
         block_on(nib::storage::flush(&mut map, &mut nib_shadow, &nib));
         block_on(aib::storage::flush(&mut map, &mut aib_shadow, &aib));
 
-        // simulated reboot: fresh information bases, same flash
         let (nib2, aib2) = fresh_ibs();
         block_on(nib::storage::restore(&mut map, &nib2));
         block_on(aib::storage::restore(&mut map, &aib2));
@@ -402,16 +394,13 @@ mod tests {
             baseline.compare_to(flash.stats_snapshot()).bytes_written
         };
 
-        // counters below the first headroom boundary: only the initial store
         assert_eq!(flush_writes(0), flush_writes(HEADROOM - 1));
-        // crossing the boundary triggers exactly one more store
         assert!(flush_writes(HEADROOM) > flush_writes(HEADROOM - 1));
     }
 
     #[test]
     fn failed_store_rearms_dirty_bit() {
         let (nib, _) = fresh_ibs();
-        // shut the flash off immediately so every store fails
         let mut flash = Flash::new(WriteCountCheck::Twice, None, true);
         flash.bytes_until_shutoff = Some(0);
         let mut map = FlashMap::new(flash, Flash::FULL_FLASH_RANGE);

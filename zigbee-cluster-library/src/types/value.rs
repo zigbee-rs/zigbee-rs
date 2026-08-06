@@ -93,7 +93,7 @@ impl<'a> ZclValueRef<'a> {
     }
 }
 
-// ZCL 2.6.2 spec caps structure nesting at 15 levels.
+// ZCL 2.6.2 caps structure nesting at 15 levels
 const MAX_DEPTH: u8 = 15;
 
 fn decode_unsigned<'a, const N: usize, T>(
@@ -617,7 +617,7 @@ mod tests {
             ZclError::InvalidValue
         );
 
-        // 0xFF is the ZCL null sentinel for Boolean, not just an invalid value.
+        // 0xFF is the ZCL null sentinel for Boolean, not just an invalid value
         let null_bool = [0x10u8, 0x01, 0x00, 0xFF];
         assert_eq!(
             ZclValueRef::decode_with_type(TypeId::Array, &null_bool).unwrap_err(),

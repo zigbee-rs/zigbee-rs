@@ -34,16 +34,15 @@ use crate::mlme::ScanType;
 
 mod driver;
 
-/// Higher-layer retries of the whole association handshake. Frame-level
-/// `aMaxFrameRetries` ack-retransmission already covers a lost request or poll;
-/// this is a safety net for a parent that accepts the request but is slow to
-/// make the response available.
+// higher-layer retries of the whole association handshake; aMaxFrameRetries
+// ack-retransmission already covers a lost request or poll, this is a safety
+// net for a parent that accepts the request but is slow to respond
 const ASSOCIATE_REQUEST_RETRIES: u8 = 3;
 
-/// Number of times the association response is polled per request attempt.
+// number of times the association response is polled per request attempt
 const ASSOCIATE_POLL_RETRIES: u8 = 5;
 
-/// Number of poll rounds per steady-state MLME-POLL before reporting no data.
+// number of poll rounds per steady-state MLME-POLL before reporting no data
 const POLL_DATA_RETRIES: u8 = 5;
 
 /// ESP32-C6 [`Mlme`] implementation.
@@ -59,7 +58,7 @@ pub struct EspMlme<'a> {
 
 impl<'a> EspMlme<'a> {
     pub fn new(ieee802154: Ieee802154<'a>, config: Config) -> Self {
-        // seed the MAC seq number randomly (§7.2.1.2): a fixed start re-uses low
+        // seed the MAC seq number randomly (7.2.1.2): a fixed start re-uses low
         // numbers each reboot, which a parent's duplicate filter drops as stale
         let inner = EspMlmeInner {
             driver: Ieee802154Driver::new(ieee802154, config),
@@ -89,16 +88,14 @@ impl EspMlmeInner<'_> {
         self.seq_number
     }
 
-    /// Transmit an acknowledgment-requested frame, retransmitting up to
-    /// `aMaxFrameRetries` times if no acknowledgment is received
-    /// (IEEE 802.15.4 §7.5.6.4). Returns [`MacError::NoAck`] if every attempt
-    /// goes unacknowledged.
+    // retransmits up to aMaxFrameRetries times if unacknowledged (IEEE 802.15.4
+    // 7.5.6.4); returns MacError::NoAck if every attempt goes unacknowledged
     async fn transmit_acked(&mut self, frame: &[u8]) -> Result<(), MacError> {
         for _ in 0..=A_MAX_FRAME_RETRIES {
             match self.driver.transmit(frame).await {
                 Ok(()) if self.driver.last_tx_acked() => return Ok(()),
                 Ok(()) => {}
-                // no ack / channel busy: retransmit (§7.5.6.4)
+                // no ack / channel busy: retransmit (7.5.6.4)
                 Err(MacError::TxFailed) => {}
                 // a lost radio interrupt: retry rather than wedge the caller
                 Err(MacError::TxTimeout) => log::warn!("[MLME] tx-done timeout, retrying"),
@@ -108,20 +105,16 @@ impl EspMlmeInner<'_> {
         Err(MacError::NoAck)
     }
 
-    /// Discard all buffered frames from the hardware RX queue.
     fn flush(&mut self) {
         while self.driver.poll_received().is_some() {}
     }
 
-    /// Take the next frame from the hardware RX queue (non-blocking), mapping a
-    /// radio error into [`MacError`]. Returns `None` when the queue is empty.
     fn poll_frame(&mut self) -> Option<Result<ReceivedFrame, MacError>> {
         self.driver
             .poll_received()
             .map(|r| r.map_err(MacError::RadioError))
     }
 
-    /// Wait for the next frame from the hardware RX queue (indefinite).
     async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
         loop {
             // wait for a fully-received frame before draining: draining re-issues
@@ -135,8 +128,6 @@ impl EspMlmeInner<'_> {
         }
     }
 
-    /// Drain the hardware RX queue, returning the payload + LQI of the first
-    /// MAC data frame found (non-blocking). Non-data frames are discarded.
     fn try_drain(&mut self, buf: &mut [u8]) -> Result<Option<(usize, u8)>, MacError> {
         while let Some(result) = self.poll_frame() {
             if let Some(received) = copy_data_payload(result?, buf) {
@@ -241,18 +232,11 @@ impl EspMlmeInner<'_> {
         }
     }
 
-    /// Build a MAC data request command frame (IEEE 802.15.4 §7.3.4).
-    ///
-    /// Uses the assigned short address as source when available (i.e.
-    /// after a successful association), otherwise falls back to the
-    /// extended address.
-    /// Build a data request command. Returns the buffer and the on-air length:
-    /// the written bytes plus 2 for the FCS the radio appends (the PHR length
-    /// must cover the FCS). The source address mode varies (extended before a
-    /// short address is assigned, short after), so the length is not fixed and
-    /// the caller must transmit exactly `&buf[..len]` — transmitting the whole
-    /// fixed-size array would append junk bytes and the parent would reject the
-    /// data request, never delivering the buffered (indirect) response.
+    // MAC data request command frame (IEEE 802.15.4 7.3.4). returns the buffer
+    // and on-air length (written bytes + 2 for the FCS the radio appends); the
+    // source address mode varies (extended before a short address is assigned,
+    // short after) so the length is not fixed — caller must transmit exactly
+    // &buf[..len], not the whole fixed-size array
     fn data_request_frame(&mut self, dest: Address) -> Result<([u8; 20], usize), MacError> {
         let seq = self.sequence_number();
         let source = match self.driver.short_address() {
@@ -286,10 +270,9 @@ impl EspMlmeInner<'_> {
         Ok((buf, *offset + 2))
     }
 
-    /// Listen up to `timeout_us` for a MAC association response, draining and
-    /// discarding any other frame. Returns `None` on timeout. Does not flush,
-    /// so a response already queued (a parent that sent it directly) is not
-    /// lost.
+    // listens up to timeout_us for a MAC association response, draining and
+    // discarding any other frame. does not flush, so a response already
+    // queued (a parent that sent it directly) is not lost
     async fn recv_association_response(
         &mut self,
         timeout_us: u64,
@@ -332,9 +315,8 @@ impl EspMlmeInner<'_> {
         }
     }
 
-    /// Drain the RX queue for one unicast data frame (non-blocking), discarding
-    /// broadcasts and non-data frames. An indirect (poll) response is always a
-    /// unicast, so ambient broadcasts never shadow it.
+    // an indirect (poll) response is always a unicast, so ambient broadcasts
+    // never shadow it
     fn take_unicast_data(&mut self, buf: &mut [u8]) -> Result<Option<(usize, u8)>, MacError> {
         while let Some(result) = self.poll_frame() {
             let received = result?;
@@ -351,12 +333,9 @@ impl EspMlmeInner<'_> {
         Ok(None)
     }
 
-    /// Wait up to `timeout_us` for one buffered unicast data frame.
-    ///
-    /// Shares [`Self::recv_association_response`]'s timing discipline: it waits
-    /// ~4 ms before each drain (the RX signal may not fire even when a frame is
-    /// queued) and never logs in the loop (the UART critical section stalls the
-    /// RX ISR). Returns `Ok(None)` when the window elapses with nothing for us.
+    // shares recv_association_response's timing discipline: waits ~4ms before
+    // each drain (the RX signal may not fire even when a frame is queued) and
+    // never logs in the loop (the UART critical section stalls the RX ISR)
     async fn recv_data_response(
         &mut self,
         timeout_us: u64,
@@ -412,8 +391,7 @@ impl EspMlmeInner<'_> {
     }
 }
 
-/// Copy a MAC data frame's payload + LQI into `buf`, returning the byte count
-/// and LQI. Non-data frames (commands, beacons, acks) yield `None`.
+// non-data frames (commands, beacons, acks) yield None
 fn copy_data_payload(received: ReceivedFrame, buf: &mut [u8]) -> Option<(usize, u8)> {
     let ReceivedFrame {
         frame:
@@ -483,7 +461,7 @@ impl EspMlmeInner<'_> {
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
         // filter on our extended address: the association response is an indirect
-        // tx addressed to it (§7.5.6.4). auto_ack_rx must stay on to ack it —
+        // tx addressed to it (7.5.6.4). auto_ack_rx must stay on to ack it —
         // promiscuous suppresses the ack and floods the RX queue with broadcasts
         self.driver.update_driver_config(|config| {
             *config = Default::default();
@@ -498,11 +476,11 @@ impl EspMlmeInner<'_> {
         self.driver.start_receive();
 
         let ext_addr = self.driver.ieee_address();
-        // §7.3.1.1: source PAN is the broadcast PAN (0xffff), source is the ext addr
+        // 7.3.1.1: source PAN is the broadcast PAN (0xffff), source is the ext addr
         let src = Address::Extended(PanId::broadcast(), ext_addr);
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
-        // retry the full handshake (§7.5.3.1): a lost/unacked request leaves the
+        // retry the full handshake (7.5.3.1): a lost/unacked request leaves the
         // parent with nothing to buffer, so re-send each round. within a round
         // listen first (rx-on-when-idle parent replies directly) then poll for
         // indirect delivery. never flush — a direct response may already be queued
@@ -574,7 +552,7 @@ impl EspMlmeInner<'_> {
         }
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
-        // retry the poll handshake (§7.5.6.3)
+        // retry the poll handshake (7.5.6.3)
         for _ in 0..POLL_DATA_RETRIES {
             let (data_req, len) = self.data_request_frame(coord_address)?;
             match self.transmit_acked(&data_req[..len]).await {
@@ -597,7 +575,7 @@ impl EspMlmeInner<'_> {
         let seq = self.sequence_number();
 
         // NWK broadcast addresses (0xfff8-0xffff) map to the MAC broadcast
-        // address 0xffff, which is never acknowledged (IEEE 802.15.4 §7.2.1.1.2)
+        // address 0xffff, which is never acknowledged (IEEE 802.15.4 7.2.1.1.2)
         let is_broadcast = matches!(dest, Address::Short(_, sa) if sa.0 >= 0xfff8);
         let dest = if is_broadcast {
             Address::Short(dest.pan_id(), ieee802154::mac::ShortAddress(0xffff))
@@ -634,12 +612,12 @@ impl EspMlmeInner<'_> {
         let hdr_len = *offset;
         let payload_len = payload.len().min(frame_buf.len() - hdr_len - 2);
         frame_buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
-        // 2-byte FCS placeholder (IEEE 802.15.4 §7.2.1.8) — the hardware
+        // 2-byte FCS placeholder (IEEE 802.15.4 7.2.1.8) — the hardware
         // computes the actual CRC-16 over the frame and overwrites these
         // bytes during transmission
         let total_len = hdr_len + payload_len + 2;
 
-        // retransmit unicasts per §7.5.6.4: a single CCA-busy or lost ack must
+        // retransmit unicasts per 7.5.6.4: a single CCA-busy or lost ack must
         // not drop a ZDO/APS response — the coordinator treats the silence as
         // an interview failure
         if is_broadcast {

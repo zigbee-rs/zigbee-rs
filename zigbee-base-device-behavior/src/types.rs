@@ -1,12 +1,10 @@
 //! Common types and enums for Zigbee Base Device Behavior (BDB).
 //!
-//! See Section 5.2.1 and 5.2.9
+//! BDB 5.2.1 and 5.2.9
 
 use zigbee::nwk::nlme::management::NetworkDescriptor;
 
-/// Commissioning modes
-///
-/// See Section 5.2.1.
+/// Commissioning modes (BDB 5.2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommissioningMode {
     NetworkSteering = 0x01,
@@ -15,9 +13,7 @@ pub enum CommissioningMode {
     Touchlink,
 }
 
-/// Status codes for BDB commissioning
-///
-/// See Section 5.3.1
+/// Status codes for BDB commissioning (BDB 5.3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BdbCommissioningStatus {
     /// Commissioning was successful.

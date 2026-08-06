@@ -17,12 +17,12 @@ pub const A_NUM_SUPER_FRAME_SLOTS: u32 = 16;
 pub const A_BASE_SUPER_FRAME_DURATION: u32 = A_BASE_SLOT_DURATION * A_NUM_SUPER_FRAME_SLOTS;
 
 /// The maximum time, in symbols, a device shall wait for a response command
-/// to be available following a request command. See IEEE 802.15.4-2003 §7.4.2.
+/// to be available following a request command. See IEEE 802.15.4-2003 7.4.2.
 /// aResponseWaitTime = 32 * aBaseSuperframeDuration = 32 * 960 = 30720 symbols.
 pub const A_RESPONSE_WAIT_TIME: u32 = 32 * A_BASE_SUPER_FRAME_DURATION;
 
 /// The maximum number of retries allowed after a transmission failure (i.e. a
-/// missing acknowledgment). See IEEE 802.15.4-2003 §7.4.2 (aMaxFrameRetries).
+/// missing acknowledgment). See IEEE 802.15.4-2003 7.4.2 (aMaxFrameRetries).
 pub const A_MAX_FRAME_RETRIES: u8 = 3;
 
 /// MAC sub-layer management entity.
@@ -36,7 +36,7 @@ pub trait Mlme {
     /// e.g. read from efuse.
     fn ieee_address(&self) -> IeeeAddress;
 
-    /// MLME-SET.request of `macShortAddress` (IEEE 802.15.4 §7.4.2).
+    /// MLME-SET.request of `macShortAddress` (IEEE 802.15.4 7.4.2).
     ///
     /// Applies the address the network layer was assigned, so the hardware
     /// filter accepts unicasts sent to it. [`Self::associate`] already does
@@ -58,7 +58,7 @@ pub trait Mlme {
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError>;
 
-    /// MLME-POLL.request + data reception (IEEE 802.15.4 §7.1.16.1).
+    /// MLME-POLL.request + data reception (IEEE 802.15.4 7.1.16.1).
     ///
     /// Sends a data request command to `coord_address`, then stays in
     /// receive mode to capture both the ACK (with frame-pending check)
@@ -157,12 +157,9 @@ pub struct PanDescriptor {
     pub coord_pan_id: ShortAddress,
     pub coord_address: Address,
     pub superframe_spec: SuperframeSpecification,
-    //pub gts_permit: bool,
+    // TODO: gts_permit, timestamp, acl_entry, security_failure
     pub link_quality: u8,
-    //pub timestamp: u32,
     pub security_use: bool,
-    //pub ACL_Entry: u8,
-    //pub security_failure: bool
     pub zigbee_beacon: ZigbeeBeacon,
 }
 

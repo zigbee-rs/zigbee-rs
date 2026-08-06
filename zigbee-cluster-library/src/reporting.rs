@@ -54,8 +54,7 @@ impl ClusterRequestHandler for ConfigureReportingServer {
 
         let offset = &mut 0;
         out.write_with(offset, response, ()).ok()?;
-        // successful configuration of all attributes collapses to a single
-        // status record carrying just SUCCESS (§2.5.8.1.3)
+        // single SUCCESS status record covers all attributes (ZCL 2.5.8.1.3)
         out.write_with(offset, Status::Success, ()).ok()?;
         Some(*offset)
     }
@@ -68,7 +67,7 @@ mod tests {
     #[test]
     fn acks_configure_reporting_with_success() {
         // Configure Reporting (global cmd 0x06) for temperature MeasuredValue;
-        // the trailing configuration record is intentionally ignored.
+        // the trailing configuration record is intentionally ignored
         let request = [
             0x00, 0x2b, 0x06, // frame control (global, c->s), seq, ConfigureReporting
             0x00, 0x00, 0x00, // direction, attribute id 0x0000
@@ -84,7 +83,7 @@ mod tests {
 
     #[test]
     fn ignores_other_commands() {
-        // Read Attributes (0x00) is not ours.
+        // Read Attributes (0x00) is not ours
         let request = [0x00, 0x01, 0x00, 0x04, 0x00];
         let mut out = [0u8; 16];
         assert_eq!(

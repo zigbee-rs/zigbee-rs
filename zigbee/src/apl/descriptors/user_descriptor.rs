@@ -45,8 +45,7 @@ impl TryWrite for UserDescriptor<'_> {
 
 impl UserDescriptor<'_> {
     fn value(&self) -> &str {
-        // Safety: We verify that a user descriptor only contains valid ASCII characters
-        // upon creation.
+        // SAFETY: validated as ASCII on construction in try_read
         unsafe { str::from_utf8_unchecked(self.0) }
     }
 }
@@ -57,13 +56,10 @@ mod tests {
 
     #[test]
     fn creating_user_descriptor_with_valid_name_should_succeed() {
-        // given
         let bytes = b"Bedroom TV";
 
-        // when
         let user_descriptor = UserDescriptor::try_read(bytes, ());
 
-        // then
         assert!(user_descriptor.is_ok());
         assert_eq!(user_descriptor.as_ref().unwrap().0.value(), "Bedroom TV");
         assert_eq!(user_descriptor.as_ref().unwrap().1, 10);
@@ -71,14 +67,11 @@ mod tests {
 
     #[test]
     fn creating_user_descriptor_with_invalid_name_should_fail() {
-        // given
-        // "⭐ light"
+        // "star light" with a non-ASCII leading character
         let bytes = &[0xE2, 0xAD, 0x90, b' ', b'l', b'i', b'g', b'h', b't'];
 
-        // when
         let user_descriptor = UserDescriptor::try_read(bytes, ());
 
-        // then
         assert!(user_descriptor.is_err());
         assert_eq!(
             user_descriptor.unwrap_err(),
@@ -90,13 +83,10 @@ mod tests {
 
     #[test]
     fn user_descriptor_should_have_max_16_characters() {
-        // given
         let bytes = b"85-inch Bedroom TV";
 
-        // when
         let user_descriptor = UserDescriptor::try_read(bytes, ());
 
-        // then
         assert!(user_descriptor.is_ok());
         assert_eq!(
             user_descriptor.as_ref().unwrap().0.value(),
@@ -107,14 +97,11 @@ mod tests {
 
     #[test]
     fn writing_user_descriptor_should_succeed() {
-        // given
         let mut bytes: [u8; 16] = [0; 16];
         let user_descriptor = UserDescriptor(b"Bedroom TV");
 
-        // when
         let bytes_written = user_descriptor.try_write(&mut bytes, ()).unwrap();
 
-        // then
         assert_eq!(bytes_written, 10);
         assert_eq!(str::from_utf8(&bytes[0..10]).unwrap(), "Bedroom TV");
     }

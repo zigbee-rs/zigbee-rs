@@ -1,4 +1,4 @@
-//! APS layer security services (§4.4)
+//! APS layer security services (4.4)
 //!
 //! Security operations (APS frame encryption, command exchange) are owned by
 //! the APSME (`apsme::Apsme`). Higher-level orchestration (transport-key

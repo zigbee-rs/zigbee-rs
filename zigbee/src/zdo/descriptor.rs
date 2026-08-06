@@ -1,7 +1,7 @@
 //! Device descriptor configuration and ZDP discovery responses.
 //!
 //! Holds the node/endpoint descriptors this device advertises and builds the
-//! matching ZDP `*_rsp` payloads (§2.4.4) used to answer the discovery requests
+//! matching ZDP `*_rsp` payloads (2.4.4) used to answer the discovery requests
 //! a coordinator issues during interview (Node_Desc, Active_EP, Simple_Desc,
 //! IEEE_addr, NWK_addr).
 
@@ -12,7 +12,7 @@ use zigbee_types::IeeeAddress;
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::nwk::nlme::management::NlmeLeaveStatus;
 
-// ZDP request cluster identifiers (§2.4.3).
+// ZDP request cluster identifiers (2.4.3).
 pub const NWK_ADDR_REQ: u16 = 0x0000;
 pub const IEEE_ADDR_REQ: u16 = 0x0001;
 pub const NODE_DESC_REQ: u16 = 0x0002;
@@ -22,7 +22,7 @@ pub const BIND_REQ: u16 = 0x0021;
 pub const UNBIND_REQ: u16 = 0x0022;
 pub const MGMT_LEAVE_REQ: u16 = 0x0034;
 
-// ZDP response cluster identifiers (§2.4.4): request id | 0x8000.
+// ZDP response cluster identifiers (2.4.4): request id | 0x8000.
 pub const NWK_ADDR_RSP: u16 = 0x8000;
 pub const IEEE_ADDR_RSP: u16 = 0x8001;
 pub const NODE_DESC_RSP: u16 = 0x8002;
@@ -32,37 +32,30 @@ pub const BIND_RSP: u16 = 0x8021;
 pub const UNBIND_RSP: u16 = 0x8022;
 pub const MGMT_LEAVE_RSP: u16 = 0x8034;
 
-/// ZDP status: SUCCESS (§2.4.5).
+// ZDP status codes (2.4.5)
 const STATUS_SUCCESS: u8 = 0x00;
-/// ZDP status: the supplied request type was invalid.
 const STATUS_INV_REQUESTTYPE: u8 = 0x80;
-/// ZDP status: the requested device does not exist.
 const STATUS_DEVICE_NOT_FOUND: u8 = 0x81;
-/// ZDP status: supplied endpoint was 0x00 or 0xff.
 const STATUS_INVALID_EP: u8 = 0x82;
-/// ZDP status: requested endpoint is not described by a simple descriptor.
 const STATUS_NOT_ACTIVE: u8 = 0x83;
-/// ZDP status: the device is not in the proper state for the operation.
 const STATUS_NOT_PERMITTED: u8 = 0x8b;
-/// ZDP status: the command was rejected due to security restrictions.
 const STATUS_NOT_AUTHORIZED: u8 = 0x8d;
 
-/// Mgmt_Leave_req options: Remove Children (§2.4.3.3.5).
+// Mgmt_Leave_req options (2.4.3.3.5)
 const MGMT_LEAVE_REMOVE_CHILDREN: u8 = 0b0100_0000;
-/// Mgmt_Leave_req options: Rejoin (§2.4.3.3.5).
 const MGMT_LEAVE_REJOIN: u8 = 0b1000_0000;
 
 const NODE_DESCRIPTOR_SIZE: usize = 13;
 
-/// Static configuration of the node descriptor (§2.3.2.3).
+/// Static configuration of the node descriptor (2.3.2.3).
 #[derive(Debug, Clone, Copy)]
 pub struct NodeDescriptorConfig {
     pub logical_type: LogicalType,
     pub complex_descriptor_available: bool,
     pub user_descriptor_available: bool,
-    /// Frequency band field (5 bits, §2.3.2.3.5).
+    /// Frequency band field (5 bits, 2.3.2.3.5).
     pub frequency_band: u8,
-    /// MAC capability flags (§2.3.2.3.6) — bit 3 set means rx-on-when-idle.
+    /// MAC capability flags (2.3.2.3.6) — bit 3 set means rx-on-when-idle.
     pub mac_capability_flags: u8,
     pub manufacturer_code: u16,
     pub maximum_buffer_size: u8,
@@ -73,7 +66,7 @@ pub struct NodeDescriptorConfig {
 }
 
 impl NodeDescriptorConfig {
-    /// Serialize the 13-byte node descriptor (§2.3.2.3) in transmission order.
+    // serialize the 13-byte node descriptor (2.3.2.3) in transmission order
     fn write(&self, out: &mut [u8]) -> Result<usize, byte::Error> {
         let offset = &mut 0;
         let logical_type = match self.logical_type {
@@ -99,7 +92,7 @@ impl NodeDescriptorConfig {
     }
 }
 
-/// One application endpoint exposed by this device (§2.3.2.5).
+/// One application endpoint exposed by this device (2.3.2.5).
 #[derive(Debug, Clone, Copy)]
 pub struct EndpointDescriptor<'a> {
     pub endpoint: u8,
@@ -111,9 +104,7 @@ pub struct EndpointDescriptor<'a> {
 }
 
 impl EndpointDescriptor<'_> {
-    /// Serialize the simple descriptor (§2.3.2.5): cluster counts are the
-    /// number of clusters, each cluster id transmitted as a little-endian
-    /// `u16`.
+    // serialize the simple descriptor (2.3.2.5); cluster ids as little-endian u16
     fn write(&self, out: &mut [u8]) -> Result<usize, byte::Error> {
         let offset = &mut 0;
         out.write_with(offset, self.endpoint, ctx::LE)?;
@@ -152,7 +143,7 @@ impl DeviceDescriptorConfig<'_> {
         self.endpoints.iter().find(|e| e.endpoint == endpoint)
     }
 
-    /// Build a Node_Desc_rsp payload (§2.4.4.2.3): seq, status,
+    /// Build a Node_Desc_rsp payload (2.4.4.2.3): seq, status,
     /// NWKAddrOfInterest, node descriptor. Returns bytes written.
     pub fn node_desc_rsp(
         &self,
@@ -171,7 +162,7 @@ impl DeviceDescriptorConfig<'_> {
         Ok(*offset)
     }
 
-    /// Build an Active_EP_rsp payload (§2.4.4.2.6): seq, status,
+    /// Build an Active_EP_rsp payload (2.4.4.2.6): seq, status,
     /// NWKAddrOfInterest, endpoint count + list.
     pub fn active_ep_rsp(
         &self,
@@ -194,7 +185,7 @@ impl DeviceDescriptorConfig<'_> {
         Ok(*offset)
     }
 
-    /// Build a Simple_Desc_rsp payload (§2.4.4.2.5): seq, status,
+    /// Build a Simple_Desc_rsp payload (2.4.4.2.5): seq, status,
     /// NWKAddrOfInterest, length, simple descriptor. An unknown endpoint yields
     /// status NOT_ACTIVE with length 0.
     pub fn simple_desc_rsp(
@@ -224,7 +215,7 @@ impl DeviceDescriptorConfig<'_> {
     }
 }
 
-/// Build an IEEE_addr_rsp / NWK_addr_rsp payload (§2.4.4.1.1/§2.4.4.1.2) for a
+/// Build an IEEE_addr_rsp / NWK_addr_rsp payload (2.4.4.1.1/2.4.4.1.2) for a
 /// single-device (request type 0x00) response: seq, status, IEEEAddrRemoteDev,
 /// NWKAddrRemoteDev.
 pub fn addr_rsp(
@@ -241,8 +232,8 @@ pub fn addr_rsp(
     Ok(*offset)
 }
 
-/// Build a Bind_rsp / Unbind_rsp payload (§2.4.4.3.2/§2.4.4.3.3): seq, status.
-/// `src_endpoint` is the SrcEndp field of the request; per §2.4.4.3.2 an
+/// Build a Bind_rsp / Unbind_rsp payload (2.4.4.3.2/2.4.4.3.3): seq, status.
+/// `src_endpoint` is the SrcEndp field of the request; per 2.4.4.3.2 an
 /// endpoint outside the inclusive 0x01-0xfe range yields INVALID_EP, otherwise
 /// the binding is accepted with SUCCESS.
 pub fn bind_rsp(seq: u8, src_endpoint: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
@@ -257,7 +248,7 @@ pub fn bind_rsp(seq: u8, src_endpoint: u8, out: &mut [u8]) -> Result<usize, byte
     Ok(*offset)
 }
 
-/// A parsed Mgmt_Leave_req (§2.4.3.3.5).
+/// A parsed Mgmt_Leave_req (2.4.3.3.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MgmtLeaveReq {
     /// ZDP transaction sequence number to echo in the response.
@@ -269,7 +260,7 @@ pub struct MgmtLeaveReq {
     pub rejoin: bool,
 }
 
-/// Parse a Mgmt_Leave_req payload (§2.4.3.3.5).
+/// Parse a Mgmt_Leave_req payload (2.4.3.3.5).
 ///
 /// Returns `None` if the payload is too short.
 pub fn parse_mgmt_leave_req(asdu: &[u8]) -> Option<MgmtLeaveReq> {
@@ -288,10 +279,10 @@ pub fn parse_mgmt_leave_req(asdu: &[u8]) -> Option<MgmtLeaveReq> {
     })
 }
 
-/// Map an NLME-LEAVE.confirm status onto the ZDP status enumeration (§2.4.5).
+/// Map an NLME-LEAVE.confirm status onto the ZDP status enumeration (2.4.5).
 ///
 /// The Mgmt_Leave_rsp Status field carries NOT_SUPPORTED, NOT_AUTHORIZED or
-/// any status code returned by NLME-LEAVE.confirm (§2.4.4.4.5).
+/// any status code returned by NLME-LEAVE.confirm (2.4.4.4.5).
 pub fn leave_status(status: NlmeLeaveStatus) -> u8 {
     match status {
         NlmeLeaveStatus::Success => STATUS_SUCCESS,
@@ -302,7 +293,7 @@ pub fn leave_status(status: NlmeLeaveStatus) -> u8 {
     }
 }
 
-/// Build a Mgmt_Leave_rsp payload (§2.4.4.4.5): seq, status.
+/// Build a Mgmt_Leave_rsp payload (2.4.4.4.5): seq, status.
 pub fn mgmt_leave_rsp(seq: u8, status: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
     let offset = &mut 0;
     out.write_with(offset, seq, ctx::LE)?;

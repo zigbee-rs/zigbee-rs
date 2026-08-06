@@ -90,21 +90,19 @@ pub trait ApsmeSap {
     ) -> ApsmeRemoveAllGroupsConfirm;
 }
 
-/// APS Management Entity (§2.2.4).
+// APS Management Entity (2.2.4)
 pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
     pub(crate) binding_table: ApsBindingTable,
     pub(crate) joined_network: Option<Address>,
-    /// apsCounter AIB attribute (§4.4.11)
+    // apsCounter AIB attribute (4.4.11)
     pub(crate) aps_counter: AtomicU8,
-    /// whether a TC link key exchange is in flight; gates the handling of
-    /// Transport-Key/Confirm-Key so replayed or unsolicited frames cannot
-    /// downgrade an established key (§4.4.10)
+    // gates handling of Transport-Key/Confirm-Key so replayed or
+    // unsolicited frames cannot downgrade an established key (4.4.10)
     tc_exchange_active: AtomicBool,
-    /// signaled when a TC link key was received and installed (§4.4.10)
+    // signaled when a TC link key was received and installed (4.4.10)
     pub(crate) tc_key_received: Event,
-    /// carries the Confirm-Key status (§4.4.9) once the TC answered the key
-    /// verification (0x00 = success)
+    // carries the Confirm-Key status (4.4.9), 0x00 = success
     pub(crate) tc_key_verified: Signal<u8>,
 }
 
@@ -121,21 +119,21 @@ impl Apsme {
         }
     }
 
-    /// Arm the TC link key exchange: clear stale events from a previous
-    /// attempt and accept Transport-Key/Confirm-Key until disarmed.
+    // arm the TC link key exchange: clear stale events from a previous
+    // attempt and accept Transport-Key/Confirm-Key until disarmed
     pub(crate) fn begin_tc_key_exchange(&self) {
         self.tc_key_received.reset();
         self.tc_key_verified.reset();
         self.tc_exchange_active.store(true, Ordering::Release);
     }
 
-    /// Disarm the TC link key exchange; subsequent key-transport commands
-    /// are ignored again.
+    // disarm the TC link key exchange; subsequent key-transport commands
+    // are ignored again
     pub(crate) fn end_tc_key_exchange(&self) {
         self.tc_exchange_active.store(false, Ordering::Release);
     }
 
-    /// Next APS counter value (§4.4.11), wrapping.
+    // next APS counter value (4.4.11), wrapping
     fn next_aps_counter(&self) -> u8 {
         self.aps_counter
             .fetch_add(1, Ordering::Relaxed)
@@ -146,11 +144,10 @@ impl Apsme {
         self.joined_network.is_some()
     }
 
-    /// Build and send an APS command frame to a specific destination (§4.4).
-    ///
-    /// When `aps_secure` is true the APS frame is encrypted with the link key
-    /// for `dest_ieee` before handing it to the NWK layer. The NWK layer
-    /// always encrypts with the network key.
+    // build and send an APS command frame to a specific destination (4.4);
+    // when aps_secure is true the frame is encrypted with the link key for
+    // dest_ieee before handing it to the NWK layer, which always applies
+    // network-key encryption on top
     pub(crate) async fn send_command<M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -189,15 +186,9 @@ impl Apsme {
         nlme.send_data(destination, true, &buf[..len]).await
     }
 
-    /// Poll the parent once (MLME-POLL, §3.6.6) and process the retrieved APS
-    /// frame.
-    ///
-    /// An APS **data** frame is surfaced as an APSDE-DATA.indication
-    /// (§2.2.4.1.3); an APS **command** frame is processed internally (§4.4)
-    /// and yields `Ok(None)`. ZDO/ZCL traffic from a centralized
-    /// coordinator is NWK-encrypted only, so only APS-unsecured data frames
-    /// produce an indication. `src_address` carries the NWK source so the
-    /// caller can address a response back to the requester.
+    // poll the parent once (MLME-POLL, 3.6.6) and process the retrieved APS
+    // frame; a data frame yields an APSDE-DATA.indication (2.2.4.1.3), a
+    // command frame is handled internally (4.4) and yields Ok(None)
     pub(crate) async fn poll_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -209,8 +200,8 @@ impl Apsme {
         self.process_nwk_data(nlme, nwk_data)
     }
 
-    /// Passively wait for the next inbound APS frame (rx-on-when-idle
-    /// devices) and process it like [`Self::poll_aps_frame`].
+    // passively wait for the next inbound APS frame (rx-on-when-idle
+    // devices) and process it like poll_aps_frame
     pub(crate) async fn receive_aps_frame<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -222,8 +213,8 @@ impl Apsme {
         self.process_nwk_data(nlme, nwk_data)
     }
 
-    /// Process one inbound NWK data frame into an APSDE-DATA.indication
-    /// (§2.2.4.1.3); APS command frames are handled internally (§4.4).
+    // process one inbound NWK data frame into an APSDE-DATA.indication
+    // (2.2.4.1.3); APS command frames are handled internally (4.4)
     fn process_nwk_data<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -236,7 +227,7 @@ impl Apsme {
         let offset = &mut 0;
         let header: Header = aps_bytes.read_with(offset, ())?;
 
-        // APS command frame (§4.4): process internally, no application data.
+        // APS command frame (4.4): process internally, no application data.
         if header.frame_control.frame_type() == FrameType::Command {
             // SAFETY: re-borrows the same buffer; decryption is in place
             let aps_buf = unsafe { nwk_data.payload_as_mut() };
@@ -276,13 +267,10 @@ impl Apsme {
         }))
     }
 
-    /// Process an inbound APS command frame at its arrival point (§4.4).
-    ///
-    /// Security-manager duties are performed inline: a Trust Center link key
-    /// is installed as unverified (§4.4.10) and a Confirm-Key marks it
-    /// verified (§4.4.9); each signals the corresponding event so a
-    /// commissioning flow (BDB §10.2.5) can await progress. Unsolicited NWK
-    /// key rotation (§4.4.3) is a future extension point.
+    // process an inbound APS command frame at its arrival point (4.4);
+    // a TC link key is installed as unverified (4.4.10) and a Confirm-Key
+    // marks it verified (4.4.9), each signaling BDB 10.2.5 commissioning.
+    // unsolicited NWK key rotation (4.4.3) is a future extension point
     fn handle_aps_command(&self, aib: &Aib, command: &Command) {
         let exchange_active = self.tc_exchange_active.load(Ordering::Acquire);
         match command {
@@ -307,7 +295,7 @@ impl Apsme {
                 }
                 self.tc_key_verified.signal(confirm.status);
             }
-            // key transport (§4.4.3): the network key is obtained inline during
+            // key transport (4.4.3): the network key is obtained inline during
             // join; an unsolicited key update would be handled here
             Command::TransportKey(_) => log::trace!("[APS] rx transport key (ignored)"),
             // TODO: a Request-Key addressed to us (e.g. app link key) would be
@@ -318,8 +306,8 @@ impl Apsme {
         }
     }
 
-    /// Install a freshly transported TC link key as unverified (§4.4.10 step 9
-    /// of BDB §10.2.5).
+    // install a freshly transported TC link key as unverified (4.4.10 step 9
+    // of BDB 10.2.5)
     fn install_unverified_tc_link_key(&self, aib: &Aib, descriptor: &TrustCenterLinkKeyDescriptor) {
         let tc_ieee = *aib.trust_center_address();
         aib.update_device_key_pair_set(|key_set| {
@@ -342,8 +330,7 @@ impl Apsme {
         });
     }
 
-    /// Mark the TC link key as verified after a successful Confirm-Key
-    /// (§4.4.9).
+    // mark the TC link key as verified after a successful Confirm-Key (4.4.9)
     fn mark_tc_link_key_verified(&self, aib: &Aib) {
         let tc_ieee = *aib.trust_center_address();
         aib.update_device_key_pair_set(|key_set| {
@@ -353,7 +340,7 @@ impl Apsme {
         });
     }
 
-    /// Send a unicast APS data frame to a specific destination (§2.2.5.1).
+    // send a unicast APS data frame to a specific destination (2.2.5.1)
     pub(crate) async fn unicast_data<M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -391,10 +378,8 @@ impl Apsme {
             .await
     }
 
-    /// Broadcast an APS data frame (§2.2.5.1).
-    ///
-    /// `nwk_broadcast` is the NWK broadcast address (e.g. `0xFFFD` for
-    /// RxOnWhenIdle devices).
+    // broadcast an APS data frame (2.2.5.1); nwk_broadcast is the NWK
+    // broadcast address (e.g. 0xFFFD for RxOnWhenIdle devices)
     pub(crate) async fn broadcast_data<M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -434,8 +419,6 @@ impl Apsme {
 }
 
 impl ApsmeSap for Apsme {
-    /// 2.2.4.3.1 - APSME-BIND.request
-    /// request to bind two devices together, or to bind a device to a group
     fn bind_request(&mut self, request: ApsmeBindRequest) -> ApsmeBindConfirm {
         let status = if !self.is_joined() || !self.supports_binding_table {
             ApsmeBindRequestStatus::IllegalRequest
@@ -459,8 +442,6 @@ impl ApsmeSap for Apsme {
         }
     }
 
-    /// 2.2.4.3.3 - request to unbind two devices, or to unbind a device from a
-    /// group
     fn unbind_request(&mut self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm {
         let status = if self.is_joined().not() {
             ApsmeUnbindRequestStatus::IllegalRequest
@@ -491,17 +472,14 @@ impl ApsmeSap for Apsme {
         }
     }
 
-    /// 2.2.4.5.1 - APSME-ADD-GROUP.request
     fn add_group(&self, _request: ApsmeAddGroupRequest) -> ApsmeAddGroupConfirm {
         ApsmeAddGroupConfirm {}
     }
 
-    /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
     fn remove_group(&self, _request: ApsmeRemoveGroupRequest) -> ApsmeRemoveGroupConfirm {
         todo!()
     }
 
-    /// 2.2.4.5.5 - APSME-REMOVE-ALL-GROUPS.request
     fn remove_all_groups(
         &self,
         _request: ApsmeRemoveAllGroupsRequest,
@@ -522,7 +500,6 @@ mod tests {
     // 2.2.4.3.1
     #[test]
     fn bind_request_device_does_not_support_binding_should_fail() {
-        // given
         let mut apsme = Apsme::new();
         apsme.supports_binding_table = false;
         let request = ApsmeBindRequest {
@@ -534,17 +511,14 @@ mod tests {
             dst_endpoint: 2u8,
         };
 
-        // when
         let result = apsme.bind_request(request);
 
-        // then
         assert_eq!(result.status, ApsmeBindRequestStatus::IllegalRequest);
     }
 
     // 2.2.4.3.1
     #[test]
     fn bind_request_from_an_unjoined_device_should_fail() {
-        // given
         let mut apsme = Apsme::new();
         let request = ApsmeBindRequest {
             src_address: Address::Extended(0u64),
@@ -555,17 +529,14 @@ mod tests {
             dst_endpoint: 2u8,
         };
 
-        // when
         let result = apsme.bind_request(request);
 
-        // then
         assert_eq!(result.status, ApsmeBindRequestStatus::IllegalRequest);
     }
 
     // 2.2.4.3.1
     #[test]
     fn bind_request_with_full_table_should_fail() {
-        // given
         let mut apsme = Apsme::new();
         apsme.joined_network = Some(Address::Extended(10u64));
         for n in 0..265u64 {
@@ -580,7 +551,6 @@ mod tests {
             let _ = apsme.bind_request(request);
         }
 
-        // when
         let request = ApsmeBindRequest {
             src_address: Address::Extended(999u64),
             src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
@@ -591,17 +561,14 @@ mod tests {
         };
         let result = apsme.bind_request(request);
 
-        // then
         assert_eq!(result.status, ApsmeBindRequestStatus::TableFull);
     }
 
     #[test]
     fn bind_request_with_valid_request_should_succeed() {
-        // given
         let mut apsme = Apsme::new();
         apsme.joined_network = Some(Address::Extended(10u64));
 
-        // when
         let request = ApsmeBindRequest {
             src_address: Address::Extended(999u64),
             src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
@@ -612,7 +579,6 @@ mod tests {
         };
         let result = apsme.bind_request(request);
 
-        // then
         assert_eq!(result.status, ApsmeBindRequestStatus::Success);
     }
 

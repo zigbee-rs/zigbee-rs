@@ -94,12 +94,10 @@ mod tests {
     fn test_command_options() {
         let mut options = CommandOptions(0);
 
-        // Test originator IEEE flag
         assert!(!options.originator_ieee());
         assert!(!options.responder_ieee());
         assert!(!options.multicast());
 
-        // Test all flags together
         options = options
             .set_originator_ieee(true)
             .set_responder_ieee(true)

@@ -35,12 +35,9 @@ use crate::nwk::nlme::management::NlmeLeaveRequest;
 use crate::nwk::nlme::management::NlmeLeaveStatus;
 use crate::security::SecurityContext;
 
-/// Number of MAC poll attempts when waiting for the Trust Center to deliver the
-/// network key (§4.4.10). When the parent is a router (not the coordinator) the
-/// key must travel router -> Trust Center -> router before the parent can
-/// buffer it for a sleepy child, so the window must be wide enough to cover
-/// that round-trip. Each empty poll already costs ~aResponseWaitTime, which
-/// paces the retries.
+// number of MAC poll attempts when waiting for the Trust Center to deliver the
+// network key (4.4.10); wide enough to cover the router -> TC -> router
+// round-trip when the parent is not the coordinator
 const TRANSPORT_KEY_POLL_RETRIES: u8 = 20;
 
 /// Provides an interface between the application object, the device profile and
@@ -54,19 +51,17 @@ pub struct ZigbeeDevice<M> {
     config: Config,
     nlme: Nlme<M>,
     apsme: Apsme,
-    /// ZDP transaction sequence number (§2.4.2), independent of the APS
-    /// counter.
+    // ZDP transaction sequence number (2.4.2), independent of the APS counter
     zdp_seq: AtomicU8,
-    /// signaled once the network key is installed; gates the receive loop
+    // signaled once the network key is installed; gates the receive loop
     joined: Event,
 }
 
 /// zigbee network
 pub struct ZigBeeNetwork {}
 
-/// ZigBee Device Profile identifier (endpoint 0).
+// ZigBee Device Profile identifier (endpoint 0)
 const ZDP_PROFILE_ID: u16 = 0x0000;
-/// ZDO endpoint.
 const ZDO_ENDPOINT: u8 = 0x00;
 
 /// Handler for inbound application-profile (non-ZDP) requests.
@@ -149,7 +144,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// Drops the link keys negotiated with the Trust Center so commissioning
-    /// starts from the default TC link key again (§4.4.10).
+    /// starts from the default TC link key again (4.4.10).
     ///
     /// Link keys are per-network: a stale key pair also carries its anti-replay
     /// counters, which reject the Transport-Key of a new join.
@@ -165,7 +160,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         &self.nlme
     }
 
-    /// Next ZDP transaction sequence number (§2.4.2), wrapping.
+    // next ZDP transaction sequence number (2.4.2), wrapping
     fn next_zdp_seq(&self) -> u8 {
         self.zdp_seq.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
     }
@@ -184,7 +179,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
     pub fn send_keep_alive(&self) {}
 
-    /// APSDE-DATA.request (§2.2.4.1.1).
+    /// APSDE-DATA.request (2.2.4.1.1).
     ///
     /// Builds an APS data frame for the given destination + endpoint +
     /// cluster + profile and hands it to the NWK layer for encryption with
@@ -229,37 +224,28 @@ impl<M: Mlme> ZigbeeDevice<M> {
         }
     }
 
-    /// 2.1.3.1 - Device Discovery
-    /// is the process whereby a ZigBee device can discover other ZigBee
-    /// devices.
+    /// Device discovery (2.1.3.1): finds other ZigBee devices on the network.
     pub fn start_device_discovery(&self) {
         match self.config.device_discovery_type {
-            config::DiscoveryType::IEEE => {
-                todo!()
-                // TODO: send IEEE address request as unicast to a particular
-                // device TODO: wait for incoming frames
-            }
-            config::DiscoveryType::NWK => {
-                todo!()
-                // TODO: send NWK address request as broadcast with the known
-                // IEEE address as data payload TODO: wait for
-                // incoming frames
-            }
+            // TODO: unicast IEEE address request, then wait for the response
+            config::DiscoveryType::IEEE => todo!(),
+            // TODO: broadcast NWK address request with the known IEEE address, then wait for the
+            // response
+            config::DiscoveryType::NWK => todo!(),
         }
     }
 
-    /// 2.1.3.2 - Service Discovery
-    /// is the process whereby the capabilities of a given device are discovered
-    /// by other devices.
+    /// Service discovery (2.1.3.2): discovers the capabilities of another
+    /// device.
     pub fn start_service_discovery(&self) {}
 
-    /// Broadcast a ZDO Device_annce (§2.4.3.1.11).
+    /// Broadcast a ZDO Device_annce (2.4.3.1.11).
     pub async fn device_annce(&self, annce: device_annce::DeviceAnnce) -> Result<(), NetworkError> {
         device_annce::broadcast(&self.nlme, &self.apsme, self.next_zdp_seq(), annce).await
     }
 
     /// Security Manager: poll for a Transport-Key command and install the
-    /// network key and Trust Center link key entry (§4.4.10).
+    /// network key and Trust Center link key entry (4.4.10).
     ///
     /// Pre-NWK-key join path only: the frame is decrypted with the well-known
     /// key before the network key is installed. Signals
@@ -323,7 +309,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
                 self.joined.signal();
             }
-            // only the network key completes the join (§4.4.10); anything
+            // only the network key completes the join (4.4.10); anything
             // else here is a stale frame — fail instead of proceeding keyless
             TransportKey::ApplicationLinkKey(_)
             | TransportKey::TrustCenterLinkKey(_)
@@ -333,9 +319,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
         Ok(())
     }
 
-    /// Security Manager: build and send an APS command frame (§4.4).
+    /// Security Manager: build and send an APS command frame (4.4).
     ///
-    /// Delegates to APSME which owns `apsCounter` (§4.4.11). When
+    /// Delegates to APSME which owns `apsCounter` (4.4.11). When
     /// `aps_secure` is true the frame is APS-encrypted with the link key for
     /// `dest_ieee`; the NWK layer always applies network-key encryption.
     pub async fn send_aps_command(
@@ -359,12 +345,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.joined.wait_set().await;
     }
 
-    /// Close the receive loop's join gate when the NWK layer reports that this
-    /// device was removed from the network (NLME-LEAVE.indication with a NULL
-    /// device address, §3.2.2.19).
-    ///
-    /// The loop then parks until the higher layer has re-commissioned or
-    /// rejoined, instead of polling a parent that dropped this device.
+    // close the receive loop's join gate on NLME-LEAVE.indication with a NULL
+    // device address (3.2.2.19); parks the loop until re-commissioned or rejoined
     fn close_gate_on_leave_indication(&self) {
         let Some(indication) = self.nlme.take_leave_indication() else {
             return;
@@ -379,7 +361,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.joined.reset();
     }
 
-    /// Arm the TC link key exchange (BDB §10.2.5): key-transport commands
+    /// Arm the TC link key exchange (BDB 10.2.5): key-transport commands
     /// are honored and stale progress events are cleared. Disarm with
     /// [`Self::end_tc_link_key_exchange`] when the exchange concludes.
     pub fn begin_tc_link_key_exchange(&self) {
@@ -392,7 +374,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.apsme.end_tc_key_exchange();
     }
 
-    /// Wait until the Trust Center delivered a new link key (§4.4.10).
+    /// Wait until the Trust Center delivered a new link key (4.4.10).
     ///
     /// The receive loop installs the key as unverified into the AIB before
     /// signaling. Bound the wait with an executor timeout.
@@ -400,7 +382,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.apsme.tc_key_received.wait().await;
     }
 
-    /// Wait until the Trust Center answered the key verification (§4.4.9)
+    /// Wait until the Trust Center answered the key verification (4.4.9)
     /// and return the Confirm-Key status (0x00 = success, key marked
     /// verified).
     ///
@@ -448,7 +430,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.dispatch(indication, cfg, handler).await
     }
 
-    /// Answer one dispatched APSDE-DATA.indication, if any.
+    // answer one dispatched APSDE-DATA.indication, if any
     async fn dispatch(
         &self,
         indication: Option<ApsdeSapIndication<'_>>,
@@ -545,27 +527,17 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 "[ZDO] leaving network after Mgmt_Leave_req: {:?}",
                 confirm.status
             );
-            // a self-leave yields a confirm, not an indication (§3.2.2.18), so
+            // a self-leave yields a confirm, not an indication (3.2.2.18), so
             // close the gate here
             self.joined.reset();
         }
         Ok(())
     }
 
-    /// Build a Mgmt_Leave_rsp payload (§2.4.4.4.5), returning its length and
-    /// the NLME-LEAVE.request the caller must issue once the response has been
-    /// sent.
-    ///
-    /// The request is validated as a leave request per §3.6.1.10.3.1, which
-    /// governs the Mgmt_Leave_req just as it does the NWK Leave command. Its
-    /// end-device rule tests the MAC source of the delivering frame, which for
-    /// a child is always its parent — the ZDP originator (a management
-    /// application, typically on the coordinator) is a different address and
-    /// not what the rule is about.
-    ///
-    /// Only a request naming this device (or the NULL address) is honored;
-    /// removing a child requires acting as its parent, which this stack does
-    /// not yet support.
+    // build a Mgmt_Leave_rsp payload (2.4.4.4.5); returns its length and the
+    // NLME-LEAVE.request to issue once the response has been sent. only a
+    // request naming this device (or the NULL address) is honored — removing
+    // a child requires acting as its parent, which this stack does not support
     fn build_mgmt_leave_rsp(
         &self,
         asdu: &[u8],
@@ -597,9 +569,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
         Some((len, leave))
     }
 
-    /// Build the ZDP `*_rsp` payload for a discovery request, echoing the
-    /// request's transaction sequence number. Returns the response cluster id
-    /// and payload length, or `None` for unsupported requests.
+    // build the ZDP `*_rsp` payload for a discovery request, echoing the
+    // request's transaction sequence number; None for unsupported requests
     fn build_zdp_response(
         &self,
         cluster: u16,
@@ -656,7 +627,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     ///
     /// Waits for the join to complete before touching the radio, so it can
     /// be spawned ahead of commissioning. The receive strategy follows the
-    /// joined capability (`nwkCapabilityInformation`, §3.4.1.3.1.1): a device
+    /// joined capability (`nwkCapabilityInformation`, 3.4.1.3.1.1): a device
     /// with `rxOnWhenIdle = TRUE` listens for frames directly, while a sleepy
     /// end device polls the parent for buffered unicasts every
     /// `poll_interval_ms` — keep it below the parent's indirect-transaction

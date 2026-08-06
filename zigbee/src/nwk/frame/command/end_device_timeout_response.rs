@@ -12,7 +12,7 @@ impl_byte! {
     pub struct EndDeviceTimeoutResponse {
         /// Whether the parent accepted the requested timeout.
         pub status: u8,
-        /// Parent Information bitmask (§3.6.10.3, §3.6.11.2).
+        /// Parent Information bitmask (3.6.10.3, 3.6.11.2).
         pub parent_information: u8,
     }
 }
@@ -27,7 +27,7 @@ impl EndDeviceTimeoutResponse {
     pub const MAC_DATA_POLL_KEEPALIVE: u8 = 1 << 0;
     /// Parent supports the End Device Timeout Request keepalive method.
     pub const TIMEOUT_REQUEST_KEEPALIVE: u8 = 1 << 1;
-    /// Parent supports power negotiation (§3.6.11.2).
+    /// Parent supports power negotiation (3.6.11.2).
     pub const POWER_NEGOTIATION_SUPPORTED: u8 = 1 << 2;
 }
 

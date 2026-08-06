@@ -8,10 +8,10 @@ use core::convert::TryInto;
 
 use heapless::Vec;
 
-/// Cluster identifier (ZCL §4.5).
+/// Cluster identifier (ZCL 4.5).
 pub const CLUSTER_ID: u16 = 0x0403;
 
-/// Attribute identifiers (ZCL §4.5.2.2.1).
+/// Attribute identifiers (ZCL 4.5.2.2.1).
 pub mod attribute {
     /// `MeasuredValue` (`Int16`, kPa × 10).
     pub const MEASURED_VALUE: u16 = 0x0000;

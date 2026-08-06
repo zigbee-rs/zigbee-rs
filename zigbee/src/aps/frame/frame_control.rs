@@ -36,9 +36,8 @@ impl FrameControl {
         self
     }
 
-    /// indicates if the destination endpoint, cluster identifier, profile
-    /// identifier and source endpoint fields shall be  present in the
-    /// acknowledgement frame.
+    /// whether the destination endpoint, cluster, profile, and source
+    /// endpoint fields are present in the acknowledgement frame
     pub fn ack_format_flag(&self) -> bool {
         ((self.0 & mask::ACK_FORMAT_FLAG) >> offset::ACK_FORMAT_FLAG) != 0
     }
@@ -53,33 +52,28 @@ impl FrameControl {
         self
     }
 
-    // specifies whether the current transmission requires an  acknowledgement frame
-    // to be sent to the originator on receipt of the frame
-    //
-    // This sub-field shall be set to 0 for all frames that are broadcast or
-    // multicast.
+    /// whether the originator requires an acknowledgement frame; always
+    /// false for broadcast or multicast
     pub fn ack_request(&self) -> bool {
         ((self.0 & mask::ACK_FLAG) >> offset::ACK_FLAG) != 0
     }
 
-    // specifies whether the extended header shall be included  in the frame.
-    // If this sub-field is set to 1, then the extended header shall be included in
-    // the frame. Otherwise, it shall not  be included in the frame.
+    /// whether the extended header is included in the frame
     pub fn extended_header(&self) -> bool {
         ((self.0 & mask::EXTENDED_HEADER_FLAG) >> offset::EXTENDED_HEADER_FLAG) != 0
     }
 
     /// Whether the endpoint, cluster, and profile fields are present
-    /// (§2.2.5.1).
+    /// (2.2.5.1).
     ///
     /// True for data frames and data-frame acks; an ack format sub-field of
-    /// 1 marks a command-frame ack without addressing fields (§2.2.5.1.1.4).
+    /// 1 marks a command-frame ack without addressing fields (2.2.5.1.1.4).
     pub fn has_data_fields(&self) -> bool {
         matches!(self.frame_type(), FrameType::Data | FrameType::InterPan)
             || (self.frame_type() == FrameType::Acknowledgement && !self.ack_format_flag())
     }
 
-    /// Whether the destination endpoint field is present (§2.2.5.1.2).
+    /// Whether the destination endpoint field is present (2.2.5.1.2).
     ///
     /// Present for unicast or broadcast delivery when data fields are included.
     pub fn has_destination_endpoint(&self) -> bool {
@@ -167,7 +161,7 @@ impl_byte! {
     }
 }
 
-// §2.2.5.1.1 frame control bit layout
+// 2.2.5.1.1 frame control bit layout
 mod offset {
     pub const FRAME_TYPE: u8 = 0;
     pub const DELIVERY_MODE: u8 = 2;

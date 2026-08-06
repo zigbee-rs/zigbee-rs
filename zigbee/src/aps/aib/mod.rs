@@ -13,7 +13,6 @@ const MAX_APS_DEVICE_KEY_PAIR_SET: usize = 2; // TODO
 construct_ib! {
     /// 2.2.7.2 - AIB (APS Information Base Attributes)
     pub struct Aib {
-        //apsBindingTable
         #[storage_key = 4]
         binding_table: StorageVec<ApsBinding, MAX_APS_BINDING_TABLE>,
         #[ctx = ()]
@@ -47,23 +46,23 @@ construct_ib! {
         trust_center_address: IeeeAddress = IeeeAddress(0xffff_ffff_ffff_ffff),
         #[storage_key = 12]
         security_timeout_period: u16 = 0x00,
-        //trust_center_policues: u8, // not implemented
+        // TODO: trust_center_policies attribute
     }
 }
 
-// TODO
+// TODO: define binding entry fields
 impl_byte! {
     #[derive(Debug, Clone)]
     pub struct ApsBinding(u8);
 }
 
-// TODO
+// TODO: define group entry fields
 impl_byte! {
     #[derive(Debug, Clone)]
     pub struct ApsGroup(u8);
 }
 
-// TODO
+// TODO: define window size fields
 impl_byte! {
     #[derive(Debug, Clone)]
     pub struct ApsWindowSize(u8);
@@ -104,6 +103,6 @@ impl_byte! {
     }
 }
 
-/// Flash persistence of the AIB.
+// flash persistence of the AIB
 #[cfg(feature = "storage")]
 pub(crate) mod storage;

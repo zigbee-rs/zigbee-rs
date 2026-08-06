@@ -2,7 +2,7 @@
 //!
 //! Application code building ZCL frames does not need to manage serialization
 //! buffers or APS addressing details by hand: implement these helpers on top
-//! of [`ZigbeeDevice::data_request`] (§2.2.4.1.1) and turn a [`ZclFrame`]
+//! of [`ZigbeeDevice::data_request`] (2.2.4.1.1) and turn a [`ZclFrame`]
 //! into a unicast APS data transfer in a single call.
 
 use byte::BytesExt;
@@ -34,7 +34,7 @@ const ZCL_TX_BUF_SIZE: usize = 96;
 /// Errors produced when building or sending a ZCL frame.
 #[derive(Debug)]
 pub enum ZclSendError {
-    /// Source endpoint outside the valid range (§2.2.4.1.1).
+    /// Source endpoint outside the valid range (2.2.4.1.1).
     InvalidEndpoint,
     /// ZCL frame did not fit into the internal serialization buffer.
     EncodeError(byte::Error),
@@ -49,7 +49,7 @@ impl From<byte::Error> for ZclSendError {
 /// APS-level addressing for a unicast ZCL transfer.
 ///
 /// Mirrors the addressing fields of the APSDE-DATA.request primitive
-/// (§2.2.4.1.1) restricted to the [`ZclSender`] use case: a short address
+/// (2.2.4.1.1) restricted to the [`ZclSender`] use case: a short address
 /// destination, source/destination endpoints, and the profile/cluster pair.
 #[derive(Debug, Clone, Copy)]
 pub struct ZclUnicast {
@@ -63,7 +63,7 @@ pub struct ZclUnicast {
 /// Convenience extension over [`ZigbeeDevice`] for sending ZCL frames.
 pub trait ZclSender {
     /// Serialize a [`ZclFrame`] and send it as a unicast APS data frame
-    /// (§2.2.4.1.1) to the given short address.
+    /// (2.2.4.1.1) to the given short address.
     async fn send_zcl_unicast(
         &self,
         addressing: ZclUnicast,
@@ -101,7 +101,7 @@ impl<M: Mlme> ZclSender for ZigbeeDevice<M> {
 }
 
 /// Builds a [`ZclFrame`] carrying a `Report Attributes` general command
-/// (ZCL §2.5.11), with the server→client direction bit set and default
+/// (ZCL 2.5.11), with the server→client direction bit set and default
 /// response disabled — the typical configuration for a sensor reporting
 /// to the trust center.
 ///
@@ -126,7 +126,7 @@ where
 
     Ok(ZclFrame {
         header: ZclHeader {
-            // Global cmd, server→client, default response disabled.
+            // global cmd, server->client, default response disabled
             frame_control: FrameControl(0x18),
             manufacturer_code: None,
             sequence_number,

@@ -208,16 +208,16 @@ impl_byte! {
 }
 
 impl ShortAddress {
-    /// Network coordinator (Zigbee R22 §3.6.1.1: the coordinator is always
+    /// Network coordinator (Zigbee R22 3.6.1.1: the coordinator is always
     /// assigned address `0x0000`).
     pub const COORDINATOR: Self = Self(0x0000);
-    /// Broadcast to all devices in the PAN (§3.6.5).
+    /// Broadcast to all devices in the PAN (3.6.5).
     pub const BROADCAST_ALL: Self = Self(0xffff);
-    /// Broadcast to all routers and the coordinator (§3.6.5).
+    /// Broadcast to all routers and the coordinator (3.6.5).
     pub const BROADCAST_ROUTERS_AND_COORDINATOR: Self = Self(0xfffc);
-    /// Broadcast to all devices with `RxOnWhenIdle = TRUE` (§3.6.5).
+    /// Broadcast to all devices with `RxOnWhenIdle = TRUE` (3.6.5).
     pub const BROADCAST_RX_ON_WHEN_IDLE: Self = Self(0xfffd);
-    /// Broadcast to all low-power routers (§3.6.5).
+    /// Broadcast to all low-power routers (3.6.5).
     pub const BROADCAST_LOW_POWER_ROUTERS: Self = Self(0xfffb);
 }
 
@@ -293,7 +293,7 @@ pub enum MacCapability {
 }
 
 impl MacCapabilityFlagsField {
-    // Note: Capacity of IndexSet must be a power of 2.
+    // capacity of IndexSet must be a power of 2
     pub fn new(capabilities: &FnvIndexSet<MacCapability, 8>) -> Self {
         let mut value: u8 = 0;
         for capa in capabilities.iter() {
@@ -356,30 +356,24 @@ mod tests {
 
     #[test]
     fn creating_mac_capabilites_should_succeed() {
-        // given
         let expected: u8 = 0b1000_0001;
 
-        // when
         let mut capas = FnvIndexSet::<MacCapability, 8>::new();
         let _ = capas.insert(MacCapability::AlternatePanCoordinator);
         let _ = capas.insert(MacCapability::AllocateAddress);
         let flagsfield = MacCapabilityFlagsField::new(&capas);
 
-        // then
         assert_eq!(expected, flagsfield.0);
     }
 
     #[test]
     fn reading_mac_capabilites_should_succeed() {
-        // given
         let mut capas = FnvIndexSet::<MacCapability, 8>::new();
         let _ = capas.insert(MacCapability::AlternatePanCoordinator);
         let _ = capas.insert(MacCapability::AllocateAddress);
 
-        // when
         let flagsfield = MacCapabilityFlagsField::new(&capas);
 
-        // then
         assert!(flagsfield.is_set(MacCapability::AlternatePanCoordinator));
         assert!(flagsfield.is_set(MacCapability::AllocateAddress));
         assert!(!flagsfield.is_set(MacCapability::DeviceType));
@@ -387,30 +381,24 @@ mod tests {
 
     #[test]
     fn creating_server_mask_field_should_succeed() {
-        // given
         let expected = 0b0010_1100_0100_0001;
 
-        // when
         let mut bits = FnvIndexSet::<ServerMaskBit, 16>::new();
         let _ = bits.insert(ServerMaskBit::PrimaryTrustCenter);
         let _ = bits.insert(ServerMaskBit::NetworkManager);
         let server_mask_field = ServerMaskField::new(&bits, 22);
 
-        // then
         assert_eq!(expected, server_mask_field.0);
     }
 
     #[test]
     fn reading_server_mask_field_should_succeed() {
-        // given
         let mut bits = FnvIndexSet::<ServerMaskBit, 16>::new();
         let _ = bits.insert(ServerMaskBit::PrimaryTrustCenter);
         let _ = bits.insert(ServerMaskBit::NetworkManager);
 
-        // when
         let server_mask_field = ServerMaskField::new(&bits, 22);
 
-        // then
         assert!(server_mask_field.is_set(ServerMaskBit::PrimaryTrustCenter));
         assert!(server_mask_field.is_set(ServerMaskBit::NetworkManager));
         assert!(!server_mask_field.is_set(ServerMaskBit::PrimaryDiscoveryCache));
@@ -419,55 +407,43 @@ mod tests {
 
     #[test]
     fn bytearray_try_read_should_succeed() {
-        // given
         let input_data = [0x01, 0x02, 0x03, 0x04, 0x05];
 
-        // when
         let (result, bytes_read) = ByteArray::<5>::try_read(&input_data, ()).unwrap();
 
-        // then
         assert_eq!(result, ByteArray(input_data));
         assert_eq!(bytes_read, 5);
     }
 
     #[test]
     fn bytearray_try_write_should_succeed() {
-        // given
         let byte_array = ByteArray([0xaa, 0xbb, 0xcc, 0xdd]);
         let mut output_buffer = [0u8; 4];
 
-        // when
         let bytes_written = byte_array.try_write(&mut output_buffer, ()).unwrap();
 
-        // then
         assert_eq!(bytes_written, 4);
         assert_eq!(output_buffer, byte_array.0);
     }
 
     #[test]
     fn bytearrayref_try_read_should_succeed() {
-        // given
         let input_data = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
 
-        // when
         let (result, bytes_read) = ByteArrayRef::try_read(&input_data, ()).unwrap();
 
-        // then
         assert_eq!(bytes_read, 6);
         assert_eq!(result.0, input_data);
     }
 
     #[test]
     fn bytearrayref_try_write_should_succeed() {
-        // given
         let input_data = [0x77, 0x88, 0x99];
         let byte_array_ref = ByteArrayRef(&input_data);
         let mut output_buffer = [0u8; 3];
 
-        // when
         let bytes_written = byte_array_ref.try_write(&mut output_buffer, ()).unwrap();
 
-        // then
         assert_eq!(bytes_written, 3);
         assert_eq!(&output_buffer[..], input_data);
     }
@@ -482,8 +458,7 @@ mod tests {
 
     #[test]
     fn typearrayref_try_read_should_succeed() {
-        // given
-        // Packed struct layout: field1(1) + field2(2) + field3(1) = 4 bytes
+        // field1(1) + field2(2) + field3(1) = 4 bytes per struct
         let input_data = [
             0x12, 0x34, 0x56, 0x78, // field1=0x12, field2=0x5634, field3=0x78
             0xaa, 0xbb, 0xcc, 0xdd, // field1=0xaa, field2=0xccbb, field3=0xdd
@@ -501,18 +476,15 @@ mod tests {
             },
         ];
 
-        // when
         let (result, bytes_read) =
             TypeArrayRef::<TestPackedStruct>::try_read(&input_data, TypeArrayCtx::Len(2)).unwrap();
 
-        // then
         assert_eq!(bytes_read, 8);
         assert_eq!(result.0, &expected_structs);
     }
 
     #[test]
     fn typearrayref_try_write_should_succeed() {
-        // given
         let test_structs = [
             TestPackedStruct {
                 field1: 0xab,
@@ -528,10 +500,8 @@ mod tests {
         let type_array_ref = TypeArrayRef(&test_structs);
         let mut output_buffer = [0u8; 8];
 
-        // when
         let bytes_written = type_array_ref.try_write(&mut output_buffer, ()).unwrap();
 
-        // then
         assert_eq!(bytes_written, 8);
         assert_eq!(
             output_buffer,

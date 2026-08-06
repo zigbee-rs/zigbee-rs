@@ -167,7 +167,6 @@ impl FrameControl {
             (DiscoverRoute::Suppress | DiscoverRoute::Enable, false, _) => {
                 DataTransmissionMethod::Unicast
             }
-            //(DiscoverRoute::Suppress, false, _) => DataTransmissionMethod::SourceRouted,
             (_, _, _) => unreachable!(),
         }
     }
