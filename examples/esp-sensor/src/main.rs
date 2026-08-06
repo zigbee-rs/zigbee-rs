@@ -294,6 +294,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
                     cluster_id: temperature::CLUSTER_ID,
                 },
                 frame,
+                &mut Delay,
             )
             .await;
 
@@ -302,9 +303,13 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
                 println!("Reported temperature: {} (seq={})", sample, zcl_seq);
                 report_failures = 0;
             }
+            // only a missing acknowledgement points at an unreachable parent;
+            // the other statuses are local or transient
             Ok(confirm) => {
                 println!("Report failed: {:?}", confirm.status);
-                report_failures += 1;
+                if confirm.status == ApsdeSapConfirmStatus::NoAck {
+                    report_failures += 1;
+                }
             }
             Err(e) => println!("Encode error: {:?}", e),
         }

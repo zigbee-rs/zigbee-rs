@@ -102,6 +102,10 @@ pub enum NetworkError {
     ParseError,
     #[error("invalid frame")]
     InvalidFrame,
+    #[error("frame does not fit a single APS frame")]
+    FrameTooLong,
+    #[error("no APS acknowledgement received")]
+    AckTimeout,
     #[error("security error: {0}")]
     SecurityError(#[from] crate::security::SecurityError),
 }
@@ -425,6 +429,16 @@ where
             .find(|n| n.network_address == network_address)
             .map(|n| n.extended_address)
             .filter(|ieee| ieee.0 != 0)
+    }
+
+    /// The network address of a neighbor whose IEEE address has been learned
+    /// from a received frame (3.4.6.2).
+    pub(crate) fn short_address_for_ieee(&self, ieee: IeeeAddress) -> Option<ShortAddress> {
+        self.nib()
+            .neighbor_table()
+            .iter()
+            .find(|n| n.extended_address == ieee)
+            .map(|n| n.network_address)
     }
 
     /// Record the IEEE address a received frame reported for its source

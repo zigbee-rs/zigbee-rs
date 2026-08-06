@@ -2,19 +2,43 @@
 //! (2.2.4.3 - 2.2.4.5).
 #![allow(dead_code)]
 #![allow(missing_docs)]
+use zigbee_types::IeeeAddress;
+
+use crate::aps::binding::Binding;
+use crate::aps::binding::BindingAddrMode;
 use crate::aps::types::Address;
 use crate::aps::types::{self};
 
-type DstAddrMode = u8;
 /// 2.2.4.3.1 - APSME-BIND.request
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApsmeBindRequest {
     pub src_address: Address,
     pub src_endpoint: types::SrcEndpoint,
     pub cluster_id: u16,
-    pub dst_addr_mode: DstAddrMode,
-    pub dst_address: u8,
+    pub dst_addr_mode: BindingAddrMode,
+    pub dst_address: Address,
     pub dst_endpoint: u8,
+}
+
+impl ApsmeBindRequest {
+    /// The binding table entry this request describes, or `None` when the
+    /// addressing mode and address do not agree (2.2.4.3.1).
+    pub(crate) fn binding(&self) -> Option<Binding> {
+        match (self.dst_addr_mode, self.dst_address) {
+            (BindingAddrMode::Device, Address::Extended(ieee)) => Some(Binding::device(
+                self.src_endpoint.value,
+                self.cluster_id,
+                IeeeAddress(ieee),
+                self.dst_endpoint,
+            )),
+            (BindingAddrMode::Group, Address::Group(group)) => Some(Binding::group(
+                self.src_endpoint.value,
+                self.cluster_id,
+                group,
+            )),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,20 +57,35 @@ pub struct ApsmeBindConfirm {
     pub src_address: Address,
     pub src_endpoint: types::SrcEndpoint,
     pub cluster_id: u16,
-    pub dst_addr_mode: DstAddrMode,
-    pub dst_address: u8,
+    pub dst_addr_mode: BindingAddrMode,
+    pub dst_address: Address,
     pub dst_endpoint: u8,
 }
 
 /// 2.2.4.3.3 - APSME-UNBIND.request
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApsmeUnbindRequest {
-    pub(crate) src_address: Address,
-    pub(crate) src_endpoint: types::SrcEndpoint,
-    pub(crate) cluster_id: u16,
-    pub(crate) dst_addr_mode: DstAddrMode,
-    pub(crate) dst_address: u8,
-    pub(crate) dst_endpoint: u8,
+    pub src_address: Address,
+    pub src_endpoint: types::SrcEndpoint,
+    pub cluster_id: u16,
+    pub dst_addr_mode: BindingAddrMode,
+    pub dst_address: Address,
+    pub dst_endpoint: u8,
+}
+
+impl ApsmeUnbindRequest {
+    /// The binding table entry this request names (2.2.4.3.3).
+    pub(crate) fn binding(&self) -> Option<Binding> {
+        ApsmeBindRequest {
+            src_address: self.src_address,
+            src_endpoint: self.src_endpoint,
+            cluster_id: self.cluster_id,
+            dst_addr_mode: self.dst_addr_mode,
+            dst_address: self.dst_address,
+            dst_endpoint: self.dst_endpoint,
+        }
+        .binding()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,8 +102,8 @@ pub struct ApsmeUnbindConfirm {
     pub(crate) src_address: Address,
     pub(crate) src_endpoint: types::SrcEndpoint,
     pub(crate) cluster_id: u16,
-    pub(crate) dst_addr_mode: DstAddrMode,
-    pub(crate) dst_address: u8,
+    pub(crate) dst_addr_mode: BindingAddrMode,
+    pub(crate) dst_address: Address,
     pub(crate) dst_endpoint: u8,
 }
 

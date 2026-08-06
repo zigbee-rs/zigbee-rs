@@ -123,6 +123,11 @@ impl Event {
         self.set.store(false, Ordering::Release);
     }
 
+    /// Whether the flag is currently set.
+    pub fn is_set(&self) -> bool {
+        self.set.load(Ordering::Acquire)
+    }
+
     /// Wait until signaled, consuming the flag (edge semantics).
     pub async fn wait(&self) {
         poll_fn(|cx| {

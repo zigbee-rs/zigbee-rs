@@ -31,10 +31,13 @@ use basemgt::ApsmeUnbindConfirm;
 use basemgt::ApsmeUnbindRequest;
 use basemgt::ApsmeUnbindRequestStatus;
 use byte::BytesExt;
+use embedded_hal_async::delay::DelayNs;
+use spin::Mutex;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::sync::Event;
 use zigbee_types::sync::Signal;
+use zigbee_types::sync::with_timeout;
 
 use super::aib;
 use super::aib::Aib;
@@ -44,7 +47,9 @@ use super::aib::LinkKeyType;
 use super::apsde::ApsdeSapIndication;
 use super::apsde::ApsdeSapIndicationStatus;
 use super::apsde::SecurityStatus;
-use super::binding::ApsBindingTable;
+use super::binding::BindingError;
+use super::binding::create_binding_link;
+use super::binding::remove_binding_link;
 use super::frame::CommandFrame;
 use super::frame::Frame;
 use super::frame::command::Command;
@@ -59,6 +64,10 @@ use super::types::DstAddrMode;
 use super::types::SrcAddrMode;
 use super::types::SrcEndpoint;
 use super::types::TxOptions;
+use crate::aps::APS_DUPLICATE_REJECTION_TABLE_SIZE;
+use crate::aps::APS_MAX_PENDING_ACKS;
+use crate::aps::APSC_ACK_WAIT_DURATION_MS;
+use crate::aps::APSC_MAX_FRAME_RETRIES;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
 use crate::security::SecurityContext;
@@ -75,10 +84,10 @@ pub mod groupmgt;
 pub trait ApsmeSap {
     /// 2.2.4.3.1 - request to bind two devices together, or to bind a device to
     /// a group
-    fn bind_request(&mut self, request: ApsmeBindRequest) -> ApsmeBindConfirm;
+    fn bind_request(&self, request: ApsmeBindRequest) -> ApsmeBindConfirm;
     /// 2.2.4.3.3 - request to unbind two devices, or to unbind a device from a
     /// group
-    fn unbind_request(&mut self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm;
+    fn unbind_request(&self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm;
     /// 2.2.4.5.1 - APSME-ADD-GROUP.request
     fn add_group(&self, request: ApsmeAddGroupRequest) -> ApsmeAddGroupConfirm;
     /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
@@ -90,11 +99,57 @@ pub trait ApsmeSap {
     ) -> ApsmeRemoveAllGroupsConfirm;
 }
 
+// identifies the acknowledgement expected for a transmitted frame
+// (2.2.8.4.4): same cluster and APS counter, source endpoint equal to the
+// destination endpoint the frame was sent to
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AckKey {
+    destination: u16,
+    dst_endpoint: u8,
+    cluster_id: u16,
+    counter: u8,
+}
+
+// one outstanding acknowledged transmission; each slot carries its own
+// event because several senders can wait at once and an Event holds a
+// single waker
+#[derive(Default)]
+struct PendingAck {
+    key: Mutex<Option<AckKey>>,
+    acked: Event,
+}
+
+// duplicate rejection table (2.2.8.4.2), keyed on source address and APS
+// counter; without a clock the spec's "timing information" degrades to
+// insertion-order eviction: an entry is remembered until the ring wraps
+#[derive(Default)]
+struct DuplicateTable {
+    entries: [Option<(u16, u8)>; APS_DUPLICATE_REJECTION_TABLE_SIZE],
+    next: usize,
+}
+
+impl DuplicateTable {
+    // records the frame and reports whether it was seen before
+    fn seen(&mut self, source: u16, counter: u8) -> bool {
+        if self.entries.contains(&Some((source, counter))) {
+            return true;
+        }
+        self.entries[self.next] = Some((source, counter));
+        self.next = (self.next + 1) % APS_DUPLICATE_REJECTION_TABLE_SIZE;
+        false
+    }
+}
+
 // APS Management Entity (2.2.4)
 pub(crate) struct Apsme {
     pub(crate) supports_binding_table: bool,
-    pub(crate) binding_table: ApsBindingTable,
-    pub(crate) joined_network: Option<Address>,
+    // whether the device is currently on a network; APS services are only
+    // available to a joined device (2.2.8.4.1)
+    joined: AtomicBool,
+    // transmissions waiting for their acknowledgement (2.2.8.4.4)
+    pending_acks: [PendingAck; APS_MAX_PENDING_ACKS],
+    // frames already delivered to the next higher layer (2.2.8.4.2)
+    duplicates: Mutex<DuplicateTable>,
     // apsCounter AIB attribute (4.4.11)
     pub(crate) aps_counter: AtomicU8,
     // gates handling of Transport-Key/Confirm-Key so replayed or
@@ -110,8 +165,9 @@ impl Apsme {
     pub(crate) fn new() -> Self {
         Self {
             supports_binding_table: true,
-            binding_table: ApsBindingTable::new(),
-            joined_network: None,
+            joined: AtomicBool::new(false),
+            pending_acks: Default::default(),
+            duplicates: Mutex::new(DuplicateTable::default()),
             aps_counter: AtomicU8::new(0),
             tc_exchange_active: AtomicBool::new(false),
             tc_key_received: Event::new(),
@@ -140,8 +196,13 @@ impl Apsme {
             .wrapping_add(1)
     }
 
+    /// Track whether the device is on a network, following the ZDO join gate.
+    pub(crate) fn set_joined(&self, joined: bool) {
+        self.joined.store(joined, Ordering::Release);
+    }
+
     fn is_joined(&self) -> bool {
-        self.joined_network.is_some()
+        self.joined.load(Ordering::Acquire)
     }
 
     // build and send an APS command frame to a specific destination (4.4);
@@ -197,7 +258,7 @@ impl Apsme {
         let Some(nwk_data) = nlme.poll_nwk_frame(buf).await? else {
             return Ok(None);
         };
-        self.process_nwk_data(nlme, nwk_data)
+        self.process_nwk_data(nlme, nwk_data).await
     }
 
     // passively wait for the next inbound APS frame (rx-on-when-idle
@@ -210,12 +271,12 @@ impl Apsme {
         let Some(nwk_data) = nlme.receive_nwk_frame(buf).await? else {
             return Ok(None);
         };
-        self.process_nwk_data(nlme, nwk_data)
+        self.process_nwk_data(nlme, nwk_data).await
     }
 
     // process one inbound NWK data frame into an APSDE-DATA.indication
     // (2.2.4.1.3); APS command frames are handled internally (4.4)
-    fn process_nwk_data<'a, M: zigbee_mac::mlme::Mlme>(
+    async fn process_nwk_data<'a, M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
         mut nwk_data: crate::nwk::frame::DataFrame<'a>,
@@ -226,6 +287,17 @@ impl Apsme {
 
         let offset = &mut 0;
         let header: Header = aps_bytes.read_with(offset, ())?;
+
+        // acknowledgement of one of our own transmissions (2.2.8.4.4)
+        if header.frame_control.frame_type() == FrameType::Acknowledgement {
+            self.resolve_ack(AckKey {
+                destination: src_short,
+                dst_endpoint: header.source_endpoint.unwrap_or(0),
+                cluster_id: header.cluster_id.unwrap_or(0),
+                counter: header.counter,
+            });
+            return Ok(None);
+        }
 
         // APS command frame (4.4): process internally, no application data.
         if header.frame_control.frame_type() == FrameType::Command {
@@ -243,6 +315,22 @@ impl Apsme {
         if header.frame_control.frame_type() != FrameType::Data
             || header.frame_control.security_flag()
         {
+            return Ok(None);
+        }
+
+        // acknowledge before rejecting a duplicate: a retransmission means our
+        // previous acknowledgement was lost (2.2.8.4.2/2.2.8.4.4)
+        if header.frame_control.ack_request()
+            && let Err(e) = self.send_ack(nlme, ShortAddress(src_short), &header).await
+        {
+            log::debug!("[APS] tx ack failed: {e:?}");
+        }
+
+        if self.duplicates.lock().seen(src_short, header.counter) {
+            log::debug!(
+                "[APS] duplicate frame from {src_short:#06x} counter {}",
+                header.counter
+            );
             return Ok(None);
         }
 
@@ -340,7 +428,50 @@ impl Apsme {
         });
     }
 
-    // send a unicast APS data frame to a specific destination (2.2.5.1)
+    // encode an APS data frame into `buf`, returning its length and the APS
+    // counter it was stamped with (2.2.5.1)
+    fn build_data_frame(
+        &self,
+        delivery_mode: DeliveryMode,
+        ack_request: bool,
+        dst_endpoint: u8,
+        cluster_id: u16,
+        profile_id: u16,
+        src_endpoint: u8,
+        payload: &[u8],
+        buf: &mut [u8],
+    ) -> Result<(usize, u8), NetworkError> {
+        let frame_control = FrameControl::default()
+            .set_frame_type(FrameType::Data)
+            .set_delivery_mode(delivery_mode)
+            .set_ack_request(ack_request);
+
+        let counter = self.next_aps_counter();
+        let header = Header {
+            frame_control,
+            destination_endpoint: Some(dst_endpoint),
+            group_address: None,
+            cluster_id: Some(cluster_id),
+            profile_id: Some(profile_id),
+            source_endpoint: Some(src_endpoint),
+            counter,
+            extended_header: None,
+        };
+
+        let offset = &mut 0;
+        buf.write_with(offset, header, ())?;
+
+        let hdr_len = *offset;
+        if payload.len() > buf.len() - hdr_len {
+            return Err(NetworkError::FrameTooLong);
+        }
+        buf[hdr_len..hdr_len + payload.len()].copy_from_slice(payload);
+
+        Ok((hdr_len + payload.len(), counter))
+    }
+
+    // send a unicast APS data frame to a specific destination (2.2.5.1),
+    // without requesting an acknowledgement
     pub(crate) async fn unicast_data<M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -351,31 +482,140 @@ impl Apsme {
         src_endpoint: u8,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        let frame_control = FrameControl::default()
-            .set_frame_type(FrameType::Data)
-            .set_delivery_mode(DeliveryMode::Unicast);
+        let mut buf = [0u8; 100];
+        let (len, _) = self.build_data_frame(
+            DeliveryMode::Unicast,
+            false,
+            dst_endpoint,
+            cluster_id,
+            profile_id,
+            src_endpoint,
+            payload,
+            &mut buf,
+        )?;
 
-        let header = Header {
-            frame_control,
-            destination_endpoint: Some(dst_endpoint),
+        nlme.send_data(destination, true, &buf[..len]).await
+    }
+
+    /// Send a unicast APS data frame and wait for its acknowledgement
+    /// (2.2.8.4.4), retransmitting up to `apscMaxFrameRetries` times.
+    ///
+    /// The frame is encoded once, so every attempt carries the same APS
+    /// counter — which is what both the acknowledgement matching rule and the
+    /// receiver's duplicate rejection rely on.
+    pub(crate) async fn unicast_data_acked<M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        destination: ShortAddress,
+        dst_endpoint: u8,
+        cluster_id: u16,
+        profile_id: u16,
+        src_endpoint: u8,
+        payload: &[u8],
+        delay: &mut impl DelayNs,
+    ) -> Result<(), NetworkError> {
+        let mut buf = [0u8; 100];
+        let (len, counter) = self.build_data_frame(
+            DeliveryMode::Unicast,
+            true,
+            dst_endpoint,
+            cluster_id,
+            profile_id,
+            src_endpoint,
+            payload,
+            &mut buf,
+        )?;
+
+        let key = AckKey {
+            destination: destination.0,
+            dst_endpoint,
+            cluster_id,
+            counter,
+        };
+        let Some(slot) = self.claim_ack_slot(key) else {
+            log::warn!("[APS] no free pending-ack slot");
+            return Err(NetworkError::AckTimeout);
+        };
+
+        let mut result = Err(NetworkError::AckTimeout);
+        for attempt in 0..=APSC_MAX_FRAME_RETRIES {
+            if let Err(e) = nlme.send_data(destination, true, &buf[..len]).await {
+                result = Err(e);
+                break;
+            }
+            if with_timeout(
+                self.pending_acks[slot].acked.wait(),
+                delay.delay_ms(APSC_ACK_WAIT_DURATION_MS),
+            )
+            .await
+            .is_some()
+            {
+                result = Ok(());
+                break;
+            }
+            log::debug!("[APS] ack timeout for counter {counter} (attempt {attempt})");
+        }
+
+        self.release_ack_slot(slot);
+        result
+    }
+
+    /// Reserve a slot for an outstanding acknowledged transmission.
+    fn claim_ack_slot(&self, key: AckKey) -> Option<usize> {
+        self.pending_acks.iter().position(|pending| {
+            let mut slot = pending.key.lock();
+            if slot.is_some() {
+                return false;
+            }
+            pending.acked.reset();
+            *slot = Some(key);
+            true
+        })
+    }
+
+    fn release_ack_slot(&self, slot: usize) {
+        *self.pending_acks[slot].key.lock() = None;
+        self.pending_acks[slot].acked.reset();
+    }
+
+    /// Release the sender waiting for this acknowledgement, if any.
+    fn resolve_ack(&self, key: AckKey) {
+        for pending in &self.pending_acks {
+            if *pending.key.lock() == Some(key) {
+                pending.acked.signal();
+                return;
+            }
+        }
+        log::trace!("[APS] rx unexpected ack for counter {}", key.counter);
+    }
+
+    /// Acknowledge a received frame that requested it (2.2.5.2.3).
+    ///
+    /// The acknowledgement echoes the cluster, profile and APS counter of the
+    /// original frame and swaps its endpoints.
+    async fn send_ack<M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        destination: ShortAddress,
+        header: &Header,
+    ) -> Result<(), NetworkError> {
+        let ack = Header {
+            frame_control: FrameControl::default()
+                .set_frame_type(FrameType::Acknowledgement)
+                .set_delivery_mode(DeliveryMode::Unicast),
+            destination_endpoint: header.source_endpoint,
             group_address: None,
-            cluster_id: Some(cluster_id),
-            profile_id: Some(profile_id),
-            source_endpoint: Some(src_endpoint),
-            counter: self.next_aps_counter(),
+            cluster_id: header.cluster_id,
+            profile_id: header.profile_id,
+            source_endpoint: header.destination_endpoint,
+            counter: header.counter,
             extended_header: None,
         };
 
-        let mut buf = [0u8; 100];
+        let mut buf = [0u8; 16];
         let offset = &mut 0;
-        buf.write_with(offset, header, ())?;
-
-        let hdr_len = *offset;
-        let payload_len = payload.len().min(buf.len() - hdr_len);
-        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
-
-        nlme.send_data(destination, true, &buf[..hdr_len + payload_len])
-            .await
+        buf.write_with(offset, ack, ())?;
+        nlme.send_data(destination, true, &buf[..*offset]).await
     }
 
     // broadcast an APS data frame (2.2.5.1); nwk_broadcast is the NWK
@@ -390,45 +630,40 @@ impl Apsme {
         src_endpoint: u8,
         payload: &[u8],
     ) -> Result<(), NetworkError> {
-        let frame_control = FrameControl::default()
-            .set_frame_type(FrameType::Data)
-            .set_delivery_mode(DeliveryMode::Broadcast);
-
-        let header = Header {
-            frame_control,
-            destination_endpoint: Some(dst_endpoint),
-            group_address: None,
-            cluster_id: Some(cluster_id),
-            profile_id: Some(profile_id),
-            source_endpoint: Some(src_endpoint),
-            counter: self.next_aps_counter(),
-            extended_header: None,
-        };
-
         let mut buf = [0u8; 100];
-        let offset = &mut 0;
-        buf.write_with(offset, header, ())?;
+        // a broadcast is never acknowledged (2.2.8.4.3)
+        let (len, _) = self.build_data_frame(
+            DeliveryMode::Broadcast,
+            false,
+            dst_endpoint,
+            cluster_id,
+            profile_id,
+            src_endpoint,
+            payload,
+            &mut buf,
+        )?;
 
-        let hdr_len = *offset;
-        let payload_len = payload.len().min(buf.len() - hdr_len);
-        buf[hdr_len..hdr_len + payload_len].copy_from_slice(&payload[..payload_len]);
-
-        nlme.broadcast_data(nwk_broadcast, true, &buf[..hdr_len + payload_len])
-            .await
+        nlme.broadcast_data(nwk_broadcast, true, &buf[..len]).await
     }
 }
 
 impl ApsmeSap for Apsme {
-    fn bind_request(&mut self, request: ApsmeBindRequest) -> ApsmeBindConfirm {
+    // 2.2.4.3.1 - APSME-BIND.request
+    // request to bind two devices together, or to bind a device to a group
+    fn bind_request(&self, request: ApsmeBindRequest) -> ApsmeBindConfirm {
         let status = if !self.is_joined() || !self.supports_binding_table {
             ApsmeBindRequestStatus::IllegalRequest
-        } else if self.binding_table.is_full() {
-            ApsmeBindRequestStatus::TableFull
-        } else {
-            match self.binding_table.create_binding_link(&request) {
-                Ok(_) => ApsmeBindRequestStatus::Success,
+        } else if let Some(binding) = request.binding() {
+            let mut result = Ok(());
+            aib::get_ref()
+                .update_binding_table(|table| result = create_binding_link(table, binding));
+            match result {
+                Ok(()) => ApsmeBindRequestStatus::Success,
+                Err(BindingError::TableFull) => ApsmeBindRequestStatus::TableFull,
                 Err(_) => ApsmeBindRequestStatus::IllegalRequest,
             }
+        } else {
+            ApsmeBindRequestStatus::IllegalRequest
         };
 
         ApsmeBindConfirm {
@@ -442,23 +677,22 @@ impl ApsmeSap for Apsme {
         }
     }
 
-    fn unbind_request(&mut self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm {
+    // 2.2.4.3.3 - request to unbind two devices, or to unbind a device from a
+    // group
+    fn unbind_request(&self, request: ApsmeUnbindRequest) -> ApsmeUnbindConfirm {
         let status = if self.is_joined().not() {
             ApsmeUnbindRequestStatus::IllegalRequest
-        } else {
-            let res = self.binding_table.remove_binding_link(&request);
-            match res {
-                Ok(_) => ApsmeUnbindRequestStatus::Success,
-                Err(err) => match err {
-                    crate::aps::binding::BindingError::IllegalRequest
-                    | crate::aps::binding::BindingError::TableFull => {
-                        ApsmeUnbindRequestStatus::IllegalRequest
-                    }
-                    crate::aps::binding::BindingError::InvalidBinding => {
-                        ApsmeUnbindRequestStatus::InvalidBinding
-                    }
-                },
+        } else if let Some(binding) = request.binding() {
+            let mut result = Ok(());
+            aib::get_ref()
+                .update_binding_table(|table| result = remove_binding_link(table, &binding));
+            match result {
+                Ok(()) => ApsmeUnbindRequestStatus::Success,
+                Err(BindingError::InvalidBinding) => ApsmeUnbindRequestStatus::InvalidBinding,
+                Err(_) => ApsmeUnbindRequestStatus::IllegalRequest,
             }
+        } else {
+            ApsmeUnbindRequestStatus::IllegalRequest
         };
 
         ApsmeUnbindConfirm {
@@ -494,92 +728,143 @@ mod tests {
     use zigbee_types::ByteArray;
 
     use super::*;
+    use crate::aps::aib::MAX_APS_BINDING_TABLE;
+    use crate::aps::binding::BindingAddrMode;
     use crate::aps::frame::command::ConfirmKey;
     use crate::aps::types::SrcEndpoint;
 
-    // 2.2.4.3.1
-    #[test]
-    fn bind_request_device_does_not_support_binding_should_fail() {
-        let mut apsme = Apsme::new();
-        apsme.supports_binding_table = false;
-        let request = ApsmeBindRequest {
-            src_address: Address::Extended(0u64),
-            src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
-            cluster_id: 1u16,
-            dst_addr_mode: 0u8,
-            dst_address: 1u8,
-            dst_endpoint: 2u8,
-        };
-
-        let result = apsme.bind_request(request);
-
-        assert_eq!(result.status, ApsmeBindRequestStatus::IllegalRequest);
-    }
-
-    // 2.2.4.3.1
-    #[test]
-    fn bind_request_from_an_unjoined_device_should_fail() {
-        let mut apsme = Apsme::new();
-        let request = ApsmeBindRequest {
-            src_address: Address::Extended(0u64),
-            src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
-            cluster_id: 1u16,
-            dst_addr_mode: 0u8,
-            dst_address: 1u8,
-            dst_endpoint: 2u8,
-        };
-
-        let result = apsme.bind_request(request);
-
-        assert_eq!(result.status, ApsmeBindRequestStatus::IllegalRequest);
-    }
-
-    // 2.2.4.3.1
-    #[test]
-    fn bind_request_with_full_table_should_fail() {
-        let mut apsme = Apsme::new();
-        apsme.joined_network = Some(Address::Extended(10u64));
-        for n in 0..265u64 {
-            let request = ApsmeBindRequest {
-                src_address: Address::Extended(n),
-                src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
-                cluster_id: 1u16,
-                dst_addr_mode: 0u8,
-                dst_address: 1u8,
-                dst_endpoint: 2u8,
-            };
-            let _ = apsme.bind_request(request);
+    fn bind_request(cluster_id: u16) -> ApsmeBindRequest {
+        ApsmeBindRequest {
+            src_address: Address::Extended(0xaabb_ccdd_eeff_0011),
+            src_endpoint: SrcEndpoint::new(10).unwrap(),
+            cluster_id,
+            dst_addr_mode: BindingAddrMode::Device,
+            dst_address: Address::Extended(0x1122_3344_5566_7788),
+            dst_endpoint: 2,
         }
+    }
 
-        let request = ApsmeBindRequest {
-            src_address: Address::Extended(999u64),
-            src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
-            cluster_id: 1u16,
-            dst_addr_mode: 0u8,
-            dst_address: 1u8,
-            dst_endpoint: 2u8,
+    fn unbind_request(cluster_id: u16) -> ApsmeUnbindRequest {
+        let request = bind_request(cluster_id);
+        ApsmeUnbindRequest {
+            src_address: request.src_address,
+            src_endpoint: request.src_endpoint,
+            cluster_id: request.cluster_id,
+            dst_addr_mode: request.dst_addr_mode,
+            dst_address: request.dst_address,
+            dst_endpoint: request.dst_endpoint,
+        }
+    }
+
+    // 2.2.4.3.1/2.2.4.3.3 — the binding table lives in the AIB singleton, so
+    // the whole lifecycle runs as one test rather than racing sibling tests
+    #[test]
+    fn bind_request_lifecycle() {
+        aib::try_init();
+        aib::get_ref().update_binding_table(|table| table.clear());
+
+        let mut apsme = Apsme::new();
+
+        // a device without binding support rejects the request
+        apsme.supports_binding_table = false;
+        apsme.set_joined(true);
+        assert_eq!(
+            apsme.bind_request(bind_request(1)).status,
+            ApsmeBindRequestStatus::IllegalRequest
+        );
+
+        // so does a device that has not joined a network
+        apsme.supports_binding_table = true;
+        apsme.set_joined(false);
+        assert_eq!(
+            apsme.bind_request(bind_request(1)).status,
+            ApsmeBindRequestStatus::IllegalRequest
+        );
+
+        apsme.set_joined(true);
+        assert_eq!(
+            apsme.bind_request(bind_request(1)).status,
+            ApsmeBindRequestStatus::Success
+        );
+        // an identical binding is not stored twice
+        assert_eq!(
+            apsme.bind_request(bind_request(1)).status,
+            ApsmeBindRequestStatus::Success
+        );
+        assert_eq!(aib::get_ref().binding_table().len(), 1);
+
+        for cluster in 2..=MAX_APS_BINDING_TABLE as u16 {
+            assert_eq!(
+                apsme.bind_request(bind_request(cluster)).status,
+                ApsmeBindRequestStatus::Success
+            );
+        }
+        assert_eq!(
+            apsme
+                .bind_request(bind_request(MAX_APS_BINDING_TABLE as u16 + 1))
+                .status,
+            ApsmeBindRequestStatus::TableFull
+        );
+
+        assert_eq!(
+            apsme.unbind_request(unbind_request(1)).status,
+            ApsmeUnbindRequestStatus::Success
+        );
+        assert_eq!(
+            apsme.unbind_request(unbind_request(1)).status,
+            ApsmeUnbindRequestStatus::InvalidBinding
+        );
+    }
+
+    // 2.2.8.4.4: an ack matches on cluster, APS counter and a source endpoint
+    // equal to the destination endpoint the frame was sent to
+    #[test]
+    fn ack_matching_releases_only_the_waiting_sender() {
+        let apsme = Apsme::new();
+        let key = AckKey {
+            destination: 0x0000,
+            dst_endpoint: 1,
+            cluster_id: 0x0402,
+            counter: 42,
         };
-        let result = apsme.bind_request(request);
+        let slot = apsme.claim_ack_slot(key).unwrap();
 
-        assert_eq!(result.status, ApsmeBindRequestStatus::TableFull);
+        // wrong counter, wrong endpoint and wrong cluster all miss
+        apsme.resolve_ack(AckKey { counter: 41, ..key });
+        apsme.resolve_ack(AckKey {
+            dst_endpoint: 2,
+            ..key
+        });
+        apsme.resolve_ack(AckKey {
+            cluster_id: 0x0006,
+            ..key
+        });
+        assert!(!apsme.pending_acks[slot].acked.is_set());
+
+        apsme.resolve_ack(key);
+        assert!(apsme.pending_acks[slot].acked.is_set());
+
+        // a released slot no longer matches and can be claimed again
+        apsme.release_ack_slot(slot);
+        apsme.resolve_ack(key);
+        assert!(!apsme.pending_acks[slot].acked.is_set());
+        assert!(apsme.claim_ack_slot(key).is_some());
     }
 
     #[test]
-    fn bind_request_with_valid_request_should_succeed() {
-        let mut apsme = Apsme::new();
-        apsme.joined_network = Some(Address::Extended(10u64));
+    fn duplicate_table_rejects_repeats_until_evicted() {
+        let mut table = DuplicateTable::default();
 
-        let request = ApsmeBindRequest {
-            src_address: Address::Extended(999u64),
-            src_endpoint: SrcEndpoint::new(10).unwrap_or(SrcEndpoint { value: 0 }),
-            cluster_id: 1u16,
-            dst_addr_mode: 0u8,
-            dst_address: 1u8,
-            dst_endpoint: 2u8,
-        };
-        let result = apsme.bind_request(request);
+        assert!(!table.seen(0x1234, 7));
+        assert!(table.seen(0x1234, 7));
+        // same counter from another device is a different frame
+        assert!(!table.seen(0x4321, 7));
 
-        assert_eq!(result.status, ApsmeBindRequestStatus::Success);
+        // the ring forgets the oldest entry once it wraps
+        for counter in 0..APS_DUPLICATE_REJECTION_TABLE_SIZE as u8 {
+            assert!(!table.seen(0x1234, 100 + counter));
+        }
+        assert!(!table.seen(0x1234, 7));
     }
 
     const TC_IEEE: IeeeAddress = IeeeAddress(0xaaaa_bbbb_cccc_dddd);

@@ -42,6 +42,13 @@ impl FrameControl {
         ((self.0 & mask::ACK_FORMAT_FLAG) >> offset::ACK_FORMAT_FLAG) != 0
     }
 
+    /// Sets the ack format flag
+    #[must_use]
+    pub fn set_ack_format_flag(mut self, value: bool) -> Self {
+        self.0 = (self.0 & !mask::ACK_FORMAT_FLAG) | ((value as u8) << offset::ACK_FORMAT_FLAG);
+        self
+    }
+
     pub fn security_flag(&self) -> bool {
         ((self.0 & mask::SECURITY_FLAG) >> offset::SECURITY_FLAG) != 0
     }
@@ -56,6 +63,16 @@ impl FrameControl {
     /// false for broadcast or multicast
     pub fn ack_request(&self) -> bool {
         ((self.0 & mask::ACK_FLAG) >> offset::ACK_FLAG) != 0
+    }
+
+    /// Requests an APS acknowledgement for this frame (2.2.8.4.3).
+    ///
+    /// Must stay 0 for acknowledgement frames and for broadcast or
+    /// group-addressed transmissions.
+    #[must_use]
+    pub fn set_ack_request(mut self, value: bool) -> Self {
+        self.0 = (self.0 & !mask::ACK_FLAG) | ((value as u8) << offset::ACK_FLAG);
+        self
     }
 
     /// whether the extended header is included in the frame

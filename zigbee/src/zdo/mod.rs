@@ -18,6 +18,7 @@ use crate::aps::aib;
 use crate::aps::aib::DeviceKeyPairDescriptor;
 use crate::aps::aib::KeyAttribute;
 use crate::aps::aib::LinkKeyType;
+use crate::aps::aib::MAX_APS_BINDING_TABLE;
 use crate::aps::apsde::ApsdeSapConfirm;
 use crate::aps::apsde::ApsdeSapConfirmStatus;
 use crate::aps::apsde::ApsdeSapIndication;
@@ -27,6 +28,7 @@ use crate::aps::frame::CommandFrame;
 use crate::aps::frame::Frame;
 use crate::aps::frame::command::Command;
 use crate::aps::frame::command::TransportKey;
+use crate::aps::types::TxOptions;
 use crate::nwk::nib;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nlme::NetworkError;
@@ -185,32 +187,29 @@ impl<M: Mlme> ZigbeeDevice<M> {
     /// cluster + profile and hands it to the NWK layer for encryption with
     /// the active network key and transmission via the parent.
     ///
-    /// MVP scope: only [`DstAddrMode::Network`] (16-bit short address) is
-    /// supported. Indirect (binding-resolved) addressing, group, and
-    /// extended addressing return [`ApsdeSapConfirmStatus::Unsupported`].
-    pub async fn data_request(&self, request: ApsdeSapRequest<'_>) -> ApsdeSapConfirm {
+    /// [`DstAddrMode::Network`] addresses a destination directly;
+    /// [`DstAddrMode::None`] resolves the destination from the binding table
+    /// (2.2.8.4.1). Group and extended addressing return
+    /// [`ApsdeSapConfirmStatus::Unsupported`].
+    ///
+    /// With [`TxOptions::Acknowledged`] the frame requests an APS
+    /// acknowledgement and is retransmitted until one arrives or
+    /// `apscMaxFrameRetries` is exhausted (2.2.8.4.4); `delay` paces that
+    /// wait.
+    pub async fn data_request(
+        &self,
+        request: ApsdeSapRequest<'_>,
+        delay: &mut impl DelayNs,
+    ) -> ApsdeSapConfirm {
         use crate::aps::types::Address;
         use crate::aps::types::DstAddrMode;
 
         let status = match (request.dst_addr_mode, request.dst_address) {
             (DstAddrMode::Network, Address::Network(short)) => {
-                match self
-                    .apsme
-                    .unicast_data(
-                        &self.nlme,
-                        ShortAddress(short),
-                        request.dst_endpoint,
-                        request.cluster_id,
-                        request.profile_id,
-                        request.src_endpoint.value,
-                        request.asdu,
-                    )
+                self.send_asdu(ShortAddress(short), &request, request.dst_endpoint, delay)
                     .await
-                {
-                    Ok(()) => ApsdeSapConfirmStatus::Success,
-                    Err(_) => ApsdeSapConfirmStatus::NoAck,
-                }
             }
+            (DstAddrMode::None, _) => self.send_to_bindings(&request, delay).await,
             _ => ApsdeSapConfirmStatus::Unsupported,
         };
 
@@ -224,7 +223,122 @@ impl<M: Mlme> ZigbeeDevice<M> {
         }
     }
 
-    /// Device discovery (2.1.3.1): finds other ZigBee devices on the network.
+    /// Transmit one ASDU to a resolved destination, honoring the request's
+    /// acknowledgement option (2.2.8.4.3).
+    async fn send_asdu(
+        &self,
+        destination: ShortAddress,
+        request: &ApsdeSapRequest<'_>,
+        dst_endpoint: u8,
+        delay: &mut impl DelayNs,
+    ) -> ApsdeSapConfirmStatus {
+        let result = if request.tx_options == TxOptions::Acknowledged {
+            self.apsme
+                .unicast_data_acked(
+                    &self.nlme,
+                    destination,
+                    dst_endpoint,
+                    request.cluster_id,
+                    request.profile_id,
+                    request.src_endpoint.value,
+                    request.asdu,
+                    delay,
+                )
+                .await
+        } else {
+            self.apsme
+                .unicast_data(
+                    &self.nlme,
+                    destination,
+                    dst_endpoint,
+                    request.cluster_id,
+                    request.profile_id,
+                    request.src_endpoint.value,
+                    request.asdu,
+                )
+                .await
+        };
+
+        match result {
+            Ok(()) => ApsdeSapConfirmStatus::Success,
+            Err(NetworkError::FrameTooLong) => ApsdeSapConfirmStatus::AsduTooLong,
+            Err(NetworkError::SecurityError(_)) => ApsdeSapConfirmStatus::SecurityFail,
+            Err(NetworkError::NotJoined) => ApsdeSapConfirmStatus::NoShortAddress,
+            Err(e) => {
+                log::debug!("[ZDO] tx failed: {e:?}");
+                ApsdeSapConfirmStatus::NoAck
+            }
+        }
+    }
+
+    /// Transmit an ASDU to every binding table entry matching the request's
+    /// source endpoint and cluster (2.2.8.4.1).
+    async fn send_to_bindings(
+        &self,
+        request: &ApsdeSapRequest<'_>,
+        delay: &mut impl DelayNs,
+    ) -> ApsdeSapConfirmStatus {
+        // the destinations are collected first: the AIB guard must not be held
+        // across a transmission
+        let mut destinations: heapless::Vec<(ShortAddress, u8), MAX_APS_BINDING_TABLE> =
+            heapless::Vec::new();
+        let mut unresolved = false;
+        let mut group_binding = false;
+
+        for binding in aib::get_ref()
+            .binding_table()
+            .iter()
+            .filter(|b| b.matches(request.src_endpoint.value, request.cluster_id))
+        {
+            let (Some(ieee), Some(dst_endpoint)) = (binding.dst_ieee, binding.dst_endpoint) else {
+                // group addressing needs the group table (2.2.8.4.1)
+                group_binding = true;
+                continue;
+            };
+            match self.resolve_binding_address(ieee) {
+                Some(short) => {
+                    let _ = destinations.push((short, dst_endpoint));
+                }
+                None => unresolved = true,
+            }
+        }
+
+        if destinations.is_empty() {
+            return match (group_binding, unresolved) {
+                (_, true) => ApsdeSapConfirmStatus::NoShortAddress,
+                (true, _) => ApsdeSapConfirmStatus::Unsupported,
+                _ => ApsdeSapConfirmStatus::NoBoundDevice,
+            };
+        }
+
+        let mut status = ApsdeSapConfirmStatus::Success;
+        for (destination, dst_endpoint) in destinations {
+            let result = self
+                .send_asdu(destination, request, dst_endpoint, delay)
+                .await;
+            if result != ApsdeSapConfirmStatus::Success && status == ApsdeSapConfirmStatus::Success
+            {
+                status = result;
+            }
+        }
+        status
+    }
+
+    /// Resolve a binding's IEEE address to a network address.
+    ///
+    /// An end device only learns addresses from received frames, so the trust
+    /// center — the usual binding destination — is resolved from the AIB
+    /// instead. This stack does not issue a NWK_addr_req.
+    fn resolve_binding_address(&self, ieee: IeeeAddress) -> Option<ShortAddress> {
+        if ieee == *aib::get_ref().trust_center_address() {
+            return Some(ShortAddress::COORDINATOR);
+        }
+        self.nlme.short_address_for_ieee(ieee)
+    }
+
+    /// 2.1.3.1 - Device Discovery
+    /// is the process whereby a ZigBee device can discover other ZigBee
+    /// devices.
     pub fn start_device_discovery(&self) {
         match self.config.device_discovery_type {
             // TODO: unicast IEEE address request, then wait for the response
@@ -307,7 +421,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     });
                 });
                 nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
-                self.joined.signal();
+                self.mark_joined(true);
             }
             // only the network key completes the join (4.4.10); anything
             // else here is a stale frame — fail instead of proceeding keyless
@@ -345,6 +459,16 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.joined.wait_set().await;
     }
 
+    // open or close the join gate, keeping the APS layer's view in sync
+    fn mark_joined(&self, joined: bool) {
+        if joined {
+            self.joined.signal();
+        } else {
+            self.joined.reset();
+        }
+        self.apsme.set_joined(joined);
+    }
+
     // close the receive loop's join gate on NLME-LEAVE.indication with a NULL
     // device address (3.2.2.19); parks the loop until re-commissioned or rejoined
     fn close_gate_on_leave_indication(&self) {
@@ -358,7 +482,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             "[ZDO] removed from the network (rejoin={})",
             indication.rejoin
         );
-        self.joined.reset();
+        self.mark_joined(false);
     }
 
     /// Arm the TC link key exchange (BDB 10.2.5): key-transport commands
@@ -529,7 +653,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             );
             // a self-leave yields a confirm, not an indication (3.2.2.18), so
             // close the gate here
-            self.joined.reset();
+            self.mark_joined(false);
         }
         Ok(())
     }
@@ -567,6 +691,79 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let len =
             descriptor::mgmt_leave_rsp(request.seq, descriptor::leave_status(status), out).ok()?;
         Some((len, leave))
+    }
+
+    // apply a ZDP Bind_req or Unbind_req to the binding table (2.4.3.2.2),
+    // returning the status for the response. Only bindings sourced at this
+    // device are accepted: this stack does not keep a binding table cache on
+    // behalf of others
+    fn apply_bind_req(
+        &self,
+        asdu: &[u8],
+        cfg: &descriptor::DeviceDescriptorConfig<'_>,
+        bind: bool,
+    ) -> descriptor::BindStatus {
+        use crate::aps::apsme::ApsmeSap;
+        use crate::aps::apsme::basemgt::ApsmeBindRequest;
+        use crate::aps::apsme::basemgt::ApsmeBindRequestStatus;
+        use crate::aps::apsme::basemgt::ApsmeUnbindRequest;
+        use crate::aps::apsme::basemgt::ApsmeUnbindRequestStatus;
+        use crate::aps::binding::BindingAddrMode;
+        use crate::aps::types::Address;
+        use crate::aps::types::SrcEndpoint;
+        use crate::zdo::descriptor::BindReqDestination;
+        use crate::zdo::descriptor::BindStatus;
+
+        let Some(request) = descriptor::parse_bind_req(asdu) else {
+            return BindStatus::NotSupported;
+        };
+        if request.src_address != *self.nlme.nib().ieee_address() {
+            return BindStatus::NotSupported;
+        }
+        let Ok(src_endpoint) = SrcEndpoint::new(request.src_endpoint) else {
+            return BindStatus::InvalidEndpoint;
+        };
+        if !cfg.supports_endpoint(request.src_endpoint) {
+            return BindStatus::InvalidEndpoint;
+        }
+
+        let (dst_addr_mode, dst_address, dst_endpoint) = match request.destination {
+            BindReqDestination::Device { ieee, endpoint } => {
+                (BindingAddrMode::Device, Address::Extended(ieee.0), endpoint)
+            }
+            BindReqDestination::Group(group) => (BindingAddrMode::Group, Address::Group(group), 0),
+        };
+
+        let bind_request = ApsmeBindRequest {
+            src_address: Address::Extended(request.src_address.0),
+            src_endpoint,
+            cluster_id: request.cluster_id,
+            dst_addr_mode,
+            dst_address,
+            dst_endpoint,
+        };
+
+        if bind {
+            return match self.apsme.bind_request(bind_request).status {
+                ApsmeBindRequestStatus::Success => BindStatus::Success,
+                ApsmeBindRequestStatus::TableFull => BindStatus::TableFull,
+                _ => BindStatus::NotSupported,
+            };
+        }
+
+        let unbind_request = ApsmeUnbindRequest {
+            src_address: bind_request.src_address,
+            src_endpoint: bind_request.src_endpoint,
+            cluster_id: bind_request.cluster_id,
+            dst_addr_mode: bind_request.dst_addr_mode,
+            dst_address: bind_request.dst_address,
+            dst_endpoint: bind_request.dst_endpoint,
+        };
+        match self.apsme.unbind_request(unbind_request).status {
+            ApsmeUnbindRequestStatus::Success => BindStatus::Success,
+            ApsmeUnbindRequestStatus::InvalidBinding => BindStatus::NoEntry,
+            ApsmeUnbindRequestStatus::IllegalRequest => BindStatus::NotSupported,
+        }
     }
 
     // build the ZDP `*_rsp` payload for a discovery request, echoing the
@@ -607,16 +804,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 descriptor::NWK_ADDR_RSP,
                 descriptor::addr_rsp(seq, ieee_addr, nwk_addr, out).ok()?,
             ),
-            // asdu: seq(1) + SrcAddress(8) + SrcEndp(1) + ... — only the source
-            // endpoint is needed to ack; the binding itself is not persisted
-            // (this device reports unconditionally rather than from the table).
             descriptor::BIND_REQ => (
                 descriptor::BIND_RSP,
-                descriptor::bind_rsp(seq, *asdu.get(9)?, out).ok()?,
+                descriptor::bind_rsp(seq, self.apply_bind_req(asdu, cfg, true), out).ok()?,
             ),
             descriptor::UNBIND_REQ => (
                 descriptor::UNBIND_RSP,
-                descriptor::bind_rsp(seq, *asdu.get(9)?, out).ok()?,
+                descriptor::bind_rsp(seq, self.apply_bind_req(asdu, cfg, false), out).ok()?,
             ),
             _ => return None,
         };
@@ -645,7 +839,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         // a restored network address means the device resumed on a network
         // without a fresh key exchange — release the gate immediately
         if *self.nlme.nib().network_address() != ShortAddress::default().0 {
-            self.joined.signal();
+            self.mark_joined(true);
         }
         self.wait_until_joined().await;
         if self

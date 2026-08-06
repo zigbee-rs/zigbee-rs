@@ -38,7 +38,10 @@ const STATUS_INV_REQUESTTYPE: u8 = 0x80;
 const STATUS_DEVICE_NOT_FOUND: u8 = 0x81;
 const STATUS_INVALID_EP: u8 = 0x82;
 const STATUS_NOT_ACTIVE: u8 = 0x83;
+const STATUS_NOT_SUPPORTED: u8 = 0x84;
+const STATUS_NO_ENTRY: u8 = 0x88;
 const STATUS_NOT_PERMITTED: u8 = 0x8b;
+const STATUS_TABLE_FULL: u8 = 0x8c;
 const STATUS_NOT_AUTHORIZED: u8 = 0x8d;
 
 // Mgmt_Leave_req options (2.4.3.3.5)
@@ -143,6 +146,11 @@ impl DeviceDescriptorConfig<'_> {
         self.endpoints.iter().find(|e| e.endpoint == endpoint)
     }
 
+    /// Whether the device implements the given endpoint.
+    pub fn supports_endpoint(&self, endpoint: u8) -> bool {
+        self.endpoint(endpoint).is_some()
+    }
+
     /// Build a Node_Desc_rsp payload (2.4.4.2.3): seq, status,
     /// NWKAddrOfInterest, node descriptor. Returns bytes written.
     pub fn node_desc_rsp(
@@ -232,19 +240,86 @@ pub fn addr_rsp(
     Ok(*offset)
 }
 
-/// Build a Bind_rsp / Unbind_rsp payload (2.4.4.3.2/2.4.4.3.3): seq, status.
-/// `src_endpoint` is the SrcEndp field of the request; per 2.4.4.3.2 an
-/// endpoint outside the inclusive 0x01-0xfe range yields INVALID_EP, otherwise
-/// the binding is accepted with SUCCESS.
-pub fn bind_rsp(seq: u8, src_endpoint: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
-    let status = if (0x01..=0xfe).contains(&src_endpoint) {
-        STATUS_SUCCESS
-    } else {
-        STATUS_INVALID_EP
+/// A parsed Bind_req / Unbind_req (2.4.3.2.2/2.4.3.2.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BindReq {
+    /// ZDP transaction sequence number to echo in the response.
+    pub seq: u8,
+    /// Device the binding applies to; must be this device.
+    pub src_address: IeeeAddress,
+    pub src_endpoint: u8,
+    pub cluster_id: u16,
+    pub destination: BindReqDestination,
+}
+
+/// Destination of a Bind_req, by addressing mode (2.4.3.2.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindReqDestination {
+    Group(u16),
+    Device { ieee: IeeeAddress, endpoint: u8 },
+}
+
+/// Parse a Bind_req / Unbind_req payload (2.4.3.2.2): seq, SrcAddress(8),
+/// SrcEndp(1), ClusterID(2), DstAddrMode(1), DstAddress(2 or 8), DstEndp(0/1).
+pub fn parse_bind_req(asdu: &[u8]) -> Option<BindReq> {
+    let offset = &mut 0;
+    let seq: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    let src_address: u64 = asdu.read_with(offset, ctx::LE).ok()?;
+    let src_endpoint: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    let cluster_id: u16 = asdu.read_with(offset, ctx::LE).ok()?;
+    let dst_addr_mode: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+
+    let destination = match dst_addr_mode {
+        BIND_ADDR_MODE_GROUP => BindReqDestination::Group(asdu.read_with(offset, ctx::LE).ok()?),
+        BIND_ADDR_MODE_DEVICE => BindReqDestination::Device {
+            ieee: IeeeAddress(asdu.read_with(offset, ctx::LE).ok()?),
+            endpoint: asdu.read_with(offset, ctx::LE).ok()?,
+        },
+        _ => return None,
     };
+
+    Some(BindReq {
+        seq,
+        src_address: IeeeAddress(src_address),
+        src_endpoint,
+        cluster_id,
+        destination,
+    })
+}
+
+/// Bind_req destination addressing mode: 16-bit group address (2.4.3.2.2).
+const BIND_ADDR_MODE_GROUP: u8 = 0x01;
+/// Bind_req destination addressing mode: 64-bit address plus endpoint.
+const BIND_ADDR_MODE_DEVICE: u8 = 0x03;
+
+/// Outcome of a Bind_req / Unbind_req, as reported in the response
+/// (2.4.4.3.2/2.4.4.3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindStatus {
+    Success,
+    InvalidEndpoint,
+    TableFull,
+    NoEntry,
+    NotSupported,
+}
+
+impl BindStatus {
+    fn code(self) -> u8 {
+        match self {
+            Self::Success => STATUS_SUCCESS,
+            Self::InvalidEndpoint => STATUS_INVALID_EP,
+            Self::TableFull => STATUS_TABLE_FULL,
+            Self::NoEntry => STATUS_NO_ENTRY,
+            Self::NotSupported => STATUS_NOT_SUPPORTED,
+        }
+    }
+}
+
+/// Build a Bind_rsp / Unbind_rsp payload (2.4.4.3.2/2.4.4.3.3): seq, status.
+pub fn bind_rsp(seq: u8, status: BindStatus, out: &mut [u8]) -> Result<usize, byte::Error> {
     let offset = &mut 0;
     out.write_with(offset, seq, ctx::LE)?;
-    out.write_with(offset, status, ctx::LE)?;
+    out.write_with(offset, status.code(), ctx::LE)?;
     Ok(*offset)
 }
 
@@ -389,19 +464,51 @@ mod tests {
     }
 
     #[test]
-    fn bind_rsp_success_for_valid_endpoint() {
+    fn bind_rsp_carries_status() {
         let mut out = [0u8; 4];
-        let n = bind_rsp(0x21, 1, &mut out).unwrap();
+        let n = bind_rsp(0x21, BindStatus::Success, &mut out).unwrap();
         assert_eq!(&out[..n], &[0x21, 0x00]);
+        let n = bind_rsp(0x21, BindStatus::InvalidEndpoint, &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x21, 0x82]);
+        let n = bind_rsp(0x21, BindStatus::TableFull, &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x21, 0x8c]);
     }
 
     #[test]
-    fn bind_rsp_invalid_endpoint() {
-        let mut out = [0u8; 4];
-        let n = bind_rsp(0x21, 0x00, &mut out).unwrap();
-        assert_eq!(&out[..n], &[0x21, 0x82]);
-        let n = bind_rsp(0x21, 0xff, &mut out).unwrap();
-        assert_eq!(&out[..n], &[0x21, 0x82]);
+    fn parse_bind_req_device_and_group_modes() {
+        // seq, SrcAddress, SrcEndp, ClusterID, DstAddrMode=0x03, DstAddress,
+        // DstEndp
+        let device = [
+            0x21, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x0a, 0x02, 0x04, 0x03, 0x01,
+            0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x01,
+        ];
+        let request = parse_bind_req(&device).unwrap();
+        assert_eq!(request.seq, 0x21);
+        assert_eq!(request.src_address, IeeeAddress(0x8877_6655_4433_2211));
+        assert_eq!(request.src_endpoint, 0x0a);
+        assert_eq!(request.cluster_id, 0x0402);
+        assert_eq!(
+            request.destination,
+            BindReqDestination::Device {
+                ieee: IeeeAddress(0x0807_0605_0403_0201),
+                endpoint: 0x01,
+            }
+        );
+
+        // DstAddrMode=0x01 carries a group address and no endpoint
+        let group = [
+            0x22, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x0a, 0x02, 0x04, 0x01, 0x34,
+            0x12,
+        ];
+        let request = parse_bind_req(&group).unwrap();
+        assert_eq!(request.destination, BindReqDestination::Group(0x1234));
+
+        // a truncated device-mode request is rejected
+        assert!(parse_bind_req(&device[..device.len() - 1]).is_none());
+        // as is an unknown addressing mode
+        let mut unknown = device;
+        unknown[12] = 0x02;
+        assert!(parse_bind_req(&unknown).is_none());
     }
 
     #[test]
