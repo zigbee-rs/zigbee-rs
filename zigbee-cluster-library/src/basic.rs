@@ -7,23 +7,14 @@
 //! requests, which a coordinator issues during interview to resolve the device
 //! to its definition.
 
-use byte::BytesExt;
-use byte::TryRead;
-use heapless::Vec;
 use zigbee::zdo::ClusterRequestHandler;
 
+use crate::attributes::AttributeSource;
+use crate::attributes::handle_read_attributes;
 use crate::common::data_types::EnumN;
 use crate::common::data_types::UnsignedN;
 use crate::common::data_types::ZclDataType;
 use crate::common::data_types::ZclString;
-use crate::frame::GeneralCommand;
-use crate::frame::ReadAttributeResponse;
-use crate::frame::Status;
-use crate::frame::ZclFrame;
-use crate::header::ZclHeader;
-use crate::header::command_identifier::CommandIdentifier;
-use crate::header::frame_control::FrameControl;
-use crate::payload::ZclFramePayload;
 
 /// Cluster identifier (ZCL 3.2).
 pub const CLUSTER_ID: u16 = 0x0000;
@@ -46,10 +37,6 @@ pub mod attribute {
     pub const POWER_SOURCE: u16 = 0x0007;
 }
 
-/// Frame control for a global, server→client response with the default
-/// response disabled.
-const RESPONSE_FRAME_CONTROL: u8 = 0x18;
-
 /// Basic cluster server holding the device identity attribute values.
 #[derive(Debug, Clone, Copy)]
 pub struct BasicServer<'a> {
@@ -64,8 +51,12 @@ pub struct BasicServer<'a> {
     pub power_source: u8,
 }
 
-impl<'a> BasicServer<'a> {
-    fn attribute(&self, id: u16) -> Option<ZclDataType<'a>> {
+impl AttributeSource for BasicServer<'_> {
+    fn cluster_id(&self) -> u16 {
+        CLUSTER_ID
+    }
+
+    fn attribute(&self, id: u16) -> Option<ZclDataType<'_>> {
         Some(match id {
             attribute::ZCL_VERSION => ZclDataType::UnsignedInt(UnsignedN::Uint8(self.zcl_version)),
             attribute::APPLICATION_VERSION => {
@@ -97,49 +88,7 @@ impl ClusterRequestHandler for BasicServer<'_> {
         asdu: &[u8],
         out: &mut [u8],
     ) -> Option<usize> {
-        if cluster_id != CLUSTER_ID {
-            return None;
-        }
-
-        let (frame, _) = ZclFrame::try_read(asdu, ()).ok()?;
-        let ZclFramePayload::GeneralCommand(GeneralCommand::ReadAttributes(requests)) =
-            frame.payload
-        else {
-            return None;
-        };
-
-        let mut records: Vec<ReadAttributeResponse, 16> = Vec::new();
-        for request in requests {
-            let record = self.attribute(request.attribute_id).map_or(
-                ReadAttributeResponse {
-                    attribute_id: request.attribute_id,
-                    status: Status::UnsupportedAttribute,
-                    value: None,
-                },
-                |value| ReadAttributeResponse {
-                    attribute_id: request.attribute_id,
-                    status: Status::Success,
-                    value: Some(value),
-                },
-            );
-            records.push(record).ok()?;
-        }
-
-        let response = ZclFrame {
-            header: ZclHeader {
-                frame_control: FrameControl(RESPONSE_FRAME_CONTROL),
-                manufacturer_code: None,
-                sequence_number: frame.header.sequence_number,
-                command_identifier: CommandIdentifier::ReadAttributesResponse,
-            },
-            payload: ZclFramePayload::GeneralCommand(GeneralCommand::ReadAttributesResponse(
-                records,
-            )),
-        };
-
-        let offset = &mut 0;
-        out.write_with(offset, response, ()).ok()?;
-        Some(*offset)
+        handle_read_attributes(self, cluster_id, asdu, out)
     }
 }
 
@@ -150,6 +99,10 @@ mod tests {
     use super::*;
     use crate::common::data_types::ZclString;
     use crate::frame::GeneralCommand;
+    use crate::frame::Status;
+    use crate::frame::ZclFrame;
+    use crate::header::command_identifier::CommandIdentifier;
+    use crate::payload::ZclFramePayload;
 
     const SERVER: BasicServer = BasicServer {
         zcl_version: 8,

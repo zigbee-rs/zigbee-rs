@@ -41,8 +41,10 @@ macro_rules! bad_input {
     };
 }
 
+pub mod attributes;
 pub mod basic;
 pub mod common;
+pub mod identify;
 pub mod profile;
 pub mod types;
 

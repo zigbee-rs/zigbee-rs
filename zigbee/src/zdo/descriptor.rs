@@ -1,9 +1,9 @@
 //! Device descriptor configuration and ZDP discovery responses.
 //!
-//! Holds the node/endpoint descriptors this device advertises and builds the
-//! matching ZDP `*_rsp` payloads (2.4.4) used to answer the discovery requests
-//! a coordinator issues during interview (Node_Desc, Active_EP, Simple_Desc,
-//! IEEE_addr, NWK_addr).
+//! Holds the node/power/endpoint descriptors this device advertises and builds
+//! the matching ZDP `*_rsp` payloads (2.4.4) used to answer the discovery
+//! requests a coordinator issues during interview (Node_Desc, Power_Desc,
+//! Active_EP, Simple_Desc, Match_Desc, IEEE_addr, NWK_addr).
 
 use byte::BytesExt;
 use byte::ctx;
@@ -16,8 +16,10 @@ use crate::nwk::nlme::management::NlmeLeaveStatus;
 pub const NWK_ADDR_REQ: u16 = 0x0000;
 pub const IEEE_ADDR_REQ: u16 = 0x0001;
 pub const NODE_DESC_REQ: u16 = 0x0002;
+pub const POWER_DESC_REQ: u16 = 0x0003;
 pub const SIMPLE_DESC_REQ: u16 = 0x0004;
 pub const ACTIVE_EP_REQ: u16 = 0x0005;
+pub const MATCH_DESC_REQ: u16 = 0x0006;
 pub const BIND_REQ: u16 = 0x0021;
 pub const UNBIND_REQ: u16 = 0x0022;
 pub const MGMT_LEAVE_REQ: u16 = 0x0034;
@@ -26,8 +28,10 @@ pub const MGMT_LEAVE_REQ: u16 = 0x0034;
 pub const NWK_ADDR_RSP: u16 = 0x8000;
 pub const IEEE_ADDR_RSP: u16 = 0x8001;
 pub const NODE_DESC_RSP: u16 = 0x8002;
+pub const POWER_DESC_RSP: u16 = 0x8003;
 pub const SIMPLE_DESC_RSP: u16 = 0x8004;
 pub const ACTIVE_EP_RSP: u16 = 0x8005;
+pub const MATCH_DESC_RSP: u16 = 0x8006;
 pub const BIND_RSP: u16 = 0x8021;
 pub const UNBIND_RSP: u16 = 0x8022;
 pub const MGMT_LEAVE_RSP: u16 = 0x8034;
@@ -49,6 +53,10 @@ const MGMT_LEAVE_REMOVE_CHILDREN: u8 = 0b0100_0000;
 const MGMT_LEAVE_REJOIN: u8 = 0b1000_0000;
 
 const NODE_DESCRIPTOR_SIZE: usize = 13;
+const POWER_DESCRIPTOR_SIZE: usize = 2;
+
+// a Match_Desc_req profile of 0xffff matches every endpoint (2.4.4.2.7.1.1)
+const WILDCARD_PROFILE_ID: u16 = 0xffff;
 
 /// Static configuration of the node descriptor (2.3.2.3).
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +99,42 @@ impl NodeDescriptorConfig {
         out.write_with(offset, self.server_mask, ctx::LE)?;
         out.write_with(offset, self.maximum_outgoing_transfer_size, ctx::LE)?;
         out.write_with(offset, self.descriptor_capability_field, ctx::LE)?;
+        Ok(*offset)
+    }
+}
+
+/// Static configuration of the node power descriptor (2.3.2.4).
+#[derive(Debug, Clone, Copy)]
+pub struct PowerDescriptorConfig {
+    /// Sleep/power-saving mode (2.3.2.4.1): `0x0` receiver on when idle,
+    /// `0x1` periodically on, `0x2` on when stimulated.
+    pub current_power_mode: u8,
+    /// Bitmap of the sources present (2.3.2.4.2): bit 0 constant/mains,
+    /// bit 1 rechargeable battery, bit 2 disposable battery.
+    pub available_power_sources: u8,
+    /// Bitmap (same bit assignment) with the source currently in use set
+    /// (2.3.2.4.3).
+    pub current_power_source: u8,
+    /// Charge level (2.3.2.4.4): `0b0000` critical, `0b0100` 33%,
+    /// `0b1000` 66%, `0b1100` 100%.
+    pub current_power_source_level: u8,
+}
+
+impl PowerDescriptorConfig {
+    // serialize the 2-byte node power descriptor (2.3.2.4); each octet holds
+    // the earlier-transmitted field in its low nibble
+    fn write(&self, out: &mut [u8]) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        out.write_with(
+            offset,
+            (self.current_power_mode & 0x0f) | ((self.available_power_sources & 0x0f) << 4),
+            ctx::LE,
+        )?;
+        out.write_with(
+            offset,
+            (self.current_power_source & 0x0f) | ((self.current_power_source_level & 0x0f) << 4),
+            ctx::LE,
+        )?;
         Ok(*offset)
     }
 }
@@ -138,6 +182,7 @@ impl EndpointDescriptor<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceDescriptorConfig<'a> {
     pub node: NodeDescriptorConfig,
+    pub power: PowerDescriptorConfig,
     pub endpoints: &'a [EndpointDescriptor<'a>],
 }
 
@@ -168,6 +213,51 @@ impl DeviceDescriptorConfig<'_> {
         out[*offset..*offset + n].copy_from_slice(&nd[..n]);
         *offset += n;
         Ok(*offset)
+    }
+
+    /// Build a Power_Desc_rsp payload (2.4.4.2.4): seq, status,
+    /// NWKAddrOfInterest, power descriptor.
+    pub fn power_desc_rsp(
+        &self,
+        seq: u8,
+        nwk_addr: u16,
+        out: &mut [u8],
+    ) -> Result<usize, byte::Error> {
+        let offset = &mut 0;
+        out.write_with(offset, seq, ctx::LE)?;
+        out.write_with(offset, STATUS_SUCCESS, ctx::LE)?;
+        out.write_with(offset, nwk_addr, ctx::LE)?;
+        let mut pd = [0u8; POWER_DESCRIPTOR_SIZE];
+        let n = self.power.write(&mut pd)?;
+        out[*offset..*offset + n].copy_from_slice(&pd[..n]);
+        *offset += n;
+        Ok(*offset)
+    }
+
+    /// Endpoints matching the request (2.4.4.2.7.1.1), written into `out`.
+    ///
+    /// Returns how many were written.
+    pub fn matching_endpoints(&self, request: &MatchDescReq<'_>, out: &mut [u8]) -> usize {
+        let mut count = 0;
+        for ep in self.endpoints {
+            if request.profile_id != WILDCARD_PROFILE_ID && request.profile_id != ep.profile_id {
+                continue;
+            }
+            let matches = request
+                .input_clusters()
+                .any(|cluster| ep.input_clusters.contains(&cluster))
+                || request
+                    .output_clusters()
+                    .any(|cluster| ep.output_clusters.contains(&cluster));
+            if matches {
+                let Some(slot) = out.get_mut(count) else {
+                    break;
+                };
+                *slot = ep.endpoint;
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Build an Active_EP_rsp payload (2.4.4.2.6): seq, status,
@@ -323,6 +413,99 @@ pub fn bind_rsp(seq: u8, status: BindStatus, out: &mut [u8]) -> Result<usize, by
     Ok(*offset)
 }
 
+/// A parsed Match_Desc_req (2.4.3.1.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchDescReq<'a> {
+    /// ZDP transaction sequence number to echo in the response.
+    pub seq: u8,
+    pub nwk_addr_of_interest: u16,
+    pub profile_id: u16,
+    input_clusters: &'a [u8],
+    output_clusters: &'a [u8],
+}
+
+impl MatchDescReq<'_> {
+    /// Input cluster identifiers to match against.
+    pub fn input_clusters(&self) -> impl Iterator<Item = u16> + '_ {
+        cluster_ids(self.input_clusters)
+    }
+
+    /// Output cluster identifiers to match against.
+    pub fn output_clusters(&self) -> impl Iterator<Item = u16> + '_ {
+        cluster_ids(self.output_clusters)
+    }
+}
+
+fn cluster_ids(bytes: &[u8]) -> impl Iterator<Item = u16> + '_ {
+    bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+}
+
+/// Parse a Match_Desc_req payload (2.4.3.1.7).
+///
+/// Returns `None` if the payload is truncated or a declared cluster count runs
+/// past the end of the ASDU.
+pub fn parse_match_desc_req(asdu: &[u8]) -> Option<MatchDescReq<'_>> {
+    let seq = *asdu.first()?;
+    let nwk_addr_of_interest = u16::from_le_bytes(asdu.get(1..3)?.try_into().ok()?);
+    let profile_id = u16::from_le_bytes(asdu.get(3..5)?.try_into().ok()?);
+
+    let in_count = usize::from(*asdu.get(5)?);
+    let in_end = 6 + in_count * 2;
+    let input_clusters = asdu.get(6..in_end)?;
+
+    let out_count = usize::from(*asdu.get(in_end)?);
+    let out_start = in_end + 1;
+    let output_clusters = asdu.get(out_start..out_start + out_count * 2)?;
+
+    Some(MatchDescReq {
+        seq,
+        nwk_addr_of_interest,
+        profile_id,
+        input_clusters,
+        output_clusters,
+    })
+}
+
+/// Build a Match_Desc_rsp payload (2.4.4.2.7): seq, status,
+/// NWKAddrOfInterest, MatchLength, MatchList.
+pub fn match_desc_rsp(
+    seq: u8,
+    nwk_addr: u16,
+    matches: &[u8],
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, STATUS_SUCCESS, ctx::LE)?;
+    out.write_with(offset, nwk_addr, ctx::LE)?;
+    out.write_with(
+        offset,
+        u8::try_from(matches.len()).unwrap_or(u8::MAX),
+        ctx::LE,
+    )?;
+    for &endpoint in matches {
+        out.write_with(offset, endpoint, ctx::LE)?;
+    }
+    Ok(*offset)
+}
+
+/// Build a Match_Desc_rsp carrying only Status and MatchLength (2.4.4.2.7
+/// step 2.b.iii), for a unicast request about another device.
+///
+/// NWKAddrOfInterest is omitted on purpose: the error paths of 2.4.4.2.7
+/// (steps 2.b.iii, 4.b.ii, 6.b) all specify Status and MatchLength only, and
+/// only the success path (step 7.b) carries the address. Dissectors that model
+/// the response as a fixed layout report the short frame as malformed.
+pub fn match_desc_rsp_invalid_request(seq: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, STATUS_INV_REQUESTTYPE, ctx::LE)?;
+    out.write_with(offset, 0u8, ctx::LE)?;
+    Ok(*offset)
+}
+
 /// A parsed Mgmt_Leave_req (2.4.3.3.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MgmtLeaveReq {
@@ -394,18 +577,27 @@ mod tests {
         descriptor_capability_field: 0,
     };
 
+    // mains-powered, on when idle, 100% charge
+    const POWER: PowerDescriptorConfig = PowerDescriptorConfig {
+        current_power_mode: 0b0000,
+        available_power_sources: 0b0001,
+        current_power_source: 0b0001,
+        current_power_source_level: 0b1100,
+    };
+
     const ENDPOINTS: [EndpointDescriptor; 1] = [EndpointDescriptor {
         endpoint: 1,
         profile_id: 0x0104,
         device_id: 0x0302,
         device_version: 1,
         input_clusters: &[0x0000, 0x0402],
-        output_clusters: &[],
+        output_clusters: &[0x0019],
     }];
 
     fn cfg() -> DeviceDescriptorConfig<'static> {
         DeviceDescriptorConfig {
             node: NODE,
+            power: POWER,
             endpoints: &ENDPOINTS,
         }
     }
@@ -444,13 +636,13 @@ mod tests {
             &out[..n],
             &[
                 0x07, 0x00, 0x34, 0x12, // seq, status, NWKAddrOfInterest
-                0x0c, // length
+                0x0e, // length
                 0x01, // endpoint
                 0x04, 0x01, // profile id
                 0x02, 0x03, // device id
                 0x01, // device version
                 0x02, 0x00, 0x00, 0x02, 0x04, // input count + clusters
-                0x00, // output count
+                0x01, 0x19, 0x00, // output count + clusters
             ]
         );
     }
@@ -461,6 +653,106 @@ mod tests {
         let n = cfg().simple_desc_rsp(0x07, 0x1234, 9, &mut out).unwrap();
         // status NOT_ACTIVE (0x83), length 0, no descriptor
         assert_eq!(&out[..n], &[0x07, 0x83, 0x34, 0x12, 0x00]);
+    }
+
+    #[test]
+    fn power_desc_rsp_layout() {
+        let mut out = [0u8; 16];
+        let n = cfg().power_desc_rsp(0x07, 0x1234, &mut out).unwrap();
+        assert_eq!(
+            &out[..n],
+            &[
+                0x07, 0x00, 0x34, 0x12, // seq, status, NWKAddrOfInterest
+                0x10, // current power mode | available sources << 4
+                0xc1, // current source | level << 4
+            ]
+        );
+    }
+
+    // 2.4.3.1.7: seq, NWKAddrOfInterest, ProfileID, then both cluster lists
+    const MATCH_REQ: [u8; 13] = [
+        0x33, // seq
+        0x34, 0x12, // NWKAddrOfInterest
+        0x04, 0x01, // profile id 0x0104
+        0x02, 0x00, 0x00, 0x02, 0x04, // 2 input clusters: 0x0000, 0x0402
+        0x01, 0x19, 0x00, // 1 output cluster: 0x0019
+    ];
+
+    #[test]
+    fn parse_match_desc_req_lists() {
+        let req = parse_match_desc_req(&MATCH_REQ).unwrap();
+        assert_eq!(req.seq, 0x33);
+        assert_eq!(req.nwk_addr_of_interest, 0x1234);
+        assert_eq!(req.profile_id, 0x0104);
+        assert!(req.input_clusters().eq([0x0000, 0x0402]));
+        assert!(req.output_clusters().eq([0x0019]));
+    }
+
+    #[test]
+    fn parse_match_desc_req_rejects_truncated_list() {
+        // declares two input clusters but carries one and a half
+        assert!(parse_match_desc_req(&MATCH_REQ[..8]).is_none());
+        // missing the output cluster count entirely
+        assert!(parse_match_desc_req(&MATCH_REQ[..10]).is_none());
+        assert!(parse_match_desc_req(&[0x33, 0x34]).is_none());
+    }
+
+    #[test]
+    fn matching_endpoints_by_input_cluster() {
+        // temperature measurement is an input cluster on endpoint 1
+        let asdu = [0x33, 0x34, 0x12, 0x04, 0x01, 0x01, 0x02, 0x04, 0x00];
+        let req = parse_match_desc_req(&asdu).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(cfg().matching_endpoints(&req, &mut out), 1);
+        assert_eq!(out[0], 1);
+    }
+
+    #[test]
+    fn matching_endpoints_by_output_cluster() {
+        // OTA (0x0019) is an output cluster on endpoint 1
+        let asdu = [0x33, 0x34, 0x12, 0x04, 0x01, 0x00, 0x01, 0x19, 0x00];
+        let req = parse_match_desc_req(&asdu).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(cfg().matching_endpoints(&req, &mut out), 1);
+    }
+
+    #[test]
+    fn matching_endpoints_wildcard_profile() {
+        // profile 0xffff matches regardless of the endpoint's profile
+        let asdu = [0x33, 0x34, 0x12, 0xff, 0xff, 0x01, 0x02, 0x04, 0x00];
+        let req = parse_match_desc_req(&asdu).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(cfg().matching_endpoints(&req, &mut out), 1);
+    }
+
+    #[test]
+    fn matching_endpoints_rejects_wrong_profile_and_unknown_cluster() {
+        // right cluster, wrong profile
+        let asdu = [0x33, 0x34, 0x12, 0x09, 0x01, 0x01, 0x02, 0x04, 0x00];
+        let req = parse_match_desc_req(&asdu).unwrap();
+        let mut out = [0u8; 4];
+        assert_eq!(cfg().matching_endpoints(&req, &mut out), 0);
+
+        // right profile, cluster we do not serve
+        let asdu = [0x33, 0x34, 0x12, 0x04, 0x01, 0x01, 0x06, 0x00, 0x00];
+        let req = parse_match_desc_req(&asdu).unwrap();
+        assert_eq!(cfg().matching_endpoints(&req, &mut out), 0);
+    }
+
+    #[test]
+    fn match_desc_rsp_layout() {
+        let mut out = [0u8; 16];
+        let n = match_desc_rsp(0x33, 0x1234, &[1], &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x33, 0x00, 0x34, 0x12, 0x01, 0x01]);
+    }
+
+    #[test]
+    fn match_desc_rsp_invalid_request_omits_address() {
+        let mut out = [0u8; 16];
+        let n = match_desc_rsp_invalid_request(0x33, &mut out).unwrap();
+        // seq, INV_REQUESTTYPE, MatchLength — no NWKAddrOfInterest (2.4.4.2.7
+        // step 2.b.iii)
+        assert_eq!(&out[..n], &[0x33, 0x80, 0x00]);
     }
 
     #[test]

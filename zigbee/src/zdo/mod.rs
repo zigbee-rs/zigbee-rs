@@ -30,6 +30,7 @@ use crate::aps::frame::command::Command;
 use crate::aps::frame::command::TransportKey;
 use crate::aps::types::TxOptions;
 use crate::nwk::nib;
+use crate::nwk::nib::NWK_BROADCAST_ADDRESS_MIN;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
@@ -66,6 +67,9 @@ pub struct ZigBeeNetwork {}
 const ZDP_PROFILE_ID: u16 = 0x0000;
 const ZDO_ENDPOINT: u8 = 0x00;
 
+// an endpoint appears at most once in a MatchList (2.4.4.2.7 step 3.b)
+const MAX_MATCHING_ENDPOINTS: usize = 16;
+
 /// Handler for inbound application-profile (non-ZDP) requests.
 ///
 /// Implemented by cluster servers (e.g. the ZCL Basic cluster) to answer
@@ -83,6 +87,29 @@ pub trait ClusterRequestHandler {
         asdu: &[u8],
         out: &mut [u8],
     ) -> Option<usize>;
+}
+
+/// Lets a handler be shared by reference, so a cluster server the application
+/// also reads from can live outside the receive task.
+impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
+    fn handle(
+        &self,
+        profile_id: u16,
+        cluster_id: u16,
+        src_endpoint: u8,
+        dst_endpoint: u8,
+        asdu: &[u8],
+        out: &mut [u8],
+    ) -> Option<usize> {
+        (**self).handle(
+            profile_id,
+            cluster_id,
+            src_endpoint,
+            dst_endpoint,
+            asdu,
+            out,
+        )
+    }
 }
 
 /// Chains two handlers: the first to produce a response wins. Lets an
@@ -110,6 +137,33 @@ impl<A: ClusterRequestHandler, B: ClusterRequestHandler> ClusterRequestHandler f
             return Some(len);
         }
         self.1.handle(
+            profile_id,
+            cluster_id,
+            src_endpoint,
+            dst_endpoint,
+            asdu,
+            out,
+        )
+    }
+}
+
+/// Chains three handlers, left to right.
+impl<A, B, C> ClusterRequestHandler for (A, B, C)
+where
+    A: ClusterRequestHandler,
+    B: ClusterRequestHandler,
+    C: ClusterRequestHandler,
+{
+    fn handle(
+        &self,
+        profile_id: u16,
+        cluster_id: u16,
+        src_endpoint: u8,
+        dst_endpoint: u8,
+        asdu: &[u8],
+        out: &mut [u8],
+    ) -> Option<usize> {
+        (&self.0, (&self.1, &self.2)).handle(
             profile_id,
             cluster_id,
             src_endpoint,
@@ -593,12 +647,15 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let mut leave_after_reply = None;
 
         // (response cluster, profile, dst endpoint, src endpoint, length)
+        // a broadcast is answered differently from a unicast, both for
+        // Match_Desc_req (2.4.4.2.7) and Mgmt_Leave_req (3.6.1.10.3 step 1)
+        let nwk_dst = match indication.dst_address {
+            Address::Network(dst) => dst,
+            _ => *self.nlme.nib().network_address(),
+        };
+
         let response = if profile == ZDP_PROFILE_ID && cluster == descriptor::MGMT_LEAVE_REQ {
-            let destination = match indication.dst_address {
-                Address::Network(dst) => ShortAddress(dst),
-                _ => ShortAddress(*self.nlme.nib().network_address()),
-            };
-            self.build_mgmt_leave_rsp(indication.asdu, destination, &mut out)
+            self.build_mgmt_leave_rsp(indication.asdu, ShortAddress(nwk_dst), &mut out)
                 .map(|(len, request)| {
                     leave_after_reply = request;
                     (
@@ -610,7 +667,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     )
                 })
         } else if profile == ZDP_PROFILE_ID {
-            self.build_zdp_response(cluster, indication.asdu, cfg, &mut out)
+            self.build_zdp_response(cluster, indication.asdu, nwk_dst, cfg, &mut out)
                 .map(|(rsp_cluster, len)| {
                     (rsp_cluster, ZDP_PROFILE_ID, ZDO_ENDPOINT, ZDO_ENDPOINT, len)
                 })
@@ -662,6 +719,44 @@ impl<M: Mlme> ZigbeeDevice<M> {
     // NLME-LEAVE.request to issue once the response has been sent. only a
     // request naming this device (or the NULL address) is honored — removing
     // a child requires acting as its parent, which this stack does not support
+    // answer a Match_Desc_req as an end device (2.4.4.2.7): a broadcast about
+    // another device (step 2.a) or without a match (step 5) stays silent, a
+    // unicast about another device gets INV_REQUESTTYPE (step 2.b)
+    fn build_match_desc_rsp(
+        &self,
+        asdu: &[u8],
+        nwk_dst: u16,
+        nwk_addr: u16,
+        cfg: &descriptor::DeviceDescriptorConfig<'_>,
+        out: &mut [u8],
+    ) -> Option<(u16, usize)> {
+        let request = descriptor::parse_match_desc_req(asdu)?;
+        let broadcast = nwk_dst >= NWK_BROADCAST_ADDRESS_MIN;
+        let about_us = request.nwk_addr_of_interest == nwk_addr
+            || request.nwk_addr_of_interest >= NWK_BROADCAST_ADDRESS_MIN;
+
+        if !about_us {
+            if broadcast {
+                return None;
+            }
+            return Some((
+                descriptor::MATCH_DESC_RSP,
+                descriptor::match_desc_rsp_invalid_request(request.seq, out).ok()?,
+            ));
+        }
+
+        let mut matches = [0u8; MAX_MATCHING_ENDPOINTS];
+        let count = cfg.matching_endpoints(&request, &mut matches);
+        if count == 0 && broadcast {
+            return None;
+        }
+
+        Some((
+            descriptor::MATCH_DESC_RSP,
+            descriptor::match_desc_rsp(request.seq, nwk_addr, &matches[..count], out).ok()?,
+        ))
+    }
+
     fn build_mgmt_leave_rsp(
         &self,
         asdu: &[u8],
@@ -772,6 +867,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         &self,
         cluster: u16,
         asdu: &[u8],
+        nwk_dst: u16,
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
         out: &mut [u8],
     ) -> Option<(u16, usize)> {
@@ -784,6 +880,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 descriptor::NODE_DESC_RSP,
                 cfg.node_desc_rsp(seq, nwk_addr, out).ok()?,
             ),
+            descriptor::POWER_DESC_REQ => (
+                descriptor::POWER_DESC_RSP,
+                cfg.power_desc_rsp(seq, nwk_addr, out).ok()?,
+            ),
+            descriptor::MATCH_DESC_REQ => {
+                return self.build_match_desc_rsp(asdu, nwk_dst, nwk_addr, cfg, out);
+            }
             descriptor::ACTIVE_EP_REQ => (
                 descriptor::ACTIVE_EP_RSP,
                 cfg.active_ep_rsp(seq, nwk_addr, out).ok()?,

@@ -10,14 +10,11 @@ use byte::BytesExt;
 use byte::TryRead;
 use zigbee::zdo::ClusterRequestHandler;
 
+use crate::attributes::RESPONSE_FRAME_CONTROL;
 use crate::frame::Status;
 use crate::header::ZclHeader;
 use crate::header::command_identifier::CommandIdentifier;
 use crate::header::frame_control::FrameControl;
-
-/// Frame control for a global, server→client response with the default
-/// response disabled.
-const RESPONSE_FRAME_CONTROL: u8 = 0x18;
 
 /// Answers ZCL `Configure Reporting` requests with a blanket success.
 ///
