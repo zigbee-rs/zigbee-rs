@@ -4,7 +4,9 @@ use zigbee_types::ByteArray;
 use zigbee_types::IeeeAddress;
 use zigbee_types::StorageVec;
 
-const MAX_APS_BINDING_TABLE: usize = 2; // TODO
+use super::binding::Binding;
+
+pub(crate) const MAX_APS_BINDING_TABLE: usize = 4;
 const MAX_APS_CHANNEL_MASK_LIST: usize = 2; // TODO
 const MAX_APS_GROUP_TABLE: usize = 2; // TODO
 const MAX_APS_MAX_WINDOW_SIZE: usize = 2; // TODO
@@ -14,7 +16,7 @@ construct_ib! {
     /// 2.2.7.2 - AIB (APS Information Base Attributes)
     pub struct Aib {
         #[storage_key = 4]
-        binding_table: StorageVec<ApsBinding, MAX_APS_BINDING_TABLE>,
+        binding_table: StorageVec<Binding, MAX_APS_BINDING_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 6]
@@ -48,12 +50,6 @@ construct_ib! {
         security_timeout_period: u16 = 0x00,
         // TODO: trust_center_policies attribute
     }
-}
-
-// TODO: define binding entry fields
-impl_byte! {
-    #[derive(Debug, Clone)]
-    pub struct ApsBinding(u8);
 }
 
 // TODO: define group entry fields

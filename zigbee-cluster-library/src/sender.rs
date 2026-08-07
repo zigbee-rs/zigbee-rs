@@ -6,6 +6,7 @@
 //! into a unicast APS data transfer in a single call.
 
 use byte::BytesExt;
+use embedded_hal_async::delay::DelayNs;
 use heapless::Vec;
 use zigbee::aps::apsde::ApsdeSapConfirm;
 use zigbee::aps::apsde::ApsdeSapRequest;
@@ -64,10 +65,14 @@ pub struct ZclUnicast {
 pub trait ZclSender {
     /// Serialize a [`ZclFrame`] and send it as a unicast APS data frame
     /// (2.2.4.1.1) to the given short address.
+    ///
+    /// The transfer is acknowledged at the APS layer, so `delay` paces the
+    /// wait for the acknowledgement and its retransmissions (2.2.8.4.4).
     async fn send_zcl_unicast(
         &self,
         addressing: ZclUnicast,
         frame: ZclFrame<'_>,
+        delay: &mut impl DelayNs,
     ) -> Result<ApsdeSapConfirm, ZclSendError>;
 }
 
@@ -76,6 +81,7 @@ impl<M: Mlme> ZclSender for ZigbeeDevice<M> {
         &self,
         addressing: ZclUnicast,
         frame: ZclFrame<'_>,
+        delay: &mut impl DelayNs,
     ) -> Result<ApsdeSapConfirm, ZclSendError> {
         let src =
             SrcEndpoint::new(addressing.src_endpoint).map_err(|_| ZclSendError::InvalidEndpoint)?;
@@ -96,7 +102,7 @@ impl<M: Mlme> ZclSender for ZigbeeDevice<M> {
             ..Default::default()
         };
 
-        Ok(self.data_request(request).await)
+        Ok(self.data_request(request, delay).await)
     }
 }
 
