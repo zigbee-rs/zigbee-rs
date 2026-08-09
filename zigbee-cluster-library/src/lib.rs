@@ -7,6 +7,8 @@
 //!
 //! [ZigBee Cluster Library Rev 8]: https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf
 #![no_std]
+//#![deny(clippy::unwrap_used)]
+// #![deny(clippy::panic, unused_must_use)]
 #![warn(
     // missing_docs,
     // unreachable_pub,
@@ -32,7 +34,8 @@
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
     clippy::too_long_first_doc_paragraph,
-    async_fn_in_trait
+    clippy::unnested_or_patterns,
+    clippy::too_many_lines
 )]
 
 macro_rules! bad_input {
@@ -41,15 +44,13 @@ macro_rules! bad_input {
     };
 }
 
-pub mod basic;
-pub mod common;
-pub mod profile;
+pub(crate) mod attribute_store;
+pub mod cluster_server;
 pub mod types;
 
 /// General ZCL Frame
 pub mod frame;
 pub mod payload;
-pub mod reporting;
 
 pub mod header;
 
@@ -61,5 +62,3 @@ pub mod lighting;
 pub mod hvac;
 // Chapter 10
 pub mod energy;
-
-pub mod sender;

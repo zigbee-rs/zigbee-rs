@@ -1,0 +1,1294 @@
+{
+  "schema_version": 1,
+  "source": {
+    "generator": "scripts/gen_vectors.py",
+    "zigpy": "1.6.0"
+  },
+  "types": {
+    "u8": {
+      "type_id": 32,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01",
+          "value": 1
+        },
+        {
+          "name": "midpoint",
+          "wire": "80",
+          "value": 128
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE",
+          "value": 254
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF"
+        }
+      ]
+    },
+    "u16": {
+      "type_id": 33,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00",
+          "value": 1
+        },
+        {
+          "name": "midpoint",
+          "wire": "00 80",
+          "value": 32768
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE FF",
+          "value": 65534
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF"
+        }
+      ]
+    },
+    "u32": {
+      "type_id": 35,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "midpoint",
+          "wire": "00 00 00 80",
+          "value": 2147483648
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE FF FF FF",
+          "value": 4294967294
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF FF FF"
+        }
+      ]
+    },
+    "u64": {
+      "type_id": 39,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00 00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00 00 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "midpoint",
+          "wire": "00 00 00 00 00 00 00 80",
+          "value": 9223372036854775808
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE FF FF FF FF FF FF FF",
+          "value": 18446744073709551614
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF FF FF FF FF FF FF"
+        }
+      ]
+    },
+    "i8": {
+      "type_id": 40,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01",
+          "value": 1
+        },
+        {
+          "name": "minus_one",
+          "wire": "FF",
+          "value": -1
+        },
+        {
+          "name": "max",
+          "wire": "7F",
+          "value": 127
+        },
+        {
+          "name": "min_non_null",
+          "wire": "81",
+          "value": -127
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "80"
+        }
+      ]
+    },
+    "i16": {
+      "type_id": 41,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00",
+          "value": 1
+        },
+        {
+          "name": "minus_one",
+          "wire": "FF FF",
+          "value": -1
+        },
+        {
+          "name": "max",
+          "wire": "FF 7F",
+          "value": 32767
+        },
+        {
+          "name": "min_non_null",
+          "wire": "01 80",
+          "value": -32767
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "00 80"
+        }
+      ]
+    },
+    "i32": {
+      "type_id": 43,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "minus_one",
+          "wire": "FF FF FF FF",
+          "value": -1
+        },
+        {
+          "name": "max",
+          "wire": "FF FF FF 7F",
+          "value": 2147483647
+        },
+        {
+          "name": "min_non_null",
+          "wire": "01 00 00 80",
+          "value": -2147483647
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "00 00 00 80"
+        }
+      ]
+    },
+    "i64": {
+      "type_id": 47,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00 00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00 00 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "minus_one",
+          "wire": "FF FF FF FF FF FF FF FF",
+          "value": -1
+        },
+        {
+          "name": "max",
+          "wire": "FF FF FF FF FF FF FF 7F",
+          "value": 9223372036854775807
+        },
+        {
+          "name": "min_non_null",
+          "wire": "01 00 00 00 00 00 00 80",
+          "value": -9223372036854775807
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "00 00 00 00 00 00 00 80"
+        }
+      ]
+    },
+    "bool": {
+      "type_id": 16,
+      "roundtrip": [
+        {
+          "name": "false",
+          "wire": "00",
+          "value": false
+        },
+        {
+          "name": "true",
+          "wire": "01",
+          "value": true
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF"
+        }
+      ],
+      "invalid_value": [
+        {
+          "name": "reserved_low",
+          "wire": "02"
+        },
+        {
+          "name": "reserved_high",
+          "wire": "FE"
+        }
+      ]
+    },
+    "f32": {
+      "type_id": 57,
+      "roundtrip_bits": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00",
+          "bits": 0
+        },
+        {
+          "name": "one",
+          "wire": "00 00 80 3F",
+          "bits": 1065353216
+        },
+        {
+          "name": "minus_one",
+          "wire": "00 00 80 BF",
+          "bits": 3212836864
+        },
+        {
+          "name": "one_point_five",
+          "wire": "00 00 C0 3F",
+          "bits": 1069547520
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "canonical_nan_null",
+          "wire": "00 00 C0 7F"
+        }
+      ]
+    },
+    "f64": {
+      "type_id": 58,
+      "roundtrip_bits": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00 00 00 00 00",
+          "bits": 0
+        },
+        {
+          "name": "one",
+          "wire": "00 00 00 00 00 00 F0 3F",
+          "bits": 4607182418800017408
+        },
+        {
+          "name": "minus_one",
+          "wire": "00 00 00 00 00 00 F0 BF",
+          "bits": 13830554455654793216
+        },
+        {
+          "name": "one_point_five",
+          "wire": "00 00 00 00 00 00 F8 3F",
+          "bits": 4609434218613702656
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "canonical_nan_null",
+          "wire": "00 00 00 00 00 00 F8 7F"
+        }
+      ]
+    },
+    "bitmap8": {
+      "type_id": 24,
+      "roundtrip_raw": [
+        {
+          "name": "zero",
+          "wire": "00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01",
+          "value": 1
+        },
+        {
+          "name": "alternating_low",
+          "wire": "AA",
+          "value": 170
+        },
+        {
+          "name": "all_ones",
+          "wire": "FF",
+          "value": 255
+        }
+      ]
+    },
+    "bitmap16": {
+      "type_id": 25,
+      "roundtrip_raw": [
+        {
+          "name": "zero",
+          "wire": "00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00",
+          "value": 1
+        },
+        {
+          "name": "alternating_low",
+          "wire": "AA 00",
+          "value": 170
+        },
+        {
+          "name": "all_ones",
+          "wire": "FF FF",
+          "value": 65535
+        }
+      ]
+    },
+    "bitmap32": {
+      "type_id": 27,
+      "roundtrip_raw": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "alternating_low",
+          "wire": "AA 00 00 00",
+          "value": 170
+        },
+        {
+          "name": "all_ones",
+          "wire": "FF FF FF FF",
+          "value": 4294967295
+        }
+      ]
+    },
+    "bitmap64": {
+      "type_id": 31,
+      "roundtrip_raw": [
+        {
+          "name": "zero",
+          "wire": "00 00 00 00 00 00 00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00 00 00 00 00 00 00",
+          "value": 1
+        },
+        {
+          "name": "alternating_low",
+          "wire": "AA 00 00 00 00 00 00 00",
+          "value": 170
+        },
+        {
+          "name": "all_ones",
+          "wire": "FF FF FF FF FF FF FF FF",
+          "value": 18446744073709551615
+        }
+      ]
+    },
+    "enum8": {
+      "type_id": 48,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01",
+          "value": 1
+        },
+        {
+          "name": "arbitrary",
+          "wire": "42",
+          "value": 66
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE",
+          "value": 254
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF"
+        }
+      ]
+    },
+    "enum16": {
+      "type_id": 49,
+      "roundtrip": [
+        {
+          "name": "zero",
+          "wire": "00 00",
+          "value": 0
+        },
+        {
+          "name": "one",
+          "wire": "01 00",
+          "value": 1
+        },
+        {
+          "name": "byte_boundary",
+          "wire": "00 01",
+          "value": 256
+        },
+        {
+          "name": "max_non_null",
+          "wire": "FE FF",
+          "value": 65534
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF"
+        }
+      ]
+    },
+    "short_text": {
+      "type_id": 66,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "00",
+          "value": ""
+        },
+        {
+          "name": "ascii",
+          "wire": "05 68 65 6C 6C 6F",
+          "value": "hello"
+        },
+        {
+          "name": "unicode",
+          "wire": "05 63 61 66 C3 A9",
+          "value": "café"
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF"
+        }
+      ],
+      "invalid_utf8": [
+        {
+          "name": "invalid_utf8",
+          "wire": "03 FF FE FD"
+        }
+      ]
+    },
+    "short_octet_string": {
+      "type_id": 65,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "00",
+          "value_hex": ""
+        },
+        {
+          "name": "single_zero",
+          "wire": "01 00",
+          "value_hex": "00"
+        },
+        {
+          "name": "binary",
+          "wire": "04 DE AD BE EF",
+          "value_hex": "DE AD BE EF"
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF"
+        }
+      ]
+    },
+    "coll_array_u8": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "20 00 00",
+          "values": []
+        },
+        {
+          "name": "single",
+          "wire": "20 01 00 2A",
+          "values": [
+            42
+          ]
+        },
+        {
+          "name": "multiple",
+          "wire": "20 03 00 01 64 FE",
+          "values": [
+            1,
+            100,
+            254
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "20 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "21 01 00 00",
+          "expected": 32,
+          "found": 33
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "20 02 00 2A",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "20 01 00 2A 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "21 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_array_u16": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "21 00 00",
+          "values": []
+        },
+        {
+          "name": "single",
+          "wire": "21 01 00 01 00",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "multiple",
+          "wire": "21 03 00 01 00 02 00 03 00",
+          "values": [
+            1,
+            2,
+            3
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "21 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00 00",
+          "expected": 33,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "21 02 00 01 00",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "21 01 00 01 00 00 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "20 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_array_i16": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "29 00 00",
+          "values": []
+        },
+        {
+          "name": "single_negative",
+          "wire": "29 01 00 FF FF",
+          "values": [
+            -1
+          ]
+        },
+        {
+          "name": "mixed",
+          "wire": "29 03 00 00 00 64 00 9C FF",
+          "values": [
+            0,
+            100,
+            -100
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "29 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00 00",
+          "expected": 41,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "29 02 00 FF FF",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "29 01 00 FF FF 00 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "20 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_array_bool": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "10 00 00",
+          "values": []
+        },
+        {
+          "name": "single_true",
+          "wire": "10 01 00 01",
+          "values": [
+            true
+          ]
+        },
+        {
+          "name": "mixed",
+          "wire": "10 03 00 00 01 00",
+          "values": [
+            false,
+            true,
+            false
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "10 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00",
+          "expected": 16,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "10 02 00 01",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "10 01 00 01 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "20 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_bag_u8": {
+      "type_id": 81,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "20 00 00",
+          "values": []
+        },
+        {
+          "name": "single",
+          "wire": "20 01 00 2A",
+          "values": [
+            42
+          ]
+        },
+        {
+          "name": "multiple",
+          "wire": "20 03 00 01 64 FE",
+          "values": [
+            1,
+            100,
+            254
+          ]
+        },
+        {
+          "name": "duplicates_allowed",
+          "wire": "20 03 00 01 01 02",
+          "values": [
+            1,
+            1,
+            2
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "20 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "21 01 00 00",
+          "expected": 32,
+          "found": 33
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "20 02 00 2A",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "20 01 00 2A 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "21 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_bag_u16": {
+      "type_id": 81,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "21 00 00",
+          "values": []
+        },
+        {
+          "name": "single",
+          "wire": "21 01 00 01 00",
+          "values": [
+            1
+          ]
+        },
+        {
+          "name": "multiple",
+          "wire": "21 03 00 01 00 02 00 03 00",
+          "values": [
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "name": "duplicates_allowed",
+          "wire": "21 03 00 01 00 01 00 02 00",
+          "values": [
+            1,
+            1,
+            2
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "21 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00 00",
+          "expected": 33,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "21 02 00 01 00",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "21 01 00 01 00 00 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "20 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_set_u8": {
+      "type_id": 80,
+      "valid": [
+        {
+          "name": "two_unique",
+          "wire": "20 02 00 01 02",
+          "values": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "three_unique",
+          "wire": "20 03 00 0A 0B 0C",
+          "values": [
+            10,
+            11,
+            12
+          ]
+        }
+      ],
+      "duplicate": [
+        {
+          "name": "duplicate",
+          "wire": "20 02 00 01 01"
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "20 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "21 01 00 00",
+          "expected": 32,
+          "found": 33
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "20 03 00 01 02",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "20 01 00 01 02 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "21 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_set_u16": {
+      "type_id": 80,
+      "valid": [
+        {
+          "name": "two_unique",
+          "wire": "21 02 00 01 00 02 00",
+          "values": [
+            1,
+            2
+          ]
+        },
+        {
+          "name": "three_unique",
+          "wire": "21 03 00 0A 00 14 00 1E 00",
+          "values": [
+            10,
+            20,
+            30
+          ]
+        }
+      ],
+      "duplicate": [
+        {
+          "name": "duplicate",
+          "wire": "21 02 00 01 00 01 00"
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "21 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00 00",
+          "expected": 33,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_count_too_large",
+          "wire": "21 03 00 01 00 02 00",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "21 01 00 01 00 02 00 00 00",
+          "error": "InvalidLength"
+        },
+        {
+          "name": "wrong_element_type_null_count",
+          "wire": "20 FF FF",
+          "error": "NullSentinel"
+        }
+      ]
+    },
+    "coll_struct_pair": {
+      "type_id": 76,
+      "roundtrip": [
+        {
+          "name": "nominal",
+          "wire": "02 00 20 42 21 34 12",
+          "value": [
+            66,
+            4660
+          ]
+        },
+        {
+          "name": "zeroes",
+          "wire": "02 00 20 00 21 00 00",
+          "value": [
+            0,
+            0
+          ]
+        },
+        {
+          "name": "max_non_null",
+          "wire": "02 00 20 FE 21 FE FF",
+          "value": [
+            254,
+            65534
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF"
+        }
+      ],
+      "invalid": [
+        {
+          "name": "declared_field_count_too_high",
+          "wire": "03 00 20 42 21 34 12",
+          "error": "UnconsumedData"
+        },
+        {
+          "name": "second_field_wrong_type",
+          "wire": "02 00 20 42 20 34",
+          "error": "TypeIdMismatch",
+          "expected": 33,
+          "found": 32
+        },
+        {
+          "name": "truncated_second_field",
+          "wire": "02 00 20 42 21 34",
+          "error": "InsufficientBytes"
+        }
+      ]
+    },
+    "coll_nested_array_u8": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "48 00 00",
+          "inner_wires": []
+        },
+        {
+          "name": "single_empty_inner",
+          "wire": "48 01 00 20 00 00",
+          "inner_wires": [
+            "20 00 00"
+          ]
+        },
+        {
+          "name": "two_inner_arrays",
+          "wire": "48 02 00 20 02 00 01 02 20 01 00 03",
+          "inner_wires": [
+            "20 02 00 01 02",
+            "20 01 00 03"
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "48 FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00",
+          "expected": 72,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "truncated_inner_array",
+          "wire": "48 01 00 20 02 00 01",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "48 01 00 20 01 00 01 00",
+          "error": "InvalidLength"
+        }
+      ]
+    },
+    "coll_array_of_struct_pair": {
+      "type_id": 72,
+      "roundtrip": [
+        {
+          "name": "empty",
+          "wire": "4C 00 00",
+          "values": []
+        },
+        {
+          "name": "single",
+          "wire": "4C 01 00 02 00 20 42 21 34 12",
+          "values": [
+            [
+              66,
+              4660
+            ]
+          ]
+        },
+        {
+          "name": "multiple",
+          "wire": "4C 02 00 02 00 20 00 21 00 00 02 00 20 42 21 34 12",
+          "values": [
+            [
+              0,
+              0
+            ],
+            [
+              66,
+              4660
+            ]
+          ]
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "4C FF FF"
+        }
+      ],
+      "type_mismatch": [
+        {
+          "name": "wrong_element_type",
+          "wire": "20 01 00 00",
+          "expected": 76,
+          "found": 32
+        }
+      ],
+      "invalid": [
+        {
+          "name": "truncated_struct_element",
+          "wire": "4C 01 00 02 00 20 42 21 34",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "trailing_payload",
+          "wire": "4C 01 00 02 00 20 42 21 34 12 00",
+          "error": "InvalidLength"
+        }
+      ]
+    },
+    "coll_struct_with_array": {
+      "type_id": 76,
+      "roundtrip": [
+        {
+          "name": "empty_array",
+          "wire": "02 00 20 00 48 20 00 00",
+          "value": {
+            "u8": 0,
+            "array": []
+          }
+        },
+        {
+          "name": "nominal",
+          "wire": "02 00 20 2A 48 20 03 00 01 02 03",
+          "value": {
+            "u8": 42,
+            "array": [
+              1,
+              2,
+              3
+            ]
+          }
+        },
+        {
+          "name": "max_u8",
+          "wire": "02 00 20 FE 48 20 02 00 0A 14",
+          "value": {
+            "u8": 254,
+            "array": [
+              10,
+              20
+            ]
+          }
+        }
+      ],
+      "null_wire": [
+        {
+          "name": "null",
+          "wire": "FF FF"
+        }
+      ],
+      "invalid": [
+        {
+          "name": "array_field_truncated",
+          "wire": "02 00 20 2A 48 20 03 00 01 02",
+          "error": "InsufficientBytes"
+        },
+        {
+          "name": "array_field_wrong_element_type",
+          "wire": "02 00 20 2A 48 21 00 00",
+          "error": "TypeIdMismatch",
+          "expected": 32,
+          "found": 33
+        },
+        {
+          "name": "declared_field_count_too_high",
+          "wire": "03 00 20 2A 48 20 00 00",
+          "error": "UnconsumedData"
+        }
+      ]
+    }
+  }
+}

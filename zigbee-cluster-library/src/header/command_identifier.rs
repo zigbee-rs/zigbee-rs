@@ -95,6 +95,7 @@ impl CommandIdentifier {
     }
 }
 
+#[doc(hidden)]
 impl TryRead<'_, byte::ctx::Endian> for CommandIdentifier {
     fn try_read(bytes: &[u8], ctx: byte::ctx::Endian) -> byte::Result<(Self, usize)> {
         let (value, size) = u8::try_read(bytes, ctx)?;
@@ -102,6 +103,7 @@ impl TryRead<'_, byte::ctx::Endian> for CommandIdentifier {
     }
 }
 
+#[doc(hidden)]
 impl TryWrite<byte::ctx::Endian> for CommandIdentifier {
     fn try_write(self, bytes: &mut [u8], ctx: byte::ctx::Endian) -> byte::Result<usize> {
         self.raw().try_write(bytes, ctx)
