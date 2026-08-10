@@ -10,6 +10,9 @@ use byte::ctx;
 use zigbee_types::IeeeAddress;
 
 use crate::apl::descriptors::node_descriptor::LogicalType;
+use crate::apl::descriptors::node_power_descriptor::CurrentPowerMode;
+use crate::apl::descriptors::node_power_descriptor::CurrentPowerSourceLevel;
+use crate::apl::descriptors::node_power_descriptor::PowerSource;
 use crate::nwk::nlme::management::NlmeLeaveStatus;
 
 // ZDP request cluster identifiers (2.4.3).
@@ -58,6 +61,18 @@ const POWER_DESCRIPTOR_SIZE: usize = 2;
 // a Match_Desc_req profile of 0xffff matches every endpoint (2.4.4.2.7.1.1)
 const WILDCARD_PROFILE_ID: u16 = 0xffff;
 
+// append raw bytes at offset, reporting a short buffer instead of panicking
+fn append(out: &mut [u8], offset: &mut usize, bytes: &[u8]) -> Result<(), byte::Error> {
+    let end = offset
+        .checked_add(bytes.len())
+        .ok_or(byte::Error::Incomplete)?;
+    out.get_mut(*offset..end)
+        .ok_or(byte::Error::Incomplete)?
+        .copy_from_slice(bytes);
+    *offset = end;
+    Ok(())
+}
+
 /// Static configuration of the node descriptor (2.3.2.3).
 #[derive(Debug, Clone, Copy)]
 pub struct NodeDescriptorConfig {
@@ -105,34 +120,31 @@ impl NodeDescriptorConfig {
 
 /// Static configuration of the node power descriptor (2.3.2.4).
 #[derive(Debug, Clone, Copy)]
-pub struct PowerDescriptorConfig {
-    /// Sleep/power-saving mode (2.3.2.4.1): `0x0` receiver on when idle,
-    /// `0x1` periodically on, `0x2` on when stimulated.
-    pub current_power_mode: u8,
-    /// Bitmap of the sources present (2.3.2.4.2): bit 0 constant/mains,
-    /// bit 1 rechargeable battery, bit 2 disposable battery.
-    pub available_power_sources: u8,
-    /// Bitmap (same bit assignment) with the source currently in use set
-    /// (2.3.2.4.3).
-    pub current_power_source: u8,
-    /// Charge level (2.3.2.4.4): `0b0000` critical, `0b0100` 33%,
-    /// `0b1000` 66%, `0b1100` 100%.
-    pub current_power_source_level: u8,
+pub struct PowerDescriptorConfig<'a> {
+    /// Sleep/power-saving mode (2.3.2.4.1).
+    pub current_power_mode: CurrentPowerMode,
+    /// The power sources present on the node (2.3.2.4.2).
+    pub available_power_sources: &'a [PowerSource],
+    /// The source currently in use (2.3.2.4.3).
+    pub current_power_source: PowerSource,
+    /// Charge level of that source (2.3.2.4.4).
+    pub current_power_source_level: CurrentPowerSourceLevel,
 }
 
-impl PowerDescriptorConfig {
+impl PowerDescriptorConfig<'_> {
     // serialize the 2-byte node power descriptor (2.3.2.4); each octet holds
     // the earlier-transmitted field in its low nibble
     fn write(&self, out: &mut [u8]) -> Result<usize, byte::Error> {
         let offset = &mut 0;
         out.write_with(
             offset,
-            (self.current_power_mode & 0x0f) | ((self.available_power_sources & 0x0f) << 4),
+            self.current_power_mode.bits()
+                | (PowerSource::bitmap(self.available_power_sources) << 4),
             ctx::LE,
         )?;
         out.write_with(
             offset,
-            (self.current_power_source & 0x0f) | ((self.current_power_source_level & 0x0f) << 4),
+            self.current_power_source.bits() | (self.current_power_source_level.bits() << 4),
             ctx::LE,
         )?;
         Ok(*offset)
@@ -182,7 +194,7 @@ impl EndpointDescriptor<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceDescriptorConfig<'a> {
     pub node: NodeDescriptorConfig,
-    pub power: PowerDescriptorConfig,
+    pub power: PowerDescriptorConfig<'a>,
     pub endpoints: &'a [EndpointDescriptor<'a>],
 }
 
@@ -210,8 +222,7 @@ impl DeviceDescriptorConfig<'_> {
         out.write_with(offset, nwk_addr, ctx::LE)?;
         let mut nd = [0u8; NODE_DESCRIPTOR_SIZE];
         let n = self.node.write(&mut nd)?;
-        out[*offset..*offset + n].copy_from_slice(&nd[..n]);
-        *offset += n;
+        append(out, offset, &nd[..n])?;
         Ok(*offset)
     }
 
@@ -229,8 +240,7 @@ impl DeviceDescriptorConfig<'_> {
         out.write_with(offset, nwk_addr, ctx::LE)?;
         let mut pd = [0u8; POWER_DESCRIPTOR_SIZE];
         let n = self.power.write(&mut pd)?;
-        out[*offset..*offset + n].copy_from_slice(&pd[..n]);
-        *offset += n;
+        append(out, offset, &pd[..n])?;
         Ok(*offset)
     }
 
@@ -302,8 +312,7 @@ impl DeviceDescriptorConfig<'_> {
             out.write_with(offset, STATUS_SUCCESS, ctx::LE)?;
             out.write_with(offset, nwk_addr, ctx::LE)?;
             out.write_with(offset, u8::try_from(len).unwrap_or(u8::MAX), ctx::LE)?;
-            out[*offset..*offset + len].copy_from_slice(&desc[..len]);
-            *offset += len;
+            append(out, offset, &desc[..len])?;
         } else {
             out.write_with(offset, STATUS_NOT_ACTIVE, ctx::LE)?;
             out.write_with(offset, nwk_addr, ctx::LE)?;
@@ -494,17 +503,34 @@ pub fn match_desc_rsp(
     Ok(*offset)
 }
 
-/// Build a Match_Desc_rsp carrying only Status and MatchLength (2.4.4.2.7
-/// step 2.b.iii), for a unicast request about another device.
+/// Why a Match_Desc_req could not be answered with a match list (2.4.4.2.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchDescError {
+    /// The request named another device and this device cannot answer for it
+    /// (step 2.b.i).
+    InvalidRequestType,
+    /// The request named a device this router knows nothing about (step 4.b.i).
+    DeviceNotFound,
+}
+
+/// Build a Match_Desc_rsp carrying only Status and MatchLength (2.4.4.2.7).
 ///
 /// NWKAddrOfInterest is omitted on purpose: the error paths of 2.4.4.2.7
 /// (steps 2.b.iii, 4.b.ii, 6.b) all specify Status and MatchLength only, and
 /// only the success path (step 7.b) carries the address. Dissectors that model
 /// the response as a fixed layout report the short frame as malformed.
-pub fn match_desc_rsp_invalid_request(seq: u8, out: &mut [u8]) -> Result<usize, byte::Error> {
+pub fn match_desc_rsp_error(
+    seq: u8,
+    error: MatchDescError,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let status = match error {
+        MatchDescError::InvalidRequestType => STATUS_INV_REQUESTTYPE,
+        MatchDescError::DeviceNotFound => STATUS_DEVICE_NOT_FOUND,
+    };
     let offset = &mut 0;
     out.write_with(offset, seq, ctx::LE)?;
-    out.write_with(offset, STATUS_INV_REQUESTTYPE, ctx::LE)?;
+    out.write_with(offset, status, ctx::LE)?;
     out.write_with(offset, 0u8, ctx::LE)?;
     Ok(*offset)
 }
@@ -582,10 +608,10 @@ mod tests {
 
     // mains-powered, on when idle, 100% charge
     const POWER: PowerDescriptorConfig = PowerDescriptorConfig {
-        current_power_mode: 0b0000,
-        available_power_sources: 0b0001,
-        current_power_source: 0b0001,
-        current_power_source_level: 0b1100,
+        current_power_mode: CurrentPowerMode::Synchronized,
+        available_power_sources: &[PowerSource::ConstantMainPower],
+        current_power_source: PowerSource::ConstantMainPower,
+        current_power_source_level: CurrentPowerSourceLevel::Full,
     };
 
     const ENDPOINTS: [EndpointDescriptor; 1] = [EndpointDescriptor {
@@ -750,12 +776,24 @@ mod tests {
     }
 
     #[test]
-    fn match_desc_rsp_invalid_request_omits_address() {
+    fn match_desc_rsp_error_omits_address() {
         let mut out = [0u8; 16];
-        let n = match_desc_rsp_invalid_request(0x33, &mut out).unwrap();
+        let n = match_desc_rsp_error(0x33, MatchDescError::InvalidRequestType, &mut out).unwrap();
         // seq, INV_REQUESTTYPE, MatchLength — no NWKAddrOfInterest (2.4.4.2.7
         // step 2.b.iii)
         assert_eq!(&out[..n], &[0x33, 0x80, 0x00]);
+
+        let n = match_desc_rsp_error(0x33, MatchDescError::DeviceNotFound, &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x33, 0x81, 0x00]);
+    }
+
+    #[test]
+    fn descriptor_rsp_reports_short_buffer_instead_of_panicking() {
+        // room for seq, status and NWKAddrOfInterest, but not the descriptor
+        let mut out = [0u8; 4];
+        assert!(cfg().power_desc_rsp(0x07, 0x1234, &mut out).is_err());
+        assert!(cfg().node_desc_rsp(0x07, 0x1234, &mut out).is_err());
+        assert!(cfg().simple_desc_rsp(0x07, 0x1234, 1, &mut out).is_err());
     }
 
     #[test]

@@ -7,6 +7,7 @@
 //! requests, which a coordinator issues during interview to resolve the device
 //! to its definition.
 
+use zigbee::zdo::ClusterRequest;
 use zigbee::zdo::ClusterRequestHandler;
 
 use crate::attributes::AttributeSource;
@@ -79,16 +80,8 @@ impl AttributeSource for BasicServer<'_> {
 }
 
 impl ClusterRequestHandler for BasicServer<'_> {
-    fn handle(
-        &self,
-        _profile_id: u16,
-        cluster_id: u16,
-        _src_endpoint: u8,
-        _dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
-        handle_read_attributes(self, cluster_id, asdu, out)
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+        handle_read_attributes(self, request.cluster_id, request.asdu, out)
     }
 }
 
@@ -114,11 +107,22 @@ mod tests {
         power_source: 0x03,
     };
 
+    fn request(cluster_id: u16, asdu: &[u8]) -> ClusterRequest<'_> {
+        ClusterRequest {
+            profile_id: 0x0104,
+            cluster_id,
+            src_endpoint: 1,
+            dst_endpoint: 1,
+            unicast: true,
+            asdu,
+        }
+    }
+
     #[test]
     fn read_manufacturer_model_and_unknown() {
         // ZCL Read Attributes (global cmd 0x00, client->server) for
         // ManufacturerName (0x0004), ModelIdentifier (0x0005), unknown (0x9999)
-        let request = [
+        let asdu = [
             0x00, 0x2a, 0x00, // frame control, seq, command id (ReadAttributes)
             0x04, 0x00, // 0x0004
             0x05, 0x00, // 0x0005
@@ -127,7 +131,7 @@ mod tests {
 
         let mut out = [0u8; 128];
         let len = SERVER
-            .handle(0x0104, CLUSTER_ID, 1, 1, &request, &mut out)
+            .handle(&request(CLUSTER_ID, &asdu), &mut out)
             .expect("basic read handled");
 
         let (frame, _) = ZclFrame::try_read(&out[..len], ()).unwrap();
@@ -164,11 +168,8 @@ mod tests {
 
     #[test]
     fn ignores_other_clusters() {
-        let request = [0x00, 0x01, 0x00, 0x00, 0x00];
+        let asdu = [0x00, 0x01, 0x00, 0x00, 0x00];
         let mut out = [0u8; 32];
-        assert_eq!(
-            SERVER.handle(0x0104, 0x0402, 1, 1, &request, &mut out),
-            None
-        );
+        assert_eq!(SERVER.handle(&request(0x0402, &asdu), &mut out), None);
     }
 }

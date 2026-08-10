@@ -12,12 +12,17 @@ use core::sync::atomic::Ordering;
 
 use byte::BytesExt;
 use byte::TryRead;
+use zigbee::zdo::ClusterRequest;
 use zigbee::zdo::ClusterRequestHandler;
 
+use crate::attributes::AttributeSink;
 use crate::attributes::AttributeSource;
+use crate::attributes::default_response;
 use crate::attributes::handle_read_attributes;
+use crate::attributes::handle_write_attributes;
 use crate::common::data_types::UnsignedN;
 use crate::common::data_types::ZclDataType;
+use crate::frame::Status;
 use crate::frame::ZclFrame;
 use crate::header::ZclHeader;
 use crate::header::command_identifier::CommandIdentifier;
@@ -103,31 +108,52 @@ impl AttributeSource for IdentifyServer {
     }
 }
 
+/// `IdentifyTime` is writable (ZCL 3.5.2.2): a write starts or stops the
+/// identification procedure just like the Identify command does.
+impl AttributeSink for IdentifyServer {
+    fn set_attribute(&self, id: u16, value: &ZclDataType<'_>) -> Status {
+        if id != attribute::IDENTIFY_TIME {
+            return Status::UnsupportedAttribute;
+        }
+        let ZclDataType::UnsignedInt(UnsignedN::Uint16(seconds)) = value else {
+            return Status::InvalidDataType;
+        };
+        self.set_identify_time(*seconds);
+        Status::Success
+    }
+}
+
 impl ClusterRequestHandler for IdentifyServer {
-    fn handle(
-        &self,
-        _profile_id: u16,
-        cluster_id: u16,
-        _src_endpoint: u8,
-        _dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
-        if cluster_id != CLUSTER_ID {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+        if request.cluster_id != CLUSTER_ID {
             return None;
         }
 
-        let (frame, _) = ZclFrame::try_read(asdu, ()).ok()?;
+        let (frame, _) = ZclFrame::try_read(request.asdu, ()).ok()?;
         let ZclFramePayload::ClusterSpecificCommand { command_id, data } = frame.payload else {
-            return handle_read_attributes(self, cluster_id, asdu, out);
+            return handle_read_attributes(self, request.cluster_id, request.asdu, out)
+                .or_else(|| handle_write_attributes(self, request.cluster_id, request.asdu, out));
         };
 
-        match command_id.0 {
+        // a command answered by a cluster response draws no Default Response
+        // (ZCL 2.5.12.2)
+        let status = match command_id.0 {
             command::IDENTIFY => {
                 // payload: IdentifyTime, uint16 (ZCL 3.5.2.3.1.1)
-                let seconds = u16::from_le_bytes(data.get(..2)?.try_into().ok()?);
+                let Some(seconds) = data
+                    .get(..2)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .map(u16::from_le_bytes)
+                else {
+                    return default_response(
+                        &frame.header,
+                        request.unicast,
+                        Status::MalformedCommand,
+                        out,
+                    );
+                };
                 self.set_identify_time(seconds);
-                None
+                Status::Success
             }
             // answered only while identifying (ZCL 3.5.2.4.1)
             command::IDENTIFY_QUERY if self.is_identifying() => {
@@ -149,10 +175,13 @@ impl ClusterRequestHandler for IdentifyServer {
 
                 let offset = &mut 0;
                 out.write_with(offset, response, ()).ok()?;
-                Some(*offset)
+                return Some(*offset);
             }
-            _ => None,
-        }
+            command::IDENTIFY_QUERY => Status::Success,
+            _ => Status::UnsupCommand,
+        };
+
+        default_response(&frame.header, request.unicast, status, out)
     }
 }
 
@@ -160,12 +189,24 @@ impl ClusterRequestHandler for IdentifyServer {
 mod tests {
     use super::*;
     use crate::frame::GeneralCommand;
-    use crate::frame::Status;
 
     // cluster-specific, client->server, Identify for 30 s
     const IDENTIFY_30S: [u8; 5] = [0x01, 0x2a, 0x00, 0x1e, 0x00];
+    // same, with the default response disabled
+    const IDENTIFY_30S_NO_DEFAULT_RSP: [u8; 5] = [0x11, 0x2a, 0x00, 0x1e, 0x00];
     // cluster-specific, client->server, Identify Query
     const IDENTIFY_QUERY: [u8; 3] = [0x01, 0x2b, 0x01];
+
+    fn request(asdu: &[u8]) -> ClusterRequest<'_> {
+        ClusterRequest {
+            profile_id: 0x0104,
+            cluster_id: CLUSTER_ID,
+            src_endpoint: 1,
+            dst_endpoint: 1,
+            unicast: true,
+            asdu,
+        }
+    }
 
     #[test]
     fn identify_command_sets_the_countdown() {
@@ -173,13 +214,33 @@ mod tests {
         let mut out = [0u8; 32];
 
         assert!(!server.is_identifying());
-        // the command produces no reply, only state
+        let n = server
+            .handle(&request(&IDENTIFY_30S), &mut out)
+            .expect("default response for a unicast Identify");
+        // global s->c frame, seq echoed, DefaultResponse (0x0b) for command
+        // 0x00 with status SUCCESS
+        assert_eq!(&out[..n], &[0x18, 0x2a, 0x0b, 0x00, 0x00]);
+        assert_eq!(server.identify_time(), 30);
+        assert!(server.is_identifying());
+    }
+
+    #[test]
+    fn identify_command_honors_disabled_default_response() {
+        let server = IdentifyServer::new();
+        let mut out = [0u8; 32];
+
         assert_eq!(
-            server.handle(0x0104, CLUSTER_ID, 1, 1, &IDENTIFY_30S, &mut out),
+            server.handle(&request(&IDENTIFY_30S_NO_DEFAULT_RSP), &mut out),
             None
         );
         assert_eq!(server.identify_time(), 30);
-        assert!(server.is_identifying());
+
+        // a broadcast never draws a default response either (ZCL 2.5.12.2)
+        let broadcast = ClusterRequest {
+            unicast: false,
+            ..request(&IDENTIFY_30S)
+        };
+        assert_eq!(server.handle(&broadcast, &mut out), None);
     }
 
     #[test]
@@ -187,19 +248,45 @@ mod tests {
         let server = IdentifyServer::new();
         let mut out = [0u8; 32];
 
-        // not identifying: silence
-        assert_eq!(
-            server.handle(0x0104, CLUSTER_ID, 1, 1, &IDENTIFY_QUERY, &mut out),
-            None
-        );
+        // not identifying: no query response, only a default response
+        let n = server
+            .handle(&request(&IDENTIFY_QUERY), &mut out)
+            .expect("default response while not identifying");
+        assert_eq!(&out[..n], &[0x18, 0x2b, 0x0b, 0x01, 0x00]);
 
         server.set_identify_time(30);
         let n = server
-            .handle(0x0104, CLUSTER_ID, 1, 1, &IDENTIFY_QUERY, &mut out)
+            .handle(&request(&IDENTIFY_QUERY), &mut out)
             .expect("query answered while identifying");
         // frame control 0x19 (cluster-specific, s->c, no default response),
         // seq echoed, command 0x00, then IdentifyTime as uint16
         assert_eq!(&out[..n], &[0x19, 0x2b, 0x00, 0x1e, 0x00]);
+    }
+
+    #[test]
+    fn unsupported_command_reports_unsup_command() {
+        let server = IdentifyServer::new();
+        let mut out = [0u8; 32];
+        // Trigger Effect (0x40) is optional and not implemented
+        let asdu = [0x01, 0x2c, 0x40, 0x00, 0x00];
+        let n = server
+            .handle(&request(&asdu), &mut out)
+            .expect("default response for an unknown command");
+        assert_eq!(&out[..n], &[0x18, 0x2c, 0x0b, 0x40, 0x81]);
+    }
+
+    #[test]
+    fn writes_identify_time_attribute() {
+        let server = IdentifyServer::new();
+        // global Write Attributes: IdentifyTime (0x0000), uint16 (0x21), 30 s
+        let asdu = [0x00, 0x0a, 0x02, 0x00, 0x00, 0x21, 0x1e, 0x00];
+        let mut out = [0u8; 32];
+        let n = server
+            .handle(&request(&asdu), &mut out)
+            .expect("attribute write handled");
+        // header + single SUCCESS record (ZCL 2.5.4.1.2)
+        assert_eq!(&out[..n], &[0x18, 0x0a, 0x04, 0x00]);
+        assert_eq!(server.identify_time(), 30);
     }
 
     #[test]
@@ -218,10 +305,10 @@ mod tests {
         let server = IdentifyServer::new();
         server.set_identify_time(0x1234);
         // global Read Attributes for IdentifyTime (0x0000)
-        let request = [0x00, 0x07, 0x00, 0x00, 0x00];
+        let asdu = [0x00, 0x07, 0x00, 0x00, 0x00];
         let mut out = [0u8; 32];
         let n = server
-            .handle(0x0104, CLUSTER_ID, 1, 1, &request, &mut out)
+            .handle(&request(&asdu), &mut out)
             .expect("attribute read handled");
 
         let (frame, _) = ZclFrame::try_read(&out[..n], ()).unwrap();
@@ -243,9 +330,10 @@ mod tests {
     fn ignores_other_clusters() {
         let server = IdentifyServer::new();
         let mut out = [0u8; 32];
-        assert_eq!(
-            server.handle(0x0104, 0x0402, 1, 1, &IDENTIFY_30S, &mut out),
-            None
-        );
+        let other = ClusterRequest {
+            cluster_id: 0x0402,
+            ..request(&IDENTIFY_30S)
+        };
+        assert_eq!(server.handle(&other, &mut out), None);
     }
 }

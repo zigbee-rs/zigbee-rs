@@ -70,6 +70,20 @@ const ZDO_ENDPOINT: u8 = 0x00;
 // an endpoint appears at most once in a MatchList (2.4.4.2.7 step 3.b)
 const MAX_MATCHING_ENDPOINTS: usize = 16;
 
+/// One inbound application-profile request handed to a
+/// [`ClusterRequestHandler`].
+#[derive(Debug, Clone, Copy)]
+pub struct ClusterRequest<'a> {
+    pub profile_id: u16,
+    pub cluster_id: u16,
+    pub src_endpoint: u8,
+    pub dst_endpoint: u8,
+    /// Whether the frame was addressed to this device alone; a broadcast must
+    /// not draw a ZCL Default Response (ZCL 2.5.12.2).
+    pub unicast: bool,
+    pub asdu: &'a [u8],
+}
+
 /// Handler for inbound application-profile (non-ZDP) requests.
 ///
 /// Implemented by cluster servers (e.g. the ZCL Basic cluster) to answer
@@ -78,37 +92,14 @@ const MAX_MATCHING_ENDPOINTS: usize = 16;
 pub trait ClusterRequestHandler {
     /// Build a response ASDU for an application-profile request, writing it
     /// into `out` and returning its length, or `None` for no reply.
-    fn handle(
-        &self,
-        profile_id: u16,
-        cluster_id: u16,
-        src_endpoint: u8,
-        dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize>;
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize>;
 }
 
 /// Lets a handler be shared by reference, so a cluster server the application
 /// also reads from can live outside the receive task.
 impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
-    fn handle(
-        &self,
-        profile_id: u16,
-        cluster_id: u16,
-        src_endpoint: u8,
-        dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
-        (**self).handle(
-            profile_id,
-            cluster_id,
-            src_endpoint,
-            dst_endpoint,
-            asdu,
-            out,
-        )
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+        (**self).handle(request, out)
     }
 }
 
@@ -117,33 +108,10 @@ impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
 /// plus a generic reporting responder) into the single handler
 /// [`ZigbeeDevice::rx_loop`] expects.
 impl<A: ClusterRequestHandler, B: ClusterRequestHandler> ClusterRequestHandler for (A, B) {
-    fn handle(
-        &self,
-        profile_id: u16,
-        cluster_id: u16,
-        src_endpoint: u8,
-        dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
-        if let Some(len) = self.0.handle(
-            profile_id,
-            cluster_id,
-            src_endpoint,
-            dst_endpoint,
-            asdu,
-            out,
-        ) {
-            return Some(len);
-        }
-        self.1.handle(
-            profile_id,
-            cluster_id,
-            src_endpoint,
-            dst_endpoint,
-            asdu,
-            out,
-        )
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+        self.0
+            .handle(request, out)
+            .or_else(|| self.1.handle(request, out))
     }
 }
 
@@ -154,23 +122,8 @@ where
     B: ClusterRequestHandler,
     C: ClusterRequestHandler,
 {
-    fn handle(
-        &self,
-        profile_id: u16,
-        cluster_id: u16,
-        src_endpoint: u8,
-        dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
-        (&self.0, (&self.1, &self.2)).handle(
-            profile_id,
-            cluster_id,
-            src_endpoint,
-            dst_endpoint,
-            asdu,
-            out,
-        )
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+        (&self.0, (&self.1, &self.2)).handle(request, out)
     }
 }
 
@@ -672,15 +625,16 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     (rsp_cluster, ZDP_PROFILE_ID, ZDO_ENDPOINT, ZDO_ENDPOINT, len)
                 })
         } else {
+            let request = ClusterRequest {
+                profile_id: profile,
+                cluster_id: cluster,
+                src_endpoint,
+                dst_endpoint,
+                unicast: nwk_dst < NWK_BROADCAST_ADDRESS_MIN,
+                asdu: indication.asdu,
+            };
             handler
-                .handle(
-                    profile,
-                    cluster,
-                    src_endpoint,
-                    dst_endpoint,
-                    indication.asdu,
-                    &mut out,
-                )
+                .handle(&request, &mut out)
                 // application reply: same cluster/profile, endpoints swapped
                 .map(|len| (cluster, profile, src_endpoint, dst_endpoint, len))
         };
@@ -715,13 +669,11 @@ impl<M: Mlme> ZigbeeDevice<M> {
         Ok(())
     }
 
-    // build a Mgmt_Leave_rsp payload (2.4.4.4.5); returns its length and the
-    // NLME-LEAVE.request to issue once the response has been sent. only a
-    // request naming this device (or the NULL address) is honored — removing
-    // a child requires acting as its parent, which this stack does not support
-    // answer a Match_Desc_req as an end device (2.4.4.2.7): a broadcast about
-    // another device (step 2.a) or without a match (step 5) stays silent, a
-    // unicast about another device gets INV_REQUESTTYPE (step 2.b)
+    // answer a Match_Desc_req (2.4.4.2.7) about this device: a broadcast about
+    // another device (step 2.a) or without a match (step 5) stays silent. a
+    // request about another device is answered with INV_REQUESTTYPE by an end
+    // device (step 2.b) and with DEVICE_NOT_FOUND by a router, which keeps no
+    // cached simple descriptors for its children (step 4.b)
     fn build_match_desc_rsp(
         &self,
         asdu: &[u8],
@@ -736,12 +688,18 @@ impl<M: Mlme> ZigbeeDevice<M> {
             || request.nwk_addr_of_interest >= NWK_BROADCAST_ADDRESS_MIN;
 
         if !about_us {
-            if broadcast {
+            let end_device = cfg.node.logical_type == LogicalType::EndDevice;
+            if broadcast && end_device {
                 return None;
             }
+            let error = if end_device {
+                descriptor::MatchDescError::InvalidRequestType
+            } else {
+                descriptor::MatchDescError::DeviceNotFound
+            };
             return Some((
                 descriptor::MATCH_DESC_RSP,
-                descriptor::match_desc_rsp_invalid_request(request.seq, out).ok()?,
+                descriptor::match_desc_rsp_error(request.seq, error, out).ok()?,
             ));
         }
 
@@ -757,6 +715,10 @@ impl<M: Mlme> ZigbeeDevice<M> {
         ))
     }
 
+    // build a Mgmt_Leave_rsp payload (2.4.4.4.5); returns its length and the
+    // NLME-LEAVE.request to issue once the response has been sent. only a
+    // request naming this device (or the NULL address) is honored — removing
+    // a child requires acting as its parent, which this stack does not support
     fn build_mgmt_leave_rsp(
         &self,
         asdu: &[u8],

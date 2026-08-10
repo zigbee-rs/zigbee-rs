@@ -12,6 +12,9 @@ use zigbee_macros::impl_byte;
 
 const NODE_POWER_DESCRIPTOR_SIZE: usize = 2;
 
+// every node power descriptor field is 4 bits wide
+const NIBBLE: u8 = 0b1111;
+
 #[derive(Debug)]
 pub struct NodePowerDescriptor<'a> {
     bytes: &'a [u8],
@@ -22,27 +25,18 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
         let offset = &mut 0;
 
         let byte: u8 = bytes.read_with(offset, endian)?;
-        let available_power_sources = AvailablePowerSources(byte >> 4);
+        let available_power_sources = byte >> 4;
 
         let byte: u8 = bytes.read_with(offset, endian)?;
-        let current_power_source = CurrentPowerSource::try_read(&[byte & 0b1111], ())
-            .unwrap()
-            .0;
+        let current_power_source = PowerSource::try_read(&[byte & NIBBLE], ()).unwrap().0;
 
-        let power_source = match current_power_source {
-            CurrentPowerSource::ConstantMainPower => AvailablePowerSourcesFlag::ConstantMainPower,
-            CurrentPowerSource::RechargeableBattery => {
-                AvailablePowerSourcesFlag::RechargeableBattery
-            }
-            CurrentPowerSource::DisposableBattery => AvailablePowerSourcesFlag::DisposableBattery,
-            CurrentPowerSource::Reserved(_) => {
-                return Err(byte::Error::BadInput {
-                    err: "CurrentPowerSourceNotAvailable: No curent power source set",
-                });
-            }
-        };
+        if let PowerSource::Reserved(_) = current_power_source {
+            return Err(byte::Error::BadInput {
+                err: "CurrentPowerSourceNotAvailable: No curent power source set",
+            });
+        }
 
-        if available_power_sources.is_set(power_source) {
+        if available_power_sources & current_power_source.bits() != 0 {
             Ok((NodePowerDescriptor { bytes }, *offset))
         } else {
             Err(byte::Error::BadInput {
@@ -54,17 +48,18 @@ impl<'a> TryRead<'a, byte::ctx::Endian> for NodePowerDescriptor<'a> {
 
 impl NodePowerDescriptor<'_> {
     fn current_power_mode(&self) -> CurrentPowerMode {
-        CurrentPowerMode::try_read(&[self.bytes[0] & 0b1111], ())
+        CurrentPowerMode::try_read(&[self.bytes[0] & NIBBLE], ())
             .unwrap()
             .0
     }
 
-    fn available_power_sources(&self) -> AvailablePowerSources {
-        AvailablePowerSources(self.bytes[0] >> 4)
+    /// Whether the node declares `power_source` as available (2.3.2.4.2).
+    pub fn supports(&self, power_source: PowerSource) -> bool {
+        (self.bytes[0] >> 4) & power_source.bits() != 0
     }
 
-    fn current_power_source(&self) -> CurrentPowerSource {
-        CurrentPowerSource::try_read(&[self.bytes[1] & 0b1111], ())
+    fn current_power_source(&self) -> PowerSource {
+        PowerSource::try_read(&[self.bytes[1] & NIBBLE], ())
             .unwrap()
             .0
     }
@@ -78,7 +73,7 @@ impl NodePowerDescriptor<'_> {
 
 impl_byte! {
     #[tag(u8)]
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     /// Current power mode field (2.3.2.4.1).
     pub enum CurrentPowerMode {
         /// Synchronized with the receiver-on-when-idle subfield of the node descriptor.
@@ -92,39 +87,59 @@ impl_byte! {
     }
 }
 
-/// Available power sources field (2.3.2.4.2).
-pub struct AvailablePowerSources(u8);
-
-#[repr(u8)]
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub enum AvailablePowerSourcesFlag {
-    ConstantMainPower = 0,
-    RechargeableBattery = 1,
-    DisposableBattery = 2,
-}
-
-impl AvailablePowerSources {
-    fn is_set(&self, power_source: AvailablePowerSourcesFlag) -> bool {
-        (self.0 & (1 << power_source as u8)) != 0
+impl CurrentPowerMode {
+    /// The 4-bit field value.
+    pub const fn bits(self) -> u8 {
+        match self {
+            Self::Synchronized => 0b0000,
+            Self::Periodically => 0b0001,
+            Self::Stimulated => 0b0010,
+            Self::Reserved(bits) => bits & NIBBLE,
+        }
     }
 }
 
 impl_byte! {
     #[tag(u8)]
-    #[derive(Debug, PartialEq, Eq)]
-    /// Current power source field (2.3.2.4.3).
-    pub enum CurrentPowerSource {
-        ConstantMainPower = 0b000,
-        RechargeableBattery = 0b010,
-        DisposableBattery = 0b100,
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// A power source of the node, as its bit in the available power sources
+    /// (2.3.2.4.2) and current power source (2.3.2.4.3) fields, which share a
+    /// bit assignment.
+    pub enum PowerSource {
+        ConstantMainPower = 0b0001,
+        RechargeableBattery = 0b0010,
+        DisposableBattery = 0b0100,
         #[fallback = true]
         Reserved(u8),
     }
 }
 
+impl PowerSource {
+    /// The 4-bit field value with this source's bit set.
+    pub const fn bits(self) -> u8 {
+        match self {
+            Self::ConstantMainPower => 0b0001,
+            Self::RechargeableBattery => 0b0010,
+            Self::DisposableBattery => 0b0100,
+            Self::Reserved(bits) => bits & NIBBLE,
+        }
+    }
+
+    /// The 4-bit field value covering every source in `sources`.
+    pub const fn bitmap(sources: &[Self]) -> u8 {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < sources.len() {
+            bits |= sources[i].bits();
+            i += 1;
+        }
+        bits
+    }
+}
+
 impl_byte! {
     #[tag(u8)]
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     /// Current power source level field (2.3.2.4.4).
     pub enum CurrentPowerSourceLevel {
         Critical = 0b0000,
@@ -133,6 +148,19 @@ impl_byte! {
         Full = 0b1100,
         #[fallback = true]
         Reserved(u8),
+    }
+}
+
+impl CurrentPowerSourceLevel {
+    /// The 4-bit field value.
+    pub const fn bits(self) -> u8 {
+        match self {
+            Self::Critical => 0b0000,
+            Self::OneThird => 0b0100,
+            Self::TwoThirds => 0b1000,
+            Self::Full => 0b1100,
+            Self::Reserved(bits) => bits & NIBBLE,
+        }
     }
 }
 
@@ -152,24 +180,12 @@ mod tests {
             node_power_descriptor.current_power_mode(),
             CurrentPowerMode::Synchronized
         );
-        assert!(
-            node_power_descriptor
-                .available_power_sources()
-                .is_set(AvailablePowerSourcesFlag::DisposableBattery)
-        );
-        assert!(
-            node_power_descriptor
-                .available_power_sources()
-                .is_set(AvailablePowerSourcesFlag::ConstantMainPower)
-        );
-        assert!(
-            !node_power_descriptor
-                .available_power_sources()
-                .is_set(AvailablePowerSourcesFlag::RechargeableBattery)
-        );
+        assert!(node_power_descriptor.supports(PowerSource::DisposableBattery));
+        assert!(node_power_descriptor.supports(PowerSource::ConstantMainPower));
+        assert!(!node_power_descriptor.supports(PowerSource::RechargeableBattery));
         assert_eq!(
             node_power_descriptor.current_power_source(),
-            CurrentPowerSource::DisposableBattery
+            PowerSource::DisposableBattery
         );
         assert_eq!(
             node_power_descriptor.current_power_source_level(),

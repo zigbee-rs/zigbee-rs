@@ -8,6 +8,7 @@
 
 use byte::BytesExt;
 use byte::TryRead;
+use zigbee::zdo::ClusterRequest;
 use zigbee::zdo::ClusterRequestHandler;
 
 use crate::attributes::RESPONSE_FRAME_CONTROL;
@@ -26,18 +27,10 @@ use crate::header::frame_control::FrameControl;
 pub struct ConfigureReportingServer;
 
 impl ClusterRequestHandler for ConfigureReportingServer {
-    fn handle(
-        &self,
-        _profile_id: u16,
-        _cluster_id: u16,
-        _src_endpoint: u8,
-        _dst_endpoint: u8,
-        asdu: &[u8],
-        out: &mut [u8],
-    ) -> Option<usize> {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
         // only the header is needed to ack; the configuration records carry
         // variable-length reportable-change fields we do not act on
-        let (header, _) = ZclHeader::try_read(asdu, ()).ok()?;
+        let (header, _) = ZclHeader::try_read(request.asdu, ()).ok()?;
         if header.command_identifier != CommandIdentifier::ConfigureReporting {
             return None;
         }
@@ -61,18 +54,29 @@ impl ClusterRequestHandler for ConfigureReportingServer {
 mod tests {
     use super::*;
 
+    fn request(cluster_id: u16, asdu: &[u8]) -> ClusterRequest<'_> {
+        ClusterRequest {
+            profile_id: 0x0104,
+            cluster_id,
+            src_endpoint: 1,
+            dst_endpoint: 1,
+            unicast: true,
+            asdu,
+        }
+    }
+
     #[test]
     fn acks_configure_reporting_with_success() {
         // Configure Reporting (global cmd 0x06) for temperature MeasuredValue;
         // the trailing configuration record is intentionally ignored
-        let request = [
+        let asdu = [
             0x00, 0x2b, 0x06, // frame control (global, c->s), seq, ConfigureReporting
             0x00, 0x00, 0x00, // direction, attribute id 0x0000
             0x29, 0x1e, 0x00, 0x58, 0x02, 0x64, 0x00, // type int16, intervals, change
         ];
         let mut out = [0u8; 16];
         let n = ConfigureReportingServer
-            .handle(0x0104, 0x0402, 1, 1, &request, &mut out)
+            .handle(&request(0x0402, &asdu), &mut out)
             .expect("configure reporting handled");
         // header (0x18, seq 0x2b, ConfigureReportingResponse 0x07) + status SUCCESS
         assert_eq!(&out[..n], &[0x18, 0x2b, 0x07, 0x00]);
@@ -81,10 +85,10 @@ mod tests {
     #[test]
     fn ignores_other_commands() {
         // Read Attributes (0x00) is not ours
-        let request = [0x00, 0x01, 0x00, 0x04, 0x00];
+        let asdu = [0x00, 0x01, 0x00, 0x04, 0x00];
         let mut out = [0u8; 16];
         assert_eq!(
-            ConfigureReportingServer.handle(0x0104, 0x0000, 1, 1, &request, &mut out),
+            ConfigureReportingServer.handle(&request(0x0000, &asdu), &mut out),
             None
         );
     }

@@ -14,7 +14,10 @@ use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use esp_storage::FlashStorage;
 use static_cell::StaticCell;
+use zigbee::CurrentPowerMode;
+use zigbee::CurrentPowerSourceLevel;
 use zigbee::LogicalType;
+use zigbee::PowerSource;
 use zigbee::aps::aib;
 use zigbee::aps::apsde::ApsdeSapConfirmStatus;
 use zigbee::nwk::nib::CapabilityInformation;
@@ -127,12 +130,11 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
             maximum_outgoing_transfer_size: 128,
             descriptor_capability_field: 0,
         },
-        // disposable battery (bit 2), on when stimulated, full charge
         power: PowerDescriptorConfig {
-            current_power_mode: 0b0010,
-            available_power_sources: 0b0100,
-            current_power_source: 0b0100,
-            current_power_source_level: 0b1100,
+            current_power_mode: CurrentPowerMode::Stimulated,
+            available_power_sources: &[PowerSource::DisposableBattery],
+            current_power_source: PowerSource::DisposableBattery,
+            current_power_source_level: CurrentPowerSourceLevel::Full,
         },
         endpoints: &ENDPOINTS,
     }
