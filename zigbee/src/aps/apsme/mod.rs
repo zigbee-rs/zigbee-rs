@@ -35,6 +35,7 @@ use embedded_hal_async::delay::DelayNs;
 use spin::Mutex;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
+use zigbee_types::StorageVec;
 use zigbee_types::sync::Event;
 use zigbee_types::sync::Signal;
 use zigbee_types::sync::with_timeout;
@@ -53,6 +54,7 @@ use super::binding::remove_binding_link;
 use super::frame::CommandFrame;
 use super::frame::Frame;
 use super::frame::command::Command;
+use super::frame::command::StandardNetworkKeyDescriptor;
 use super::frame::command::TransportKey;
 use super::frame::command::TrustCenterLinkKeyDescriptor;
 use super::frame::frame_control::DeliveryMode;
@@ -68,12 +70,17 @@ use crate::aps::APS_DUPLICATE_REJECTION_TABLE_SIZE;
 use crate::aps::APS_MAX_PENDING_ACKS;
 use crate::aps::APSC_ACK_WAIT_DURATION_MS;
 use crate::aps::APSC_MAX_FRAME_RETRIES;
+use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
+use crate::nwk::nib::Nib;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
 use crate::security::SecurityContext;
 
 pub mod basemgt;
 pub mod groupmgt;
+
+// standard network key type of a security material descriptor (3.5.2)
+const STANDARD_NETWORK_KEY: u8 = 0x01;
 
 /// Application support sub-layer management service - service access point
 ///
@@ -155,8 +162,9 @@ pub(crate) struct Apsme {
     // gates handling of Transport-Key/Confirm-Key so replayed or
     // unsolicited frames cannot downgrade an established key (4.4.10)
     tc_exchange_active: AtomicBool,
-    // signaled when a TC link key was received and installed (4.4.10)
-    pub(crate) tc_key_received: Event,
+    // carries whether a transported TC link key was accepted and installed
+    // (4.4.10, BDB 10.2.5 step 9)
+    pub(crate) tc_key_received: Signal<bool>,
     // carries the Confirm-Key status (4.4.9), 0x00 = success
     pub(crate) tc_key_verified: Signal<u8>,
 }
@@ -170,7 +178,7 @@ impl Apsme {
             duplicates: Mutex::new(DuplicateTable::default()),
             aps_counter: AtomicU8::new(0),
             tc_exchange_active: AtomicBool::new(false),
-            tc_key_received: Event::new(),
+            tc_key_received: Signal::new(),
             tc_key_verified: Signal::new(),
         }
     }
@@ -289,6 +297,8 @@ impl Apsme {
 
         let offset = &mut 0;
         let header: Header = aps_bytes.read_with(offset, ())?;
+        let hdr_len = *offset;
+        let secured = header.frame_control.security_flag();
 
         // acknowledgement of one of our own transmissions (2.2.8.4.4)
         if header.frame_control.frame_type() == FrameType::Acknowledgement {
@@ -302,23 +312,42 @@ impl Apsme {
         }
 
         // APS command frame (4.4): process internally, no application data.
+        // a broadcast Switch-Key carries no APS security (4.4.6.1.3), so the
+        // frame is only decrypted when the security sub-field says so
         if header.frame_control.frame_type() == FrameType::Command {
-            // SAFETY: re-borrows the same buffer; decryption is in place
-            let aps_buf = unsafe { nwk_data.payload_as_mut() };
-            let cx = SecurityContext::get();
-            let frame = cx.decrypt_aps_frame_in_place(aps_buf)?;
-            if let Frame::ApsCommand(CommandFrame { command, .. }) = frame {
-                self.handle_aps_command(aib::get_ref(), &command);
-            }
+            let from_trust_center = self.is_trust_center(nlme, aib::get_ref(), src_short);
+            let command = if secured {
+                // SAFETY: re-borrows the same buffer; decryption is in place
+                let aps_buf = unsafe { nwk_data.payload_as_mut() };
+                let cx = SecurityContext::get();
+                match cx.decrypt_aps_frame_in_place(aps_buf)? {
+                    Frame::ApsCommand(CommandFrame { command, .. }) => command,
+                    _ => return Ok(None),
+                }
+            } else {
+                aps_bytes[hdr_len..].read_with(&mut 0, ())?
+            };
+            self.handle_aps_command(aib::get_ref(), nlme.nib(), &command, from_trust_center);
             return Ok(None);
         }
 
-        // only APS-unsecured data frames are dispatched as indications
-        if header.frame_control.frame_type() != FrameType::Data
-            || header.frame_control.security_flag()
-        {
+        if header.frame_control.frame_type() != FrameType::Data {
             return Ok(None);
         }
+
+        // an APS-encrypted data frame is decrypted with the link key of its
+        // sender before it is dispatched (4.4.1.2)
+        let (asdu, security_status) = if secured {
+            // SAFETY: re-borrows the same buffer; decryption is in place
+            let aps_buf = unsafe { nwk_data.payload_as_mut() };
+            let cx = SecurityContext::get();
+            match cx.decrypt_aps_frame_in_place(aps_buf)? {
+                Frame::Data(data) => (data.payload, SecurityStatus::SecuredLinkKey),
+                _ => return Ok(None),
+            }
+        } else {
+            (&aps_bytes[hdr_len..], SecurityStatus::SecuredNwkKey)
+        };
 
         // acknowledge before rejecting a duplicate: a retransmission means our
         // previous acknowledgement was lost (2.2.8.4.2/2.2.8.4.4)
@@ -336,7 +365,6 @@ impl Apsme {
             return Ok(None);
         }
 
-        let asdu = &aps_bytes[*offset..];
         let src_endpoint =
             SrcEndpoint::new(header.source_endpoint.unwrap_or(0)).unwrap_or_default();
 
@@ -351,17 +379,32 @@ impl Apsme {
             cluster_id: header.cluster_id.unwrap_or(0),
             asdu,
             status: ApsdeSapIndicationStatus::Success,
-            security_status: SecurityStatus::SecuredNwkKey,
+            security_status,
             link_quality: 0,
             rx_time: 0,
         }))
     }
 
+    // whether a frame received from `src` came from the Trust Center; the
+    // Switch-Key command carries no source address (4.4.10.5), so it is
+    // identified by the NWK source of the frame it arrived in
+    fn is_trust_center<M: zigbee_mac::mlme::Mlme>(
+        &self,
+        nlme: &Nlme<M>,
+        aib: &Aib,
+        src: u16,
+    ) -> bool {
+        let tc_ieee = *aib.trust_center_address();
+        nlme.short_address_for_ieee(tc_ieee)
+            .map_or(src == ShortAddress::COORDINATOR.0, |short| short.0 == src)
+    }
+
     // process an inbound APS command frame at its arrival point (4.4);
     // a TC link key is installed as unverified (4.4.10) and a Confirm-Key
     // marks it verified (4.4.9), each signaling BDB 10.2.5 commissioning.
-    // unsolicited NWK key rotation (4.4.3) is a future extension point
-    fn handle_aps_command(&self, aib: &Aib, command: &Command) {
+    // a network key transported by the Trust Center becomes the alternate
+    // key and its Switch-Key activates it (4.6.3.4.2)
+    fn handle_aps_command(&self, aib: &Aib, nib: &Nib, command: &Command, from_trust_center: bool) {
         let exchange_active = self.tc_exchange_active.load(Ordering::Acquire);
         match command {
             // outside an armed exchange a TC link key must not be honored: a
@@ -375,8 +418,8 @@ impl Apsme {
             }
             Command::TransportKey(TransportKey::TrustCenterLinkKey(descriptor)) => {
                 log::debug!("[APS] rx TC link key");
-                self.install_unverified_tc_link_key(aib, descriptor);
-                self.tc_key_received.signal();
+                let installed = self.install_unverified_tc_link_key(aib, descriptor);
+                self.tc_key_received.signal(installed);
             }
             Command::ConfirmKey(confirm) => {
                 log::debug!("[APS] rx confirm key: status {:#04x}", confirm.status);
@@ -385,8 +428,26 @@ impl Apsme {
                 }
                 self.tc_key_verified.signal(confirm.status);
             }
-            // key transport (4.4.3): the network key is obtained inline during
-            // join; an unsolicited key update would be handled here
+            // key transport (4.4.3): only the Trust Center may rotate the
+            // network key (4.6.3.4.2)
+            Command::TransportKey(TransportKey::StandardNetworkKey(descriptor)) => {
+                if descriptor.source_address != *aib.trust_center_address() {
+                    log::warn!("[APS] rx network key from a foreign device (ignored)");
+                    return;
+                }
+                log::info!(
+                    "[APS] rx network key seq {} as alternate key",
+                    descriptor.sequence_number
+                );
+                install_alternate_network_key(nib, descriptor);
+            }
+            Command::SwitchKey(switch) if !from_trust_center => {
+                log::warn!(
+                    "[APS] rx switch key seq {} from a foreign device (ignored)",
+                    switch.sequence_number
+                );
+            }
+            Command::SwitchKey(switch) => switch_network_key(nib, switch.sequence_number),
             Command::TransportKey(_) => log::trace!("[APS] rx transport key (ignored)"),
             // TODO: a Request-Key addressed to us (e.g. app link key) would be
             // answered here
@@ -396,10 +457,24 @@ impl Apsme {
         }
     }
 
-    // install a freshly transported TC link key as unverified (4.4.10 step 9
-    // of BDB 10.2.5)
-    fn install_unverified_tc_link_key(&self, aib: &Aib, descriptor: &TrustCenterLinkKeyDescriptor) {
+    // install a freshly transported TC link key as unverified (BDB 10.2.5
+    // step 9), reporting whether it was accepted: a key identical to the one
+    // already held means the exchange failed
+    fn install_unverified_tc_link_key(
+        &self,
+        aib: &Aib,
+        descriptor: &TrustCenterLinkKeyDescriptor,
+    ) -> bool {
         let tc_ieee = *aib.trust_center_address();
+        if aib
+            .device_key_pair_set()
+            .iter()
+            .any(|k| k.device_address == tc_ieee && k.link_key == descriptor.key)
+        {
+            log::warn!("[APS] transported TC link key is the one already held");
+            return false;
+        }
+
         aib.update_device_key_pair_set(|key_set| {
             if let Some(entry) = key_set.iter_mut().find(|k| k.device_address == tc_ieee) {
                 entry.link_key = descriptor.key;
@@ -418,6 +493,7 @@ impl Apsme {
                 });
             }
         });
+        true
     }
 
     // mark the TC link key as verified after a successful Confirm-Key (4.4.9)
@@ -594,7 +670,8 @@ impl Apsme {
     /// Acknowledge a received frame that requested it (2.2.5.2.3).
     ///
     /// The acknowledgement echoes the cluster, profile and APS counter of the
-    /// original frame and swaps its endpoints.
+    /// original frame and swaps its endpoints. It carries NWK security only —
+    /// TODO: mirror the APS security of the frame being acknowledged.
     async fn send_ack<M: zigbee_mac::mlme::Mlme>(
         &self,
         nlme: &Nlme<M>,
@@ -647,6 +724,62 @@ impl Apsme {
 
         nlme.broadcast_data(nwk_broadcast, true, &buf[..len]).await
     }
+}
+
+// store a network key transported by the Trust Center as the alternate key,
+// leaving the active one in place until a Switch-Key arrives (4.6.3.4.2); all
+// frame counters of the replaced key start over
+fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescriptor) {
+    let active = *nib.active_key_seq_number();
+    let material = NetworkSecurityMaterialDescriptor {
+        key_seq_number: descriptor.sequence_number,
+        outgoing_frame_counter: 0,
+        incoming_frame_counter_set: StorageVec::new(),
+        key: descriptor.key,
+        network_key_type: STANDARD_NETWORK_KEY,
+    };
+
+    nib.update_security_material_set(|set| {
+        // a re-transported key replaces its own entry, a new one the alternate
+        let slot = set
+            .iter()
+            .position(|m| m.key_seq_number == descriptor.sequence_number)
+            .or_else(|| set.iter().position(|m| m.key_seq_number != active));
+        match slot {
+            Some(index) => set[index] = material,
+            None => {
+                if set.push(material).is_err() {
+                    log::warn!("[APS] no room for the alternate network key");
+                }
+            }
+        }
+    });
+
+    // a device without material for its active key (e.g. after a rejoin that
+    // followed a leave) could not encrypt at all — the transported key becomes
+    // the active one instead
+    if !nib
+        .security_material_set()
+        .iter()
+        .any(|m| m.key_seq_number == active)
+    {
+        switch_network_key(nib, descriptor.sequence_number);
+    }
+}
+
+// activate the network key with the given sequence number (4.6.3.4.2); an
+// unknown sequence number is kept as is so the device stays reachable
+fn switch_network_key(nib: &Nib, key_seq_number: u8) {
+    if !nib
+        .security_material_set()
+        .iter()
+        .any(|m| m.key_seq_number == key_seq_number)
+    {
+        log::warn!("[APS] rx switch key for unknown network key seq {key_seq_number}");
+        return;
+    }
+    log::info!("[APS] switching to network key seq {key_seq_number}");
+    nib.update_active_key_seq_number(|value| *value = key_seq_number);
 }
 
 impl ApsmeSap for Apsme {
@@ -733,6 +866,7 @@ mod tests {
     use crate::aps::aib::MAX_APS_BINDING_TABLE;
     use crate::aps::binding::BindingAddrMode;
     use crate::aps::frame::command::ConfirmKey;
+    use crate::aps::frame::command::SwitchKey;
     use crate::aps::types::SrcEndpoint;
 
     fn bind_request(cluster_id: u16) -> ApsmeBindRequest {
@@ -899,6 +1033,12 @@ mod tests {
         })
     }
 
+    // the NIB is only touched by the network-key commands, so the link-key
+    // cases hand in a throwaway one
+    fn handle(apsme: &Apsme, aib: &Aib, command: &Command) {
+        apsme.handle_aps_command(aib, &Nib::new(), command, true);
+    }
+
     #[test]
     fn tc_link_key_is_installed_unverified_and_signaled() {
         use core::future::Future;
@@ -914,13 +1054,42 @@ mod tests {
         let mut received = pin!(apsme.tc_key_received.wait());
         assert!(received.as_mut().poll(&mut cx).is_pending());
 
-        apsme.handle_aps_command(&aib, &tc_link_key());
+        handle(&apsme, &aib, &tc_link_key());
 
         let entry = aib.device_key_pair_set()[0].clone();
         assert_eq!(entry.device_address, TC_IEEE);
         assert_eq!(entry.link_key, ByteArray(NEW_KEY));
         assert_eq!(entry.key_attributes, KeyAttribute::UnverifiedKey);
-        assert!(received.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(
+            received.as_mut().poll(&mut cx),
+            core::task::Poll::Ready(true)
+        );
+    }
+
+    // BDB 10.2.5 step 9: a transported key identical to the one already held
+    // fails the exchange instead of resetting the frame counters
+    #[test]
+    fn transported_tc_link_key_identical_to_the_held_one_is_rejected() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::Context;
+        use core::task::Poll;
+        use core::task::Waker;
+
+        let apsme = Apsme::new();
+        let aib = setup_aib();
+        let mut cx = Context::from_waker(Waker::noop());
+        apsme.begin_tc_key_exchange();
+
+        handle(&apsme, &aib, &tc_link_key());
+        aib.update_device_key_pair_set(|key_set| key_set[0].outgoing_frame_counter = 42);
+
+        handle(&apsme, &aib, &tc_link_key());
+        assert_eq!(
+            pin!(apsme.tc_key_received.wait()).poll(&mut cx),
+            Poll::Ready(false)
+        );
+        assert_eq!(aib.device_key_pair_set()[0].outgoing_frame_counter, 42);
     }
 
     #[test]
@@ -935,10 +1104,10 @@ mod tests {
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
         apsme.begin_tc_key_exchange();
-        apsme.handle_aps_command(&aib, &tc_link_key());
+        handle(&apsme, &aib, &tc_link_key());
 
         // failed verification signals the status but leaves the key unverified
-        apsme.handle_aps_command(&aib, &confirm_key(0x01));
+        handle(&apsme, &aib, &confirm_key(0x01));
         assert_eq!(
             aib.device_key_pair_set()[0].key_attributes,
             KeyAttribute::UnverifiedKey
@@ -948,7 +1117,7 @@ mod tests {
             Poll::Ready(0x01)
         );
 
-        apsme.handle_aps_command(&aib, &confirm_key(0x00));
+        handle(&apsme, &aib, &confirm_key(0x00));
         assert_eq!(
             aib.device_key_pair_set()[0].key_attributes,
             KeyAttribute::VerifiedKey
@@ -971,7 +1140,7 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
 
         // not armed: a (replayed) TC link key must not touch the AIB
-        apsme.handle_aps_command(&aib, &tc_link_key());
+        handle(&apsme, &aib, &tc_link_key());
         assert!(aib.device_key_pair_set().is_empty());
         assert!(
             pin!(apsme.tc_key_received.wait())
@@ -979,7 +1148,7 @@ mod tests {
                 .is_pending()
         );
 
-        apsme.handle_aps_command(&aib, &confirm_key(0x00));
+        handle(&apsme, &aib, &confirm_key(0x00));
         assert!(
             pin!(apsme.tc_key_verified.wait())
                 .poll(&mut cx)
@@ -989,14 +1158,111 @@ mod tests {
         // disarmed after a completed exchange: a replay must not downgrade
         // the verified key or reset its frame counters
         apsme.begin_tc_key_exchange();
-        apsme.handle_aps_command(&aib, &tc_link_key());
-        apsme.handle_aps_command(&aib, &confirm_key(0x00));
+        handle(&apsme, &aib, &tc_link_key());
+        handle(&apsme, &aib, &confirm_key(0x00));
         apsme.end_tc_key_exchange();
         aib.update_device_key_pair_set(|key_set| key_set[0].outgoing_frame_counter = 42);
 
-        apsme.handle_aps_command(&aib, &tc_link_key());
+        handle(&apsme, &aib, &tc_link_key());
         let entry = aib.device_key_pair_set()[0].clone();
         assert_eq!(entry.key_attributes, KeyAttribute::VerifiedKey);
         assert_eq!(entry.outgoing_frame_counter, 42);
+    }
+
+    fn network_key(sequence_number: u8, key: [u8; 16], source: IeeeAddress) -> Command {
+        Command::TransportKey(TransportKey::StandardNetworkKey(
+            StandardNetworkKeyDescriptor {
+                key: ByteArray(key),
+                sequence_number,
+                destination_address: IeeeAddress(1),
+                source_address: source,
+            },
+        ))
+    }
+
+    // 4.6.3.4.2: a transported network key becomes the alternate key and only
+    // the Switch-Key from the Trust Center makes it active
+    // seeds the material set with an active network key of sequence number 3
+    fn nib_with_active_key() -> Nib {
+        let nib = Nib::new();
+        nib.update_security_material_set(|set| {
+            let _ = set.push(NetworkSecurityMaterialDescriptor {
+                key_seq_number: 3,
+                outgoing_frame_counter: 7,
+                incoming_frame_counter_set: StorageVec::new(),
+                key: ByteArray([0xaa; 16]),
+                network_key_type: STANDARD_NETWORK_KEY,
+            });
+        });
+        nib.update_active_key_seq_number(|value| *value = 3);
+        nib
+    }
+
+    #[test]
+    fn network_key_update_replaces_the_alternate_key_and_switches_on_command() {
+        let apsme = Apsme::new();
+        let aib = setup_aib();
+        let nib = nib_with_active_key();
+
+        apsme.handle_aps_command(&aib, &nib, &network_key(4, NEW_KEY, TC_IEEE), true);
+
+        // the active key is untouched, the new one is stored alongside it
+        assert_eq!(*nib.active_key_seq_number(), 3);
+        let set = nib.security_material_set();
+        assert_eq!(set.len(), 2);
+        assert_eq!(set[1].key_seq_number, 4);
+        assert_eq!(set[1].outgoing_frame_counter, 0);
+        assert_eq!(set[0].outgoing_frame_counter, 7);
+        drop(set);
+
+        apsme.handle_aps_command(
+            &aib,
+            &nib,
+            &Command::SwitchKey(SwitchKey { sequence_number: 4 }),
+            true,
+        );
+        assert_eq!(*nib.active_key_seq_number(), 4);
+
+        // the next rotation overwrites the now-alternate key, not the active one
+        apsme.handle_aps_command(&aib, &nib, &network_key(5, [0xbb; 16], TC_IEEE), true);
+        let set = nib.security_material_set();
+        assert_eq!(set.len(), 2);
+        assert_eq!(set[0].key_seq_number, 5);
+        assert_eq!(set[1].key_seq_number, 4);
+    }
+
+    #[test]
+    fn network_key_and_switch_key_from_a_foreign_device_are_ignored() {
+        let apsme = Apsme::new();
+        let aib = setup_aib();
+        let nib = nib_with_active_key();
+
+        // a key transported by anyone but the Trust Center
+        apsme.handle_aps_command(
+            &aib,
+            &nib,
+            &network_key(4, NEW_KEY, IeeeAddress(0x99)),
+            true,
+        );
+        assert_eq!(nib.security_material_set().len(), 1);
+
+        apsme.handle_aps_command(&aib, &nib, &network_key(4, NEW_KEY, TC_IEEE), true);
+        // a switch from a device that is not the Trust Center
+        apsme.handle_aps_command(
+            &aib,
+            &nib,
+            &Command::SwitchKey(SwitchKey { sequence_number: 4 }),
+            false,
+        );
+        assert_eq!(*nib.active_key_seq_number(), 3);
+
+        // as is a switch to a key we never received
+        apsme.handle_aps_command(
+            &aib,
+            &nib,
+            &Command::SwitchKey(SwitchKey { sequence_number: 9 }),
+            true,
+        );
+        assert_eq!(*nib.active_key_seq_number(), 3);
     }
 }

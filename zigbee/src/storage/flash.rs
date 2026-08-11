@@ -234,7 +234,7 @@ mod tests {
         )
     }
 
-    fn security_material(counter: u32) -> StorageVec<NetworkSecurityMaterialDescriptor, 1> {
+    fn security_material(counter: u32) -> StorageVec<NetworkSecurityMaterialDescriptor, 2> {
         let mut set = StorageVec::new();
         let _ = set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,

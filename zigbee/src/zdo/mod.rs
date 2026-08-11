@@ -12,6 +12,7 @@ pub mod descriptor;
 pub mod device_annce;
 use zigbee_types::StorageVec;
 use zigbee_types::sync::Event;
+use zigbee_types::sync::Signal;
 
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::aps::aib;
@@ -58,6 +59,9 @@ pub struct ZigbeeDevice<M> {
     zdp_seq: AtomicU8,
     // signaled once the network key is installed; gates the receive loop
     joined: Event,
+    // carries an inbound Node_Desc_rsp (2.4.4.2.3) to the procedure that
+    // asked for it, e.g. the BDB TC link key exchange
+    node_desc_rsp: Signal<descriptor::NodeDescRsp>,
 }
 
 /// zigbee network
@@ -66,6 +70,8 @@ pub struct ZigBeeNetwork {}
 // ZigBee Device Profile identifier (endpoint 0)
 const ZDP_PROFILE_ID: u16 = 0x0000;
 const ZDO_ENDPOINT: u8 = 0x00;
+// a ZDP response cluster is its request cluster with this bit set (2.4.4)
+const ZDP_RESPONSE_CLUSTER_FLAG: u16 = 0x8000;
 
 // an endpoint appears at most once in a MatchList (2.4.4.2.7 step 3.b)
 const MAX_MATCHING_ENDPOINTS: usize = 16;
@@ -136,6 +142,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             apsme: Apsme::new(),
             zdp_seq: AtomicU8::new(0),
             joined: Event::new(),
+            node_desc_rsp: Signal::new(),
         }
     }
 
@@ -505,12 +512,66 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.apsme.end_tc_key_exchange();
     }
 
-    /// Wait until the Trust Center delivered a new link key (4.4.10).
+    /// Wait until the Trust Center delivered a new link key (4.4.10) and
+    /// report whether it was accepted.
     ///
     /// The receive loop installs the key as unverified into the AIB before
-    /// signaling. Bound the wait with an executor timeout.
-    pub async fn wait_tc_link_key_received(&self) {
-        self.apsme.tc_key_received.wait().await;
+    /// signaling. `false` means the transported key was rejected — it was the
+    /// one already held (BDB 10.2.5 step 9) — and the exchange has failed.
+    /// Bound the wait with an executor timeout.
+    pub async fn wait_tc_link_key_received(&self) -> bool {
+        self.apsme.tc_key_received.wait().await
+    }
+
+    /// Send a ZDO Node_Desc_req (2.4.3.1.3) asking `destination` for its own
+    /// node descriptor, discarding a response left over from an earlier
+    /// request.
+    ///
+    /// Await the answer with [`Self::wait_node_desc_rsp`]; the receive loop
+    /// must be running to deliver it.
+    pub async fn node_desc_req(&self, destination: ShortAddress) -> Result<(), NetworkError> {
+        self.node_desc_rsp.reset();
+
+        let mut asdu = [0u8; 3];
+        let len = descriptor::node_desc_req(self.next_zdp_seq(), destination.0, &mut asdu)?;
+        self.apsme
+            .unicast_data(
+                &self.nlme,
+                destination,
+                ZDO_ENDPOINT,
+                descriptor::NODE_DESC_REQ,
+                ZDP_PROFILE_ID,
+                ZDO_ENDPOINT,
+                &asdu[..len],
+            )
+            .await
+    }
+
+    /// Wait for a Node_Desc_rsp (2.4.4.2.3).
+    ///
+    /// Bound the wait with an executor timeout.
+    pub async fn wait_node_desc_rsp(&self) -> descriptor::NodeDescRsp {
+        self.node_desc_rsp.wait().await
+    }
+
+    /// Leave the network and forget it: announces the departure (3.6.1.10.1),
+    /// clears the NIB network attributes and the Trust Center link keys, and
+    /// parks the receive loop until the device is commissioned again.
+    ///
+    /// With flash-backed information bases, flush the storage afterwards so
+    /// the reset survives a reboot.
+    pub async fn leave_network(&self, rejoin: bool) -> NlmeLeaveStatus {
+        let confirm = self
+            .nlme
+            .leave(NlmeLeaveRequest {
+                device_address: None,
+                remove_children: false,
+                rejoin,
+            })
+            .await;
+        self.mark_joined(false);
+        self.reset_trust_center_link_keys();
+        confirm.status
     }
 
     /// Wait until the Trust Center answered the key verification (4.4.9)
@@ -619,6 +680,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
                         len,
                     )
                 })
+        } else if profile == ZDP_PROFILE_ID && cluster == descriptor::NODE_DESC_RSP {
+            // answer to our own Node_Desc_req: hand it to whoever is waiting
+            if let Some(response) = descriptor::parse_node_desc_rsp(indication.asdu) {
+                self.node_desc_rsp.signal(response);
+            }
+            None
         } else if profile == ZDP_PROFILE_ID {
             self.build_zdp_response(cluster, indication.asdu, nwk_dst, cfg, &mut out)
                 .map(|(rsp_cluster, len)| {
@@ -688,15 +755,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
             || request.nwk_addr_of_interest >= NWK_BROADCAST_ADDRESS_MIN;
 
         if !about_us {
-            let end_device = cfg.node.logical_type == LogicalType::EndDevice;
-            if broadcast && end_device {
+            // an end device answers nothing about another device (step 2.a);
+            // a router still reports DEVICE_NOT_FOUND (step 4.b)
+            if broadcast && cfg.node.logical_type == LogicalType::EndDevice {
                 return None;
             }
-            let error = if end_device {
-                descriptor::MatchDescError::InvalidRequestType
-            } else {
-                descriptor::MatchDescError::DeviceNotFound
-            };
+            let error = Self::discovery_error(cfg);
             return Some((
                 descriptor::MATCH_DESC_RSP,
                 descriptor::match_desc_rsp_error(request.seq, error, out).ok()?,
@@ -823,6 +887,86 @@ impl<M: Mlme> ZigbeeDevice<M> {
         }
     }
 
+    // the status a discovery request about another device is answered with
+    // (2.4.4.2.7 steps 2.b/4.b): an end device answers for itself only, a
+    // router keeps no cached descriptors for its children
+    fn discovery_error(cfg: &descriptor::DeviceDescriptorConfig<'_>) -> descriptor::DiscoveryError {
+        if cfg.node.logical_type == LogicalType::EndDevice {
+            descriptor::DiscoveryError::InvalidRequestType
+        } else {
+            descriptor::DiscoveryError::DeviceNotFound
+        }
+    }
+
+    // answer an address request (2.4.4.2.1/2.4.4.2.2). only a request naming
+    // this device is answered with its addresses — replying to every lookup
+    // would poison the requester's address map. a broadcast that names another
+    // device stays silent, a unicast reports DEVICE_NOT_FOUND
+    fn build_addr_rsp(
+        &self,
+        cluster: u16,
+        asdu: &[u8],
+        nwk_dst: u16,
+        cfg: &descriptor::DeviceDescriptorConfig<'_>,
+        out: &mut [u8],
+    ) -> Option<(u16, usize)> {
+        let nwk_addr = *self.nlme.nib().network_address();
+        let ieee_addr = *self.nlme.nib().ieee_address();
+
+        // the error paths echo the requested addresses, leaving the one this
+        // device cannot resolve unknown
+        let (rsp_cluster, seq, request_type, about_us, asked_ieee, asked_nwk) =
+            if cluster == descriptor::NWK_ADDR_REQ {
+                let request = descriptor::parse_nwk_addr_req(asdu)?;
+                (
+                    descriptor::NWK_ADDR_RSP,
+                    request.seq,
+                    request.request_type,
+                    request.ieee_addr == ieee_addr,
+                    request.ieee_addr,
+                    ShortAddress::default().0,
+                )
+            } else {
+                let request = descriptor::parse_ieee_addr_req(asdu)?;
+                (
+                    descriptor::IEEE_ADDR_RSP,
+                    request.seq,
+                    request.request_type,
+                    request.nwk_addr_of_interest == nwk_addr,
+                    IeeeAddress(u64::MAX),
+                    request.nwk_addr_of_interest,
+                )
+            };
+
+        if !about_us {
+            if nwk_dst >= NWK_BROADCAST_ADDRESS_MIN {
+                return None;
+            }
+            let error = Self::discovery_error(cfg);
+            let len = descriptor::addr_rsp_error(seq, error, asked_ieee, asked_nwk, out).ok()?;
+            return Some((rsp_cluster, len));
+        }
+
+        let extended = match request_type {
+            descriptor::ADDR_REQUEST_SINGLE => false,
+            descriptor::ADDR_REQUEST_EXTENDED => true,
+            _ => {
+                let len = descriptor::addr_rsp_error(
+                    seq,
+                    descriptor::DiscoveryError::InvalidRequestType,
+                    ieee_addr,
+                    nwk_addr,
+                    out,
+                )
+                .ok()?;
+                return Some((rsp_cluster, len));
+            }
+        };
+
+        let len = descriptor::addr_rsp(seq, ieee_addr, nwk_addr, extended, out).ok()?;
+        Some((rsp_cluster, len))
+    }
+
     // build the ZDP `*_rsp` payload for a discovery request, echoing the
     // request's transaction sequence number; None for unsupported requests
     fn build_zdp_response(
@@ -835,7 +979,32 @@ impl<M: Mlme> ZigbeeDevice<M> {
     ) -> Option<(u16, usize)> {
         let seq = *asdu.first()?;
         let nwk_addr = *self.nlme.nib().network_address();
-        let ieee_addr = *self.nlme.nib().ieee_address();
+
+        // a descriptor request naming another device is not answered with our
+        // own descriptors (2.4.4.2.3-2.4.4.2.6)
+        let descriptor_request = matches!(
+            cluster,
+            descriptor::NODE_DESC_REQ
+                | descriptor::POWER_DESC_REQ
+                | descriptor::ACTIVE_EP_REQ
+                | descriptor::SIMPLE_DESC_REQ
+        );
+        if descriptor_request {
+            let addr_of_interest = descriptor::parse_addr_of_interest(asdu)?;
+            if addr_of_interest != nwk_addr {
+                if nwk_dst >= NWK_BROADCAST_ADDRESS_MIN {
+                    return None;
+                }
+                let error = Self::discovery_error(cfg);
+                let rsp_cluster = cluster | ZDP_RESPONSE_CLUSTER_FLAG;
+                let len = if cluster == descriptor::SIMPLE_DESC_REQ {
+                    descriptor::simple_desc_rsp_error(seq, error, addr_of_interest, out).ok()?
+                } else {
+                    descriptor::descriptor_rsp_error(seq, error, addr_of_interest, out).ok()?
+                };
+                return Some((rsp_cluster, len));
+            }
+        }
 
         let result = match cluster {
             descriptor::NODE_DESC_REQ => (
@@ -861,14 +1030,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     cfg.simple_desc_rsp(seq, nwk_addr, endpoint, out).ok()?,
                 )
             }
-            descriptor::IEEE_ADDR_REQ => (
-                descriptor::IEEE_ADDR_RSP,
-                descriptor::addr_rsp(seq, ieee_addr, nwk_addr, out).ok()?,
-            ),
-            descriptor::NWK_ADDR_REQ => (
-                descriptor::NWK_ADDR_RSP,
-                descriptor::addr_rsp(seq, ieee_addr, nwk_addr, out).ok()?,
-            ),
+            descriptor::IEEE_ADDR_REQ | descriptor::NWK_ADDR_REQ => {
+                return self.build_addr_rsp(cluster, asdu, nwk_dst, cfg, out);
+            }
             descriptor::BIND_REQ => (
                 descriptor::BIND_RSP,
                 descriptor::bind_rsp(seq, self.apply_bind_req(asdu, cfg, true), out).ok()?,

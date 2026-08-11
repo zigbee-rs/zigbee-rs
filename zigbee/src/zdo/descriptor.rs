@@ -322,13 +322,75 @@ impl DeviceDescriptorConfig<'_> {
     }
 }
 
-/// Build an IEEE_addr_rsp / NWK_addr_rsp payload (2.4.4.1.1/2.4.4.1.2) for a
-/// single-device (request type 0x00) response: seq, status, IEEEAddrRemoteDev,
-/// NWKAddrRemoteDev.
+/// Address request type: report only the addressed device (2.4.3.1.1).
+pub const ADDR_REQUEST_SINGLE: u8 = 0x00;
+/// Address request type: also report the associated devices (2.4.3.1.1).
+pub const ADDR_REQUEST_EXTENDED: u8 = 0x01;
+
+/// A parsed NWK_addr_req (2.4.3.1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NwkAddrReq {
+    /// ZDP transaction sequence number to echo in the response.
+    pub seq: u8,
+    /// The address the responder must match against its own (or a child's).
+    pub ieee_addr: IeeeAddress,
+    pub request_type: u8,
+}
+
+/// Parse a NWK_addr_req payload (2.4.3.1.1): seq, IEEEAddress(8),
+/// RequestType(1), StartIndex(1).
+pub fn parse_nwk_addr_req(asdu: &[u8]) -> Option<NwkAddrReq> {
+    let offset = &mut 0;
+    let seq: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    let ieee_addr: u64 = asdu.read_with(offset, ctx::LE).ok()?;
+    let request_type: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    Some(NwkAddrReq {
+        seq,
+        ieee_addr: IeeeAddress(ieee_addr),
+        request_type,
+    })
+}
+
+/// A parsed IEEE_addr_req (2.4.3.1.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IeeeAddrReq {
+    /// ZDP transaction sequence number to echo in the response.
+    pub seq: u8,
+    /// The address the responder must match against its own (or a child's).
+    pub nwk_addr_of_interest: u16,
+    pub request_type: u8,
+}
+
+/// Parse an IEEE_addr_req payload (2.4.3.1.2): seq, NWKAddrOfInterest(2),
+/// RequestType(1), StartIndex(1).
+pub fn parse_ieee_addr_req(asdu: &[u8]) -> Option<IeeeAddrReq> {
+    let offset = &mut 0;
+    let seq: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    let nwk_addr_of_interest: u16 = asdu.read_with(offset, ctx::LE).ok()?;
+    let request_type: u8 = asdu.read_with(offset, ctx::LE).ok()?;
+    Some(IeeeAddrReq {
+        seq,
+        nwk_addr_of_interest,
+        request_type,
+    })
+}
+
+/// Read the NWKAddrOfInterest a discovery request is about
+/// (2.4.3.1.3-2.4.3.1.6).
+pub fn parse_addr_of_interest(asdu: &[u8]) -> Option<u16> {
+    Some(u16::from_le_bytes(asdu.get(1..3)?.try_into().ok()?))
+}
+
+/// Build an IEEE_addr_rsp / NWK_addr_rsp payload (2.4.4.2.1/2.4.4.2.2): seq,
+/// status, IEEEAddrRemoteDev, NWKAddrRemoteDev.
+///
+/// An extended response adds NumAssocDev and StartIndex; this device reports
+/// no associated devices, as only a parent keeps that list.
 pub fn addr_rsp(
     seq: u8,
     ieee_addr: IeeeAddress,
     nwk_addr: u16,
+    extended: bool,
     out: &mut [u8],
 ) -> Result<usize, byte::Error> {
     let offset = &mut 0;
@@ -336,7 +398,110 @@ pub fn addr_rsp(
     out.write_with(offset, STATUS_SUCCESS, ctx::LE)?;
     out.write_with(offset, ieee_addr.0, ctx::LE)?;
     out.write_with(offset, nwk_addr, ctx::LE)?;
+    if extended {
+        // NumAssocDev, StartIndex; the device list is empty
+        out.write_with(offset, 0u8, ctx::LE)?;
+        out.write_with(offset, 0u8, ctx::LE)?;
+    }
     Ok(*offset)
+}
+
+/// Build an IEEE_addr_rsp / NWK_addr_rsp reporting an error (2.4.4.2.1): the
+/// associated-device fields are omitted, the echoed addresses are not.
+pub fn addr_rsp_error(
+    seq: u8,
+    error: DiscoveryError,
+    ieee_addr: IeeeAddress,
+    nwk_addr: u16,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, error.code(), ctx::LE)?;
+    out.write_with(offset, ieee_addr.0, ctx::LE)?;
+    out.write_with(offset, nwk_addr, ctx::LE)?;
+    Ok(*offset)
+}
+
+/// Build a Node_Desc_rsp / Power_Desc_rsp / Active_EP_rsp reporting an error
+/// (2.4.4.2.3-2.4.4.2.6): seq, status, NWKAddrOfInterest; the descriptor is
+/// only present on success.
+pub fn descriptor_rsp_error(
+    seq: u8,
+    error: DiscoveryError,
+    nwk_addr_of_interest: u16,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, error.code(), ctx::LE)?;
+    out.write_with(offset, nwk_addr_of_interest, ctx::LE)?;
+    Ok(*offset)
+}
+
+/// Build a Simple_Desc_rsp reporting an error (2.4.4.2.5), which carries a
+/// zero descriptor length in place of the descriptor.
+pub fn simple_desc_rsp_error(
+    seq: u8,
+    error: DiscoveryError,
+    nwk_addr_of_interest: u16,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let offset = &mut descriptor_rsp_error(seq, error, nwk_addr_of_interest, out)?;
+    out.write_with(offset, 0u8, ctx::LE)?;
+    Ok(*offset)
+}
+
+/// Build a Node_Desc_req payload (2.4.3.1.3): seq, NWKAddrOfInterest.
+pub fn node_desc_req(
+    seq: u8,
+    nwk_addr_of_interest: u16,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    let offset = &mut 0;
+    out.write_with(offset, seq, ctx::LE)?;
+    out.write_with(offset, nwk_addr_of_interest, ctx::LE)?;
+    Ok(*offset)
+}
+
+/// A parsed Node_Desc_rsp (2.4.4.2.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeDescRsp {
+    /// ZDP transaction sequence number of the request being answered.
+    pub seq: u8,
+    pub status: u8,
+    pub nwk_addr_of_interest: u16,
+    /// Server mask of the responding node (2.3.2.3.10), absent unless the
+    /// status is SUCCESS.
+    pub server_mask: Option<u16>,
+}
+
+impl NodeDescRsp {
+    /// Stack revision the responder complies with, taken from the upper seven
+    /// bits of the server mask (2.3.2.3.10); `None` without a descriptor.
+    pub fn stack_revision(&self) -> Option<u8> {
+        self.server_mask.map(|mask| (mask >> 9) as u8)
+    }
+}
+
+/// Parse a Node_Desc_rsp payload (2.4.4.2.3).
+pub fn parse_node_desc_rsp(asdu: &[u8]) -> Option<NodeDescRsp> {
+    let seq = *asdu.first()?;
+    let status = *asdu.get(1)?;
+    let nwk_addr_of_interest = u16::from_le_bytes(asdu.get(2..4)?.try_into().ok()?);
+    // server mask sits 8 octets into the node descriptor (2.3.2.3)
+    let server_mask = asdu
+        .get(12..14)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u16::from_le_bytes)
+        .filter(|_| status == STATUS_SUCCESS);
+
+    Some(NodeDescRsp {
+        seq,
+        status,
+        nwk_addr_of_interest,
+        server_mask,
+    })
 }
 
 /// A parsed Bind_req / Unbind_req (2.4.3.2.2/2.4.3.2.3).
@@ -503,14 +668,24 @@ pub fn match_desc_rsp(
     Ok(*offset)
 }
 
-/// Why a Match_Desc_req could not be answered with a match list (2.4.4.2.7).
+/// Why a discovery request could not be answered with data (2.4.4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchDescError {
+pub enum DiscoveryError {
     /// The request named another device and this device cannot answer for it
-    /// (step 2.b.i).
+    /// (2.4.4.2.7 step 2.b.i).
     InvalidRequestType,
-    /// The request named a device this router knows nothing about (step 4.b.i).
+    /// The request named a device this router knows nothing about (2.4.4.2.7
+    /// step 4.b.i).
     DeviceNotFound,
+}
+
+impl DiscoveryError {
+    fn code(self) -> u8 {
+        match self {
+            Self::InvalidRequestType => STATUS_INV_REQUESTTYPE,
+            Self::DeviceNotFound => STATUS_DEVICE_NOT_FOUND,
+        }
+    }
 }
 
 /// Build a Match_Desc_rsp carrying only Status and MatchLength (2.4.4.2.7).
@@ -521,16 +696,12 @@ pub enum MatchDescError {
 /// the response as a fixed layout report the short frame as malformed.
 pub fn match_desc_rsp_error(
     seq: u8,
-    error: MatchDescError,
+    error: DiscoveryError,
     out: &mut [u8],
 ) -> Result<usize, byte::Error> {
-    let status = match error {
-        MatchDescError::InvalidRequestType => STATUS_INV_REQUESTTYPE,
-        MatchDescError::DeviceNotFound => STATUS_DEVICE_NOT_FOUND,
-    };
     let offset = &mut 0;
     out.write_with(offset, seq, ctx::LE)?;
-    out.write_with(offset, status, ctx::LE)?;
+    out.write_with(offset, error.code(), ctx::LE)?;
     out.write_with(offset, 0u8, ctx::LE)?;
     Ok(*offset)
 }
@@ -778,12 +949,12 @@ mod tests {
     #[test]
     fn match_desc_rsp_error_omits_address() {
         let mut out = [0u8; 16];
-        let n = match_desc_rsp_error(0x33, MatchDescError::InvalidRequestType, &mut out).unwrap();
+        let n = match_desc_rsp_error(0x33, DiscoveryError::InvalidRequestType, &mut out).unwrap();
         // seq, INV_REQUESTTYPE, MatchLength — no NWKAddrOfInterest (2.4.4.2.7
         // step 2.b.iii)
         assert_eq!(&out[..n], &[0x33, 0x80, 0x00]);
 
-        let n = match_desc_rsp_error(0x33, MatchDescError::DeviceNotFound, &mut out).unwrap();
+        let n = match_desc_rsp_error(0x33, DiscoveryError::DeviceNotFound, &mut out).unwrap();
         assert_eq!(&out[..n], &[0x33, 0x81, 0x00]);
     }
 
@@ -847,7 +1018,14 @@ mod tests {
     #[test]
     fn addr_rsp_layout() {
         let mut out = [0u8; 16];
-        let n = addr_rsp(0x07, IeeeAddress(0x0011_2233_4455_6677), 0x1234, &mut out).unwrap();
+        let n = addr_rsp(
+            0x07,
+            IeeeAddress(0x0011_2233_4455_6677),
+            0x1234,
+            false,
+            &mut out,
+        )
+        .unwrap();
         assert_eq!(
             &out[..n],
             &[
@@ -855,6 +1033,93 @@ mod tests {
                 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, // IEEE addr (LE)
                 0x34, 0x12, // NWK addr (LE)
             ]
+        );
+
+        // an extended response reports an empty associated-device list
+        let n = addr_rsp(
+            0x07,
+            IeeeAddress(0x0011_2233_4455_6677),
+            0x1234,
+            true,
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(&out[n - 2..n], &[0x00, 0x00]);
+    }
+
+    #[test]
+    fn addr_rsp_error_carries_the_echoed_addresses() {
+        let mut out = [0u8; 16];
+        let n = addr_rsp_error(
+            0x07,
+            DiscoveryError::DeviceNotFound,
+            IeeeAddress(0x0011_2233_4455_6677),
+            0x1234,
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(
+            &out[..n],
+            &[
+                0x07, 0x81, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0x34, 0x12
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_addr_requests() {
+        // 2.4.3.1.1: seq, IEEEAddress, RequestType, StartIndex
+        let nwk = [
+            0x11, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0x01, 0x00,
+        ];
+        let request = parse_nwk_addr_req(&nwk).unwrap();
+        assert_eq!(request.seq, 0x11);
+        assert_eq!(request.ieee_addr, IeeeAddress(0x0011_2233_4455_6677));
+        assert_eq!(request.request_type, ADDR_REQUEST_EXTENDED);
+        assert!(parse_nwk_addr_req(&nwk[..9]).is_none());
+
+        // 2.4.3.1.2: seq, NWKAddrOfInterest, RequestType, StartIndex
+        let ieee = [0x12, 0x34, 0x12, 0x00, 0x00];
+        let request = parse_ieee_addr_req(&ieee).unwrap();
+        assert_eq!(request.seq, 0x12);
+        assert_eq!(request.nwk_addr_of_interest, 0x1234);
+        assert_eq!(request.request_type, ADDR_REQUEST_SINGLE);
+        assert!(parse_ieee_addr_req(&ieee[..3]).is_none());
+    }
+
+    #[test]
+    fn descriptor_rsp_error_omits_the_descriptor() {
+        let mut out = [0u8; 16];
+        let n = descriptor_rsp_error(0x07, DiscoveryError::InvalidRequestType, 0x1234, &mut out)
+            .unwrap();
+        assert_eq!(&out[..n], &[0x07, 0x80, 0x34, 0x12]);
+
+        // the Simple_Desc_rsp carries a zero descriptor length as well
+        let n =
+            simple_desc_rsp_error(0x07, DiscoveryError::DeviceNotFound, 0x1234, &mut out).unwrap();
+        assert_eq!(&out[..n], &[0x07, 0x81, 0x34, 0x12, 0x00]);
+    }
+
+    #[test]
+    fn parse_node_desc_rsp_reads_the_stack_revision() {
+        let mut out = [0u8; 32];
+        let mut cfg = cfg();
+        // stack revision 22 in the upper seven bits of the server mask
+        cfg.node.server_mask = 22 << 9;
+        let n = cfg.node_desc_rsp(0x42, 0x1234, &mut out).unwrap();
+
+        let response = parse_node_desc_rsp(&out[..n]).unwrap();
+        assert_eq!(response.seq, 0x42);
+        assert_eq!(response.status, STATUS_SUCCESS);
+        assert_eq!(response.nwk_addr_of_interest, 0x1234);
+        assert_eq!(response.stack_revision(), Some(22));
+
+        // an error response carries no descriptor to read a revision from
+        let n =
+            descriptor_rsp_error(0x42, DiscoveryError::DeviceNotFound, 0x1234, &mut out).unwrap();
+        assert_eq!(
+            parse_node_desc_rsp(&out[..n]).unwrap().stack_revision(),
+            None
         );
     }
 
