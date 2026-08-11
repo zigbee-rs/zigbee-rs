@@ -78,4 +78,7 @@ pub mod zdp;
 pub mod zdo;
 
 pub use apl::descriptors::node_descriptor::LogicalType;
+pub use apl::descriptors::node_power_descriptor::CurrentPowerMode;
+pub use apl::descriptors::node_power_descriptor::CurrentPowerSourceLevel;
+pub use apl::descriptors::node_power_descriptor::PowerSource;
 pub use zdo::config::Config;

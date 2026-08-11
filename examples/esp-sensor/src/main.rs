@@ -14,7 +14,10 @@ use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use esp_storage::FlashStorage;
 use static_cell::StaticCell;
+use zigbee::CurrentPowerMode;
+use zigbee::CurrentPowerSourceLevel;
 use zigbee::LogicalType;
+use zigbee::PowerSource;
 use zigbee::aps::aib;
 use zigbee::aps::apsde::ApsdeSapConfirmStatus;
 use zigbee::nwk::nib::CapabilityInformation;
@@ -25,11 +28,14 @@ use zigbee::zdo::ZigbeeDevice;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
+use zigbee::zdo::descriptor::PowerDescriptorConfig;
 use zigbee_base_device_behavior::BaseDeviceBehavior;
 use zigbee_cluster_library::basic;
 use zigbee_cluster_library::basic::BasicServer;
 use zigbee_cluster_library::common::data_types::SignedN;
 use zigbee_cluster_library::common::data_types::ZclDataType;
+use zigbee_cluster_library::identify;
+use zigbee_cluster_library::identify::IdentifyServer;
 use zigbee_cluster_library::measurement::temperature;
 use zigbee_cluster_library::profile;
 use zigbee_cluster_library::reporting::ConfigureReportingServer;
@@ -73,7 +79,11 @@ const COORDINATOR_ENDPOINT: u8 = 1;
 const CAPABILITY: u8 = 0x80;
 
 /// Clusters served on [`SENSOR_ENDPOINT`] (input/server side).
-static INPUT_CLUSTERS: [u16; 2] = [basic::CLUSTER_ID, temperature::CLUSTER_ID];
+static INPUT_CLUSTERS: [u16; 3] = [
+    basic::CLUSTER_ID,
+    identify::CLUSTER_ID,
+    temperature::CLUSTER_ID,
+];
 static OUTPUT_CLUSTERS: [u16; 0] = [];
 
 /// Endpoints advertised to the network for service discovery.
@@ -120,6 +130,12 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
             maximum_outgoing_transfer_size: 128,
             descriptor_capability_field: 0,
         },
+        power: PowerDescriptorConfig {
+            current_power_mode: CurrentPowerMode::Stimulated,
+            available_power_sources: &[PowerSource::DisposableBattery],
+            current_power_source: PowerSource::DisposableBattery,
+            current_power_source_level: CurrentPowerSourceLevel::Full,
+        },
         endpoints: &ENDPOINTS,
     }
 }
@@ -128,16 +144,31 @@ fn descriptor_config() -> DeviceDescriptorConfig<'static> {
 /// indirect-transaction persistence time.
 const POLL_INTERVAL_MS: u32 = 500;
 
+/// Identify state, shared between the receive task and the application.
+static IDENTIFY: IdentifyServer = IdentifyServer::new();
+
 /// Receive loop: idles until the join completes, then answers ZDP discovery,
-/// Basic-cluster reads, Configure Reporting requests, and APS commands
-/// (TC link key exchange).
+/// Basic-cluster and Identify reads, Identify commands, Configure Reporting
+/// requests, and APS commands (TC link key exchange).
 #[embassy_executor::task]
 async fn rx_task(device: &'static ZigbeeDevice<EspMlme<'static>>) {
     let cfg = descriptor_config();
-    let handler = (BASIC, ConfigureReportingServer);
+    let handler = (BASIC, ConfigureReportingServer, &IDENTIFY);
     device
         .rx_loop(&cfg, &handler, &mut Delay, POLL_INTERVAL_MS)
         .await
+}
+
+/// Counts the Identify state down once a second (ZCL 3.5.2.2.1); a real device
+/// would blink an LED here.
+#[embassy_executor::task]
+async fn identify_task() {
+    loop {
+        Timer::after_secs(1).await;
+        if IDENTIFY.is_identifying() {
+            println!("Identifying ({}s remaining)", IDENTIFY.tick(1));
+        }
+    }
 }
 
 #[esp_rtos::main]
@@ -194,6 +225,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // persist NIB/AIB changes as they happen, including the keys obtained
     // during commissioning
     spawner.spawn(storage_task(storage).expect("spawn storage_task"));
+    spawner.spawn(identify_task().expect("spawn identify_task"));
 
     if resume {
         println!(

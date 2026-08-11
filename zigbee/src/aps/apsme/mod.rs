@@ -282,7 +282,9 @@ impl Apsme {
         mut nwk_data: crate::nwk::frame::DataFrame<'a>,
     ) -> Result<Option<ApsdeSapIndication<'a>>, NetworkError> {
         let src_short = nwk_data.header.source.0;
-        let local_addr = *nlme.nib().network_address();
+        // the NWK destination, not our own address: the higher layer answers a
+        // broadcast differently from a unicast (2.4.4.2.7)
+        let dst_short = nwk_data.header.destination.0;
         let aps_bytes = nwk_data.payload;
 
         let offset = &mut 0;
@@ -340,7 +342,7 @@ impl Apsme {
 
         Ok(Some(ApsdeSapIndication {
             dst_addr_mode: DstAddrMode::Network,
-            dst_address: Address::Network(local_addr),
+            dst_address: Address::Network(dst_short),
             dst_endpoint: header.destination_endpoint.unwrap_or(0),
             src_addr_mode: SrcAddrMode::Short,
             src_address: Address::Network(src_short),

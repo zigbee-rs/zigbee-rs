@@ -56,10 +56,10 @@ mod tests {
             APPLICATION_INPUT_CLUSTER_COUNT
         );
         assert!(!simple_descriptor.application_input_cluster_list.is_empty());
-        for i in 0..APPLICATION_INPUT_CLUSTER_COUNT as usize {
+        for i in 0..APPLICATION_INPUT_CLUSTER_COUNT {
             assert_eq!(
-                simple_descriptor.application_input_cluster_list[i],
-                (i + 1) as u8
+                simple_descriptor.application_input_cluster_list[i as usize],
+                (i + 1)
             );
         }
         assert_eq!(
@@ -67,10 +67,10 @@ mod tests {
             APPLICATION_OUTPUT_CLUSTER_COUNT
         );
         assert!(!simple_descriptor.application_output_cluster_list.is_empty());
-        for i in 0..APPLICATION_OUTPUT_CLUSTER_COUNT as usize {
+        for i in 0..APPLICATION_OUTPUT_CLUSTER_COUNT {
             assert_eq!(
-                simple_descriptor.application_output_cluster_list[i],
-                (i + 2) as u8
+                simple_descriptor.application_output_cluster_list[i as usize],
+                (i + 2)
             );
         }
     }
@@ -93,10 +93,10 @@ mod tests {
             APPLICATION_INPUT_CLUSTER_COUNT
         );
         assert!(!simple_descriptor.application_input_cluster_list.is_empty());
-        for i in 0..APPLICATION_INPUT_CLUSTER_COUNT as usize {
+        for i in 0..APPLICATION_INPUT_CLUSTER_COUNT {
             assert_eq!(
-                simple_descriptor.application_input_cluster_list[i],
-                (i + 1) as u8
+                simple_descriptor.application_input_cluster_list[i as usize],
+                (i + 1)
             );
         }
         assert_eq!(simple_descriptor.application_output_cluster_count, 0);
@@ -123,10 +123,10 @@ mod tests {
             APPLICATION_OUTPUT_CLUSTER_COUNT
         );
         assert!(!simple_descriptor.application_output_cluster_list.is_empty());
-        for i in 0..APPLICATION_OUTPUT_CLUSTER_COUNT as usize {
+        for i in 0..APPLICATION_OUTPUT_CLUSTER_COUNT {
             assert_eq!(
-                simple_descriptor.application_output_cluster_list[i],
-                (i + 2) as u8
+                simple_descriptor.application_output_cluster_list[i as usize],
+                (i + 2)
             );
         }
     }
