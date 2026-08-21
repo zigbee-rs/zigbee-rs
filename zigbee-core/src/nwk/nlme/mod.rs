@@ -735,7 +735,11 @@ where
                 log::warn!(
                     "[NWK-JOIN] no suitable parent for EPID {:#018x} (joining as {}); the scan saw {} network(s):",
                     extended_pan_id.0,
-                    if join_as_router { "router" } else { "end device" },
+                    if join_as_router {
+                        "router"
+                    } else {
+                        "end device"
+                    },
                     table.len()
                 );
                 for n in table.iter() {
