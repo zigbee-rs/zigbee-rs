@@ -90,7 +90,8 @@ const MAX_GROUP_ID_TABLE: usize = 4;
 const MAX_ROUTE_RECORD_TABLE: usize = 8;
 const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
-const MAX_SECURITY_KEYS: usize = 1;
+// active plus alternate network key (4.6.3.4.2)
+const MAX_SECURITY_KEYS: usize = 2;
 
 /// Maximum acceptable link cost for parent selection (3.6.1.4.1.1).
 pub const MAX_PARENT_LINK_COST: u8 = 3;
@@ -438,7 +439,7 @@ mod tests {
     fn nib_set_vec() {
         let nib = Nib::new();
 
-        let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, 1>::new();
+        let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
             outgoing_frame_counter: 0,

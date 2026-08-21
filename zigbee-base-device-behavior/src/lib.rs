@@ -31,6 +31,12 @@ const BDBC_MIN_COMMISSIONING_TIME: u8 = 0xb4;
 const BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS: u8 = 3;
 const BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT: u8 = 5;
 
+// bdbTCLinkKeyExchangeAttemptsMax (BDB 5.3.12)
+const TC_LINK_KEY_EXCHANGE_ATTEMPTS_MAX: u8 = 3;
+// a trust center reporting this stack revision or an earlier one predates the
+// TC link key exchange (BDB 10.2.5 step 5)
+const LEGACY_STACK_REVISION: u8 = 20;
+
 // bdbcTcLinkKeyExchangeTimeout in milliseconds
 const TC_LINK_KEY_EXCHANGE_TIMEOUT_MS: u32 = BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT as u32 * 1_000;
 
@@ -55,6 +61,7 @@ use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
 use zigbee::nwk::nlme::management::RejoinNetwork;
 use zigbee::security::primitives::HmacAes128Mmo;
 use zigbee::zdo::ZigbeeDevice;
+use zigbee::zdo::descriptor::NodeDescRsp;
 use zigbee::zdp::device_annce::DeviceAnnce;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::ByteArray;
@@ -75,8 +82,11 @@ pub struct BaseDeviceBehavior {
     bdb_commissioning_mode: CommissioningMode,
     bdb_commissioning_status: BdbCommissioningStatus,
     /// Whether network steering performs the TC link key exchange (BDB 8.2
-    /// step 12). Disable for trust centers that never answer REQUEST-KEY to
-    /// keep the default global TC link key and skip the retry stalls.
+    /// step 12); a failed exchange takes the node off the network again.
+    ///
+    /// Disable to stay on the default global TC link key with a trust center
+    /// that answers neither Node_Desc_req nor REQUEST-KEY, at the cost of
+    /// leaving the join unauthenticated.
     pub tc_link_key_exchange_enabled: bool,
 }
 
@@ -216,14 +226,17 @@ impl BaseDeviceBehavior {
         // BDB 8.2 step 12, BDB 10.2.5
         if self.tc_link_key_exchange_enabled {
             log::debug!("[BDB] step 12: TC link key exchange");
-            // non-fatal: a TC allowing legacy devices may never answer the
-            // REQUEST-KEY, keep the default global TC link key then
-            match self.tc_link_key_exchange(device, delay).await {
-                Ok(()) => log::debug!("[BDB] step 12: TC link key exchange complete"),
-                Err(e) => log::warn!(
-                    "[BDB] step 12: TC link key exchange failed ({e:?}), continuing with default TC link key"
-                ),
+            // BDB 8.2 step 12: staying on the network with an unexchanged key
+            // is not permitted — the node leaves and resets its network state
+            if let Err(e) = self.tc_link_key_exchange(device, delay).await {
+                log::warn!("[BDB] step 12: TC link key exchange failed ({e:?}), leaving network");
+                self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
+                self.bdb_node_is_on_a_network = false;
+                let status = device.leave_network(false).await;
+                log::info!("[BDB] left the network after TCLK failure: {status:?}");
+                return Err(e);
             }
+            log::debug!("[BDB] step 12: TC link key exchange complete");
         } else {
             log::debug!("[BDB] step 12: TC link key exchange disabled, skipping");
         }
@@ -299,6 +312,27 @@ impl BaseDeviceBehavior {
 
         log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
 
+        // BDB 10.2.5 steps 2-5: a trust center on r20 or earlier knows no key
+        // exchange, and asking it for a key would stall the commissioning
+        let Some(node_desc) = self
+            .request_trust_center_node_desc(device, delay, tc_short)
+            .await
+        else {
+            log::warn!("[BDB] TC link key exchange failed: no Node_Desc_rsp");
+            self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
+            return Err(NetworkError::NoTransportKey);
+        };
+        if node_desc
+            .stack_revision()
+            .is_some_and(|revision| revision <= LEGACY_STACK_REVISION)
+        {
+            log::info!(
+                "[BDB] trust center reports stack revision {:?}, keeping the default TC link key",
+                node_desc.stack_revision()
+            );
+            return Ok(());
+        }
+
         // BDB 10.2.5 steps 6-9: the receive loop installs the transported
         // key as unverified and signals reception
         let mut attempts = 0u8;
@@ -319,11 +353,18 @@ impl BaseDeviceBehavior {
             )
             .await
             {
-                Some(()) => {
+                Some(true) => {
                     log::debug!("[BDB] received new TC link key");
                     break;
                 }
-                None if attempts >= BDBC_REC_SAME_NETWORK_RETRY_ATTEMPTS => {
+                // step 9: the transported key was rejected — it is the one we
+                // already hold, which ends the procedure rather than retrying
+                Some(false) => {
+                    log::warn!("[BDB] TC link key exchange failed: unusable TRANSPORT-KEY");
+                    self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
+                    return Err(NetworkError::NoTransportKey);
+                }
+                None if attempts >= TC_LINK_KEY_EXCHANGE_ATTEMPTS_MAX => {
                     log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
                     self.bdb_commissioning_status = BdbCommissioningStatus::TclkExFailure;
                     return Err(NetworkError::NoTransportKey);
@@ -386,6 +427,32 @@ impl BaseDeviceBehavior {
                 }
             }
         }
+    }
+
+    // BDB 10.2.5 steps 3-4: read the trust center's node descriptor, retrying
+    // until bdbTCLinkKeyExchangeAttemptsMax attempts are spent
+    async fn request_trust_center_node_desc<M: Mlme>(
+        &mut self,
+        device: &ZigbeeDevice<M>,
+        delay: &mut impl DelayNs,
+        tc_short: ShortAddress,
+    ) -> Option<NodeDescRsp> {
+        for _ in 0..TC_LINK_KEY_EXCHANGE_ATTEMPTS_MAX {
+            if let Err(e) = device.node_desc_req(tc_short).await {
+                log::warn!("[BDB] Node_Desc_req to the trust center failed ({e:?})");
+                delay.delay_ms(TC_LINK_KEY_EXCHANGE_TIMEOUT_MS).await;
+                continue;
+            }
+            if let Some(response) = with_timeout(
+                device.wait_node_desc_rsp(),
+                delay.delay_ms(TC_LINK_KEY_EXCHANGE_TIMEOUT_MS),
+            )
+            .await
+            {
+                return Some(response);
+            }
+        }
+        None
     }
 
     fn is_end_device(&self) -> bool {

@@ -54,6 +54,14 @@
 #[cfg(test)]
 extern crate std;
 
+/// Serializes tests that touch the NIB or AIB.
+///
+/// Both are process-wide singletons shared by every test in this binary, so a
+/// per-module lock does not serialize against a sibling module holding its own.
+/// Every test that reads or writes them must hold *this* one.
+#[cfg(test)]
+pub(crate) static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // dev-dependency only used by the storage tests
 #[cfg(all(test, not(feature = "storage")))]
 use sequential_storage as _;

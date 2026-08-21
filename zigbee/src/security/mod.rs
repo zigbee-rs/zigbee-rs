@@ -259,6 +259,21 @@ impl<'a> SecurityContext<'a> {
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
             .map_err(SecurityError::CcmError)?;
 
+        // 4.7.3.10.5: a device implicitly switches to the newer network key
+        // when it hears a frame secured with it — a sleepy end device may
+        // never receive the broadcast Switch-Key. a key update carries the
+        // sequence number (N + 1) mod 256 (4.6.3.4.1), which distinguishes the
+        // newer key from the previous one still accepted for inbound frames
+        let active = *self.nib.active_key_seq_number();
+        if aux_hdr
+            .key_sequence_number
+            .is_some_and(|ksn| ksn == active.wrapping_add(1))
+        {
+            let ksn = active.wrapping_add(1);
+            log::info!("[NWK] switching to network key seq {ksn} seen in a received frame");
+            self.nib.update_active_key_seq_number(|value| *value = ksn);
+        }
+
         // anti-replay tracking: record the now-authenticated counter as the most
         // recent accepted value for this sender
         let mut record_result = Ok(());
