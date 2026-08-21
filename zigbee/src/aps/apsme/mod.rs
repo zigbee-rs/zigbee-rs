@@ -325,7 +325,16 @@ impl Apsme {
                     _ => return Ok(None),
                 }
             } else {
-                aps_bytes[hdr_len..].read_with(&mut 0, ())?
+                let command: Command = aps_bytes[hdr_len..].read_with(&mut 0, ())?;
+                // 4.4.1.1 protects every APS command except the broadcast
+                // Switch-Key (4.4.6.1.3), so only that one is honored in the
+                // clear: any other carries no proof of origin, its addresses
+                // being plaintext the sender chose
+                if !matches!(command, Command::SwitchKey(_)) {
+                    log::warn!("[APS] rx unsecured APS command (ignored)");
+                    return Ok(None);
+                }
+                command
             };
             self.handle_aps_command(aib::get_ref(), nlme.nib(), &command, from_trust_center);
             return Ok(None);
@@ -1264,5 +1273,226 @@ mod tests {
             true,
         );
         assert_eq!(*nib.active_key_seq_number(), 3);
+    }
+}
+
+#[cfg(test)]
+mod receive_path_tests {
+    use core::future::Future;
+
+    use zigbee_mac::Address;
+    use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacError;
+    use zigbee_mac::mlme::Mlme;
+    use zigbee_mac::mlme::ScanResult;
+    use zigbee_mac::mlme::ScanType;
+    use zigbee_types::ByteArray;
+    use zigbee_types::IeeeAddress;
+    use zigbee_types::ShortAddress;
+
+    use super::*;
+    // NIB and AIB are process-wide singletons
+    use crate::TEST_MUTEX;
+    use crate::nwk::frame::DataFrame;
+    use crate::nwk::frame::frame_control::DiscoverRoute;
+    use crate::nwk::frame::frame_control::FrameControl as NwkFrameControl;
+    use crate::nwk::frame::frame_control::FrameType as NwkFrameType;
+    use crate::nwk::frame::header::Header as NwkHeader;
+    use crate::nwk::nib;
+
+    const TC_IEEE: IeeeAddress = IeeeAddress(0x00_11_22_33_44_55_66_77);
+    const TC_SHORT: u16 = 0x0000;
+    const ACTIVE_KEY_SEQ: u8 = 3;
+    const ACTIVE_KEY: [u8; 16] = [0xaa; 16];
+    const ATTACKER_KEY: [u8; 16] = [0xbb; 16];
+
+    // never transmits, exists so an Nlme can be built
+    mockall::mock! {
+        Mlme {}
+        impl Mlme for Mlme {
+            fn ieee_address(&self) -> IeeeAddress;
+            async fn set_short_address(&self, address: ShortAddress);
+            async fn scan_network(
+                &self,
+                ty: ScanType,
+                channels: core::ops::Range<u8>,
+                duration: u8,
+            ) -> Result<ScanResult, MacError>;
+            async fn associate(
+                &self,
+                channel: u8,
+                dest: Address,
+                capabilities: zigbee_mac::CapabilityInformation,
+            ) -> Result<AssociationResponse, MacError>;
+            async fn poll_data(
+                &self,
+                coord_address: Address,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn receive(
+                &self,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn transmit_data(
+                &self,
+                dest: Address,
+                payload: &[u8],
+            ) -> Result<(), MacError>;
+        }
+    }
+
+    // the receive path never yields
+    #[allow(clippy::panic)]
+    fn block_on<F: Future>(f: F) -> F::Output {
+        use core::pin::pin;
+        use core::task::Context;
+        use core::task::Poll;
+        use core::task::Waker;
+
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut f = pin!(f);
+        match f.as_mut().poll(&mut cx) {
+            Poll::Ready(val) => val,
+            Poll::Pending => panic!("block_on: future returned Pending"),
+        }
+    }
+
+    fn setup() -> Nlme<MockMlme> {
+        nib::try_init();
+        nib::reset();
+        aib::try_init();
+        aib::get_ref().update_trust_center_address(|value| *value = TC_IEEE);
+        // an empty neighbor table makes is_trust_center fall back to the
+        // coordinator, which TC_SHORT satisfies
+        nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
+        nib::get_ref().update_security_material_set(|set| {
+            *set = StorageVec::new();
+            let _ = set.push(NetworkSecurityMaterialDescriptor {
+                key_seq_number: ACTIVE_KEY_SEQ,
+                outgoing_frame_counter: 7,
+                incoming_frame_counter_set: StorageVec::new(),
+                key: ByteArray(ACTIVE_KEY),
+                network_key_type: STANDARD_NETWORK_KEY,
+            });
+        });
+        nib::get_ref().update_active_key_seq_number(|value| *value = ACTIVE_KEY_SEQ);
+
+        let mut mac = MockMlme::new();
+        mac.expect_ieee_address()
+            .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        Nlme::new(mac)
+    }
+
+    // an inbound NWK data frame as the NWK layer hands it to the APS. a shared
+    // slice suffices while every frame here is APS-unsecured; only the secured
+    // branch reaches for payload_as_mut, which casts the payload to &mut
+    fn nwk_data_frame(aps: &[u8]) -> DataFrame<'_> {
+        let header = NwkHeader {
+            frame_control: NwkFrameControl(0)
+                .set_frame_type(NwkFrameType::Data)
+                .set_protocol_version(2)
+                .set_discover_route(DiscoverRoute::Suppress),
+            destination: ShortAddress(0x1234),
+            source: ShortAddress(TC_SHORT),
+            radius: 1,
+            sequence_number: 0,
+            destination_ieee: None,
+            source_ieee: None,
+            multicast_control: None,
+            source_route_subframe: None,
+        };
+        DataFrame {
+            header,
+            payload: aps,
+        }
+    }
+
+    // frame control 0x01 (command, unicast, security clear), APS counter, then
+    // the payload. command frames carry no endpoint/cluster/profile octets
+    fn unsecured_aps_command(counter: u8, payload: &[u8]) -> std::vec::Vec<u8> {
+        let mut frame = std::vec![0x01u8, counter];
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    // 4.4.1.1: command id, key type, key, sequence number, destination IEEE,
+    // source IEEE
+    fn transport_network_key_payload(
+        key: [u8; 16],
+        seq: u8,
+        source: IeeeAddress,
+    ) -> std::vec::Vec<u8> {
+        let mut payload = std::vec![0x05u8, 0x01u8];
+        payload.extend_from_slice(&key);
+        payload.push(seq);
+        payload.extend_from_slice(&IeeeAddress(0x0102_0304_0506_0708).0.to_le_bytes());
+        payload.extend_from_slice(&source.0.to_le_bytes());
+        payload
+    }
+
+    // 4.4.6.1.3 exempts only the broadcast Switch-Key from APS security, so an
+    // unsecured network-key transport proves nothing: its source address is
+    // plaintext the sender chose
+    #[test]
+    fn unsecured_network_key_transport_is_ignored() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let nlme = setup();
+        let apsme = Apsme::new();
+
+        // names the real Trust Center as the source
+        let payload = transport_network_key_payload(ATTACKER_KEY, 4, TC_IEEE);
+        let frame = unsecured_aps_command(0x42, &payload);
+        let indication = block_on(apsme.process_nwk_data(&nlme, nwk_data_frame(&frame)))
+            .expect("an APS command frame is consumed, not reported as an error");
+        assert!(
+            indication.is_none(),
+            "a command frame yields no data indication"
+        );
+
+        let set = nib::get_ref().security_material_set();
+        assert_eq!(
+            set.len(),
+            1,
+            "an APS-unsecured Transport-Key must not install a network key: only \
+             the broadcast Switch-Key is exempt from APS security (4.4.6.1.3), and \
+             the descriptor's source_address is attacker-controlled plaintext here"
+        );
+        assert_eq!(set[0].key_seq_number, ACTIVE_KEY_SEQ);
+        assert_eq!(set[0].key, ByteArray(ACTIVE_KEY));
+    }
+
+    // closing the hole above must not close the one command that legitimately
+    // arrives unsecured (4.4.6.1.3)
+    #[test]
+    fn unsecured_switch_key_is_still_honoured() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let nlme = setup();
+        let apsme = Apsme::new();
+
+        // give the device an alternate key to switch to
+        nib::get_ref().update_security_material_set(|set| {
+            let _ = set.push(NetworkSecurityMaterialDescriptor {
+                key_seq_number: 4,
+                outgoing_frame_counter: 0,
+                incoming_frame_counter_set: StorageVec::new(),
+                key: ByteArray([0xcc; 16]),
+                network_key_type: STANDARD_NETWORK_KEY,
+            });
+        });
+
+        let frame = unsecured_aps_command(0x43, &[0x09, 0x04]);
+        let _ = block_on(apsme.process_nwk_data(&nlme, nwk_data_frame(&frame)))
+            .expect("an APS command frame is consumed, not reported as an error");
+
+        assert_eq!(
+            *nib::get_ref().active_key_seq_number(),
+            4,
+            "a broadcast Switch-Key carries no APS security by design (4.4.6.1.3)"
+        );
     }
 }

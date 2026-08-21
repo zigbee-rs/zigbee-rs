@@ -1294,9 +1294,9 @@ mod tests {
     use zigbee_mac::mlme::ScanType;
 
     use super::*;
-
-    // tests share a global NIB singleton — serialize access
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // tests share a global NIB singleton — serialize against every other
+    // module that touches it, not just this one
+    use crate::TEST_MUTEX;
 
     // minimal async block_on — the mock futures resolve immediately so a
     // single poll is sufficient

@@ -997,10 +997,18 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 }
                 let error = Self::discovery_error(cfg);
                 let rsp_cluster = cluster | ZDP_RESPONSE_CLUSTER_FLAG;
-                let len = if cluster == descriptor::SIMPLE_DESC_REQ {
-                    descriptor::simple_desc_rsp_error(seq, error, addr_of_interest, out).ok()?
-                } else {
-                    descriptor::descriptor_rsp_error(seq, error, addr_of_interest, out).ok()?
+                // Simple_Desc_rsp and Active_EP_rsp keep their count field on
+                // the error paths (2.4.4.2.5/2.4.4.2.6)
+                let len = match cluster {
+                    descriptor::SIMPLE_DESC_REQ => {
+                        descriptor::simple_desc_rsp_error(seq, error, addr_of_interest, out).ok()?
+                    }
+                    descriptor::ACTIVE_EP_REQ => {
+                        descriptor::active_ep_rsp_error(seq, error, addr_of_interest, out).ok()?
+                    }
+                    _ => {
+                        descriptor::descriptor_rsp_error(seq, error, addr_of_interest, out).ok()?
+                    }
                 };
                 return Some((rsp_cluster, len));
             }
@@ -1093,5 +1101,228 @@ impl<M: Mlme> ZigbeeDevice<M> {
             }
             delay.delay_ms(poll_interval_ms).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zigbee_mac::Address;
+    use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacError;
+    use zigbee_mac::mlme::ScanResult;
+    use zigbee_mac::mlme::ScanType;
+
+    use super::*;
+    // NIB and AIB are process-wide singletons
+    use crate::TEST_MUTEX;
+    use crate::apl::descriptors::node_power_descriptor::CurrentPowerMode;
+    use crate::apl::descriptors::node_power_descriptor::CurrentPowerSourceLevel;
+    use crate::apl::descriptors::node_power_descriptor::PowerSource;
+    use crate::zdo::descriptor::DeviceDescriptorConfig;
+    use crate::zdo::descriptor::EndpointDescriptor;
+    use crate::zdo::descriptor::NodeDescriptorConfig;
+    use crate::zdo::descriptor::PowerDescriptorConfig;
+
+    // requests naming anything else take the error paths under test
+    const OUR_NWK_ADDR: u16 = 0x1234;
+    const OTHER_NWK_ADDR: u16 = 0x9999;
+
+    mockall::mock! {
+        Mlme {}
+        impl Mlme for Mlme {
+            fn ieee_address(&self) -> IeeeAddress;
+            async fn set_short_address(&self, address: ShortAddress);
+            async fn scan_network(
+                &self,
+                ty: ScanType,
+                channels: core::ops::Range<u8>,
+                duration: u8,
+            ) -> Result<ScanResult, MacError>;
+            async fn associate(
+                &self,
+                channel: u8,
+                dest: Address,
+                capabilities: zigbee_mac::CapabilityInformation,
+            ) -> Result<AssociationResponse, MacError>;
+            async fn poll_data(
+                &self,
+                coord_address: Address,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn receive(
+                &self,
+                buf: &mut [u8],
+            ) -> Result<(usize, u8), MacError>;
+            async fn transmit_data(
+                &self,
+                dest: Address,
+                payload: &[u8],
+            ) -> Result<(), MacError>;
+        }
+    }
+
+    // mirrors the fixtures in descriptor::tests
+    const NODE: NodeDescriptorConfig = NodeDescriptorConfig {
+        logical_type: LogicalType::EndDevice,
+        complex_descriptor_available: false,
+        user_descriptor_available: false,
+        frequency_band: 0x08,
+        mac_capability_flags: 0x88,
+        manufacturer_code: 0x1037,
+        maximum_buffer_size: 80,
+        maximum_incoming_transfer_size: 128,
+        server_mask: 0,
+        maximum_outgoing_transfer_size: 128,
+        descriptor_capability_field: 0,
+    };
+
+    const POWER: PowerDescriptorConfig = PowerDescriptorConfig {
+        current_power_mode: CurrentPowerMode::Synchronized,
+        available_power_sources: &[PowerSource::ConstantMainPower],
+        current_power_source: PowerSource::ConstantMainPower,
+        current_power_source_level: CurrentPowerSourceLevel::Full,
+    };
+
+    const ENDPOINTS: [EndpointDescriptor; 1] = [EndpointDescriptor {
+        endpoint: 1,
+        profile_id: 0x0104,
+        device_id: 0x0302,
+        device_version: 1,
+        input_clusters: &[0x0000, 0x0402],
+        output_clusters: &[0x0019],
+    }];
+
+    fn cfg(logical_type: LogicalType) -> DeviceDescriptorConfig<'static> {
+        DeviceDescriptorConfig {
+            node: NodeDescriptorConfig {
+                logical_type,
+                ..NODE
+            },
+            power: POWER,
+            endpoints: &ENDPOINTS,
+        }
+    }
+
+    fn make_device(logical_type: LogicalType) -> ZigbeeDevice<MockMlme> {
+        let mut mac = MockMlme::new();
+        mac.expect_ieee_address()
+            .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        let nlme = Nlme::new(mac);
+        let config = Config {
+            device_type: logical_type,
+            ..Config::default()
+        };
+        ZigbeeDevice::new(config, nlme)
+    }
+
+    // 2.4.3.1.3-2.4.3.1.6: seq, NWKAddrOfInterest
+    fn descriptor_req(seq: u8, addr_of_interest: u16) -> [u8; 3] {
+        let [lo, hi] = addr_of_interest.to_le_bytes();
+        [seq, lo, hi]
+    }
+
+    // 2.4.4.2.3-2.4.4.2.6: each error response carries the fields of its own
+    // figure, count fields included and set to zero
+    #[test]
+    fn discovery_error_responses_carry_their_count_fields() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        nib::try_init();
+        nib::reset();
+        aib::try_init();
+        let mut out = [0u8; 32];
+
+        let router = make_device(LogicalType::Router);
+        // Nlme::new stamped the IEEE address, the short one is ours to set
+        nib::get_ref().update_network_address(|value| *value = OUR_NWK_ADDR);
+
+        // 2.4.4.2.3: seq, status, NWKAddrOfInterest and no count field
+        let (cluster, len) = router
+            .build_zdp_response(
+                descriptor::NODE_DESC_REQ,
+                &descriptor_req(0x07, OTHER_NWK_ADDR),
+                OUR_NWK_ADDR,
+                &cfg(LogicalType::Router),
+                &mut out,
+            )
+            .expect("a unicast Node_Desc_req naming another device is answered");
+        assert_eq!(cluster, descriptor::NODE_DESC_RSP);
+        assert_eq!(&out[..len], &[0x07, 0x81, 0x99, 0x99]);
+
+        // 2.4.4.2.4: same shape
+        let (cluster, len) = router
+            .build_zdp_response(
+                descriptor::POWER_DESC_REQ,
+                &descriptor_req(0x08, OTHER_NWK_ADDR),
+                OUR_NWK_ADDR,
+                &cfg(LogicalType::Router),
+                &mut out,
+            )
+            .expect("a unicast Power_Desc_req naming another device is answered");
+        assert_eq!(cluster, descriptor::POWER_DESC_RSP);
+        assert_eq!(&out[..len], &[0x08, 0x81, 0x99, 0x99]);
+
+        // 2.4.4.2.5: a zero Length replaces the descriptor
+        let (cluster, len) = router
+            .build_zdp_response(
+                descriptor::SIMPLE_DESC_REQ,
+                &descriptor_req(0x09, OTHER_NWK_ADDR),
+                OUR_NWK_ADDR,
+                &cfg(LogicalType::Router),
+                &mut out,
+            )
+            .expect("a unicast Simple_Desc_req naming another device is answered");
+        assert_eq!(cluster, descriptor::SIMPLE_DESC_RSP);
+        assert_eq!(&out[..len], &[0x09, 0x81, 0x99, 0x99, 0x00]);
+
+        // 2.4.4.2.6: ActiveEPCount is set to 0 and only ActiveEPList omitted
+        let (cluster, len) = router
+            .build_zdp_response(
+                descriptor::ACTIVE_EP_REQ,
+                &descriptor_req(0x0a, OTHER_NWK_ADDR),
+                OUR_NWK_ADDR,
+                &cfg(LogicalType::Router),
+                &mut out,
+            )
+            .expect("a unicast Active_EP_req naming another device is answered");
+        assert_eq!(cluster, descriptor::ACTIVE_EP_RSP);
+        assert_eq!(
+            &out[..len],
+            &[0x0a, 0x81, 0x99, 0x99, 0x00],
+            "Active_EP_rsp must carry ActiveEPCount = 0 (2.4.4.2.6); a four-byte \
+             response is short by that field and reads as malformed"
+        );
+    }
+
+    // 2.4.4.2.6 keeps the count on the INV_REQUESTTYPE path too
+    #[test]
+    fn active_ep_rsp_invalid_request_type_carries_the_count() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        nib::try_init();
+        nib::reset();
+        aib::try_init();
+        let mut out = [0u8; 32];
+
+        let end_device = make_device(LogicalType::EndDevice);
+        nib::get_ref().update_network_address(|value| *value = OUR_NWK_ADDR);
+
+        let (cluster, len) = end_device
+            .build_zdp_response(
+                descriptor::ACTIVE_EP_REQ,
+                &descriptor_req(0x0b, OTHER_NWK_ADDR),
+                OUR_NWK_ADDR,
+                &cfg(LogicalType::EndDevice),
+                &mut out,
+            )
+            .expect("a unicast Active_EP_req naming another device is answered");
+        assert_eq!(cluster, descriptor::ACTIVE_EP_RSP);
+        assert_eq!(
+            &out[..len],
+            &[0x0b, 0x80, 0x99, 0x99, 0x00],
+            "Active_EP_rsp must carry ActiveEPCount = 0 (2.4.4.2.6)"
+        );
     }
 }

@@ -423,8 +423,8 @@ pub fn addr_rsp_error(
     Ok(*offset)
 }
 
-/// Build a Node_Desc_rsp / Power_Desc_rsp / Active_EP_rsp reporting an error
-/// (2.4.4.2.3-2.4.4.2.6): seq, status, NWKAddrOfInterest; the descriptor is
+/// Build a Node_Desc_rsp / Power_Desc_rsp reporting an error
+/// (2.4.4.2.3/2.4.4.2.4): seq, status, NWKAddrOfInterest; the descriptor is
 /// only present on success.
 pub fn descriptor_rsp_error(
     seq: u8,
@@ -436,6 +436,21 @@ pub fn descriptor_rsp_error(
     out.write_with(offset, seq, ctx::LE)?;
     out.write_with(offset, error.code(), ctx::LE)?;
     out.write_with(offset, nwk_addr_of_interest, ctx::LE)?;
+    Ok(*offset)
+}
+
+/// Build an Active_EP_rsp reporting an error (2.4.4.2.6), which carries a zero
+/// endpoint count in place of the endpoint list.
+pub fn active_ep_rsp_error(
+    seq: u8,
+    error: DiscoveryError,
+    nwk_addr_of_interest: u16,
+    out: &mut [u8],
+) -> Result<usize, byte::Error> {
+    // 2.4.4.2.6 keeps ActiveEPCount on the error paths and sets it to 0; only
+    // ActiveEPList is omitted
+    let offset = &mut descriptor_rsp_error(seq, error, nwk_addr_of_interest, out)?;
+    out.write_with(offset, 0u8, ctx::LE)?;
     Ok(*offset)
 }
 
