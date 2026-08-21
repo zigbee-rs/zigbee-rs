@@ -1,0 +1,27 @@
+[package]
+name = "zigbee-app"
+version = "0.1.0-alpha.1"
+
+description = "Application-facing runtime for the zigbee stack: receive loop, link maintenance and commissioning policy"
+documentation = "https://docs.rs/zigbee-app"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "no-std", "embedded"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[features]
+# persist the information bases to NOR flash; re-exports the flash storage
+# driver so an application only depends on this crate
+storage = ["zigbee/storage"]
+
+[dependencies]
+embedded-hal-async.workspace = true
+log.workspace = true
+zigbee = { path = "../zigbee" }
+zigbee-base-device-behavior = { version = "0.1.0-alpha.1", path = "../zigbee-base-device-behavior" }
+zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
+zigbee-types = { version = "0.1.0", path = "../zigbee-types" }

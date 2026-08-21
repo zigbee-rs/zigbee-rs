@@ -33,6 +33,23 @@ pub async fn with_timeout<F: Future>(
     .await
 }
 
+/// Hand control back to the executor once, so another task can make progress.
+///
+/// Used by yielding `try_lock` loops: a waiter releases the CPU instead of
+/// spinning while the holder finishes.
+pub async fn yield_now() {
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
+}
+
 /// One-shot signal carrying a value to a single waiter.
 ///
 /// The value is produced by the receive path and consumed by the procedure

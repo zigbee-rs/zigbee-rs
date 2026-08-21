@@ -1282,6 +1282,7 @@ mod receive_path_tests {
 
     use zigbee_mac::Address;
     use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacConfig;
     use zigbee_mac::mlme::MacError;
     use zigbee_mac::mlme::Mlme;
     use zigbee_mac::mlme::ScanResult;
@@ -1311,7 +1312,7 @@ mod receive_path_tests {
         Mlme {}
         impl Mlme for Mlme {
             fn ieee_address(&self) -> IeeeAddress;
-            async fn set_short_address(&self, address: ShortAddress);
+            async fn configure(&self, config: MacConfig);
             async fn scan_network(
                 &self,
                 ty: ScanType,

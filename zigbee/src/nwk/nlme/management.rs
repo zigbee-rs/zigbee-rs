@@ -10,6 +10,7 @@ use zigbee_mac::mlme::PanDescriptor;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 
+use crate::nwk::frame::command::network_status::NetworkStatusCode;
 use crate::nwk::nib::CapabilityInformation;
 
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
@@ -118,6 +119,13 @@ pub struct NlmeJoinRequest {
     /// Capability information bitmap (Table 3-62).
     pub capability_information: CapabilityInformation,
     pub security_enabled: bool,
+    /// Channels scanned for a parent when the remembered one does not answer
+    /// a rejoin (ScanChannels). An empty range restricts a rejoin to the
+    /// remembered parent; an association join ignores it and uses the
+    /// neighbor table filled by network discovery.
+    pub scan_channels: core::ops::Range<u8>,
+    /// Scan duration of that rejoin scan (ScanDuration).
+    pub scan_duration: u8,
 }
 /// 3.2.2.14 - NLME-JOIN.indication
 pub struct NlmeJoinIndication {
@@ -204,6 +212,15 @@ pub enum NlmeLeaveStatus {
     MacError,
     /// The requester is not allowed to remove this device (3.6.1.10.3.1).
     NotAuthorized,
+}
+
+/// 3.2.2.32 - NLME-NWK-STATUS.indication (Table 3-37).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NlmeNwkStatusIndication {
+    /// The error code associated with the failure.
+    pub status: NetworkStatusCode,
+    /// Network address of the device the status information belongs to.
+    pub network_address: ShortAddress,
 }
 
 /// 3.2.2.21 - NLME-RESET.request

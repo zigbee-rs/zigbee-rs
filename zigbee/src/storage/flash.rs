@@ -7,6 +7,7 @@ use embedded_storage_async::nor_flash::NorFlash;
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::MapConfig;
 use sequential_storage::map::MapStorage;
+use zigbee_types::sync::yield_now;
 
 use super::StorageDriver;
 use crate::aps::aib;
@@ -122,6 +123,19 @@ pub async fn init_with_flash<F: NorFlash>(flash: F, range: Range<u32>) -> FlashS
 }
 
 impl<F: NorFlash> StorageDriver for FlashStorage<F> {
+    /// Persists information-base changes as they happen; run this in its own
+    /// task, or let the application runtime drive it.
+    ///
+    /// Wakes whenever a persisted NIB/AIB attribute changes and flushes the
+    /// dirty fields. Counter headroom keeps the actual flash write rate far
+    /// below the change rate.
+    async fn run(&self) {
+        loop {
+            wait_any(nib::changed(), aib::changed()).await;
+            self.flush().await;
+        }
+    }
+
     async fn flush(&self) {
         let mut inner = loop {
             if let Some(inner) = self.inner.try_lock() {
@@ -140,21 +154,6 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     }
 }
 
-impl<F: NorFlash> FlashStorage<F> {
-    /// Persists information-base changes as they happen; run this in its
-    /// own task.
-    ///
-    /// Wakes whenever a persisted NIB/AIB attribute changes and flushes
-    /// the dirty fields. Counter headroom keeps the actual flash write
-    /// rate far below the change rate.
-    pub async fn run(&self) -> ! {
-        loop {
-            wait_any(nib::changed(), aib::changed()).await;
-            self.flush().await;
-        }
-    }
-}
-
 async fn wait_any(a: impl Future<Output = ()>, b: impl Future<Output = ()>) {
     let mut a = pin!(a);
     let mut b = pin!(b);
@@ -162,20 +161,6 @@ async fn wait_any(a: impl Future<Output = ()>, b: impl Future<Output = ()>) {
         if a.as_mut().poll(cx).is_ready() || b.as_mut().poll(cx).is_ready() {
             Poll::Ready(())
         } else {
-            Poll::Pending
-        }
-    })
-    .await;
-}
-
-async fn yield_now() {
-    let mut yielded = false;
-    poll_fn(|cx| {
-        if yielded {
-            Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
             Poll::Pending
         }
     })

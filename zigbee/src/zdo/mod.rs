@@ -30,13 +30,19 @@ use crate::aps::frame::Frame;
 use crate::aps::frame::command::Command;
 use crate::aps::frame::command::TransportKey;
 use crate::aps::types::TxOptions;
+use crate::nwk::frame::command::network_status::NetworkStatusCode;
 use crate::nwk::nib;
 use crate::nwk::nib::NWK_BROADCAST_ADDRESS_MIN;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
+use crate::nwk::nlme::KeepaliveMethod;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
+use crate::nwk::nlme::management::NlmeJoinConfirm;
+use crate::nwk::nlme::management::NlmeJoinRequest;
+use crate::nwk::nlme::management::NlmeJoinStatus;
 use crate::nwk::nlme::management::NlmeLeaveRequest;
 use crate::nwk::nlme::management::NlmeLeaveStatus;
+use crate::nwk::nlme::management::RejoinNetwork;
 use crate::security::SecurityContext;
 
 // number of MAC poll attempts when waiting for the Trust Center to deliver the
@@ -62,6 +68,8 @@ pub struct ZigbeeDevice<M> {
     // carries an inbound Node_Desc_rsp (2.4.4.2.3) to the procedure that
     // asked for it, e.g. the BDB TC link key exchange
     node_desc_rsp: Signal<descriptor::NodeDescRsp>,
+    // set when a leave asked this device to rejoin (3.6.1.10.4 step 1)
+    rejoin_requested: Event,
 }
 
 /// zigbee network
@@ -93,7 +101,7 @@ pub struct ClusterRequest<'a> {
 /// Handler for inbound application-profile (non-ZDP) requests.
 ///
 /// Implemented by cluster servers (e.g. the ZCL Basic cluster) to answer
-/// requests delivered to the [`ZigbeeDevice::rx_loop`]. Takes `&self` so it can
+/// requests delivered by a receive loop. Takes `&self` so it can
 /// be shared with the receive task.
 pub trait ClusterRequestHandler {
     /// Build a response ASDU for an application-profile request, writing it
@@ -112,7 +120,7 @@ impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
 /// Chains two handlers: the first to produce a response wins. Lets an
 /// application compose independent cluster servers (e.g. Basic-cluster reads
 /// plus a generic reporting responder) into the single handler
-/// [`ZigbeeDevice::rx_loop`] expects.
+/// a receive loop expects.
 impl<A: ClusterRequestHandler, B: ClusterRequestHandler> ClusterRequestHandler for (A, B) {
     fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
         self.0
@@ -143,6 +151,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             zdp_seq: AtomicU8::new(0),
             joined: Event::new(),
             node_desc_rsp: Signal::new(),
+            rejoin_requested: Event::new(),
         }
     }
 
@@ -372,6 +381,87 @@ impl<M: Mlme> ZigbeeDevice<M> {
         device_annce::broadcast(&self.nlme, &self.apsme, self.next_zdp_seq(), annce).await
     }
 
+    /// Broadcast a ZDO Device_annce for this device (2.4.3.1.11), announcing
+    /// the addresses it holds after a join or rejoin.
+    pub async fn announce_self(&self) -> Result<(), NetworkError> {
+        let nib = nib::get_ref();
+        let annce = device_annce::DeviceAnnce {
+            nwk_addr: ShortAddress(*nib.network_address()),
+            ieee_addr: *nib.ieee_address(),
+            capability: *nib.capability_information(),
+        };
+        self.device_annce(annce).await
+    }
+
+    /// Network Manager (2.5.2.4): rejoin the network after communication with
+    /// it was lost.
+    ///
+    /// A Secure Rejoin is attempted first — it secures the Rejoin Request with
+    /// the active network key and completes in a single exchange. If that
+    /// fails, typically because a network key update was missed, a Trust
+    /// Center rejoin follows: the request goes out unsecured and the current
+    /// network key is obtained from the Trust Center (3.6.10.10, 4.6.3.3.2).
+    /// Both keep the Trust Center link key, so neither needs re-commissioning.
+    ///
+    /// The remembered parent is addressed first; if it does not answer,
+    /// `channels` are scanned for another router of the same network
+    /// (3.6.1.4.2). On success the end-device timeout is renegotiated
+    /// (3.6.10.2) and the device announces itself again.
+    ///
+    /// `extended_pan_id` names the network to return to: a leave zeroes
+    /// `nwkExtendedPANId` (3.6.1.10.1), so it cannot always be read back from
+    /// the NIB.
+    pub async fn rejoin(
+        &self,
+        extended_pan_id: IeeeAddress,
+        channels: core::ops::Range<u8>,
+        scan_duration: u8,
+    ) -> Result<NlmeJoinConfirm, NetworkError> {
+        let capability_information = *nib::get_ref().capability_information();
+        let request = |security_enabled| NlmeJoinRequest {
+            extended_pan_id,
+            rejoin_network: RejoinNetwork::NwkRejoin,
+            capability_information,
+            security_enabled,
+            scan_channels: channels.clone(),
+            scan_duration,
+        };
+
+        log::debug!("[ZDO] secure rejoin, EPID={extended_pan_id:?}");
+        let confirm = self.nlme.join(request(true)).await;
+        if confirm.status == NlmeJoinStatus::Success {
+            self.finish_rejoin().await?;
+            return Ok(confirm);
+        }
+
+        log::warn!(
+            "[ZDO] secure rejoin failed ({:?}), falling back to trust center rejoin",
+            confirm.status
+        );
+        let confirm = self.nlme.join(request(false)).await;
+        if confirm.status != NlmeJoinStatus::Success {
+            log::warn!("[ZDO] trust center rejoin failed ({:?})", confirm.status);
+            return Ok(confirm);
+        }
+
+        // 4.6.3.3.2: the unsecured rejoin leaves the device without a valid
+        // network key until the Trust Center transports the current one
+        self.poll_transport_key().await?;
+        self.finish_rejoin().await?;
+        Ok(confirm)
+    }
+
+    // pick up where a successful rejoin leaves off: the receive loop was
+    // parked by the leave or the link failure, the timeout is renegotiated
+    // with the (possibly new) parent, and the network is told which addresses
+    // this device holds now
+    async fn finish_rejoin(&self) -> Result<(), NetworkError> {
+        self.mark_rejoined();
+        // 3.6.10.2: renegotiated after every rejoin, even with the same parent
+        let _ = self.nlme.negotiate_end_device_timeout().await;
+        self.announce_self().await
+    }
+
     /// Security Manager: poll for a Transport-Key command and install the
     /// network key and Trust Center link key entry (4.4.10).
     ///
@@ -497,6 +587,38 @@ impl<M: Mlme> ZigbeeDevice<M> {
             indication.rejoin
         );
         self.mark_joined(false);
+        // 3.6.1.10.4 step 1: a leave with the rejoin flag keeps the NIB and
+        // asks the device back onto the network — the higher layer drives it
+        if indication.rejoin {
+            self.rejoin_requested.signal();
+        }
+    }
+
+    /// Whether a leave asked this device to rejoin the network (3.6.1.10.4).
+    ///
+    /// Consumes the request: the receive loop is parked until the higher layer
+    /// rejoins and calls [`Self::mark_rejoined`].
+    pub fn take_rejoin_request(&self) -> bool {
+        if !self.rejoin_requested.is_set() {
+            return false;
+        }
+        self.rejoin_requested.reset();
+        true
+    }
+
+    /// Wait until a leave asks this device to rejoin the network
+    /// (3.6.1.10.4).
+    pub async fn wait_rejoin_request(&self) {
+        self.rejoin_requested.wait().await;
+    }
+
+    /// Re-open the receive loop's join gate after the higher layer rejoined
+    /// the network.
+    ///
+    /// A leave with the rejoin flag, or a lost parent link, parks the loop
+    /// until the device is back on the network.
+    pub fn mark_rejoined(&self) {
+        self.mark_joined(true);
     }
 
     /// Arm the TC link key exchange (BDB 10.2.5): key-transport commands
@@ -1053,61 +1175,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
         };
         Some(result)
     }
-
-    /// Run the receive/dispatch loop forever (the steady-state RX task).
-    ///
-    /// Waits for the join to complete before touching the radio, so it can
-    /// be spawned ahead of commissioning. The receive strategy follows the
-    /// joined capability (`nwkCapabilityInformation`, 3.4.1.3.1.1): a device
-    /// with `rxOnWhenIdle = TRUE` listens for frames directly, while a sleepy
-    /// end device polls the parent for buffered unicasts every
-    /// `poll_interval_ms` — keep it below the parent's indirect-transaction
-    /// persistence time (~7.68 s).
-    ///
-    /// A leave takes the device off the network and parks the loop until it
-    /// has been re-commissioned.
-    pub async fn rx_loop(
-        &self,
-        cfg: &descriptor::DeviceDescriptorConfig<'_>,
-        handler: &impl ClusterRequestHandler,
-        delay: &mut impl DelayNs,
-        poll_interval_ms: u32,
-    ) -> ! {
-        // a restored network address means the device resumed on a network
-        // without a fresh key exchange — release the gate immediately
-        if *self.nlme.nib().network_address() != ShortAddress::default().0 {
-            self.mark_joined(true);
-        }
-        self.wait_until_joined().await;
-        if self
-            .nlme
-            .nib()
-            .capability_information()
-            .receiver_on_when_idle()
-        {
-            loop {
-                // dispatching a leave closes the gate again, parking the loop
-                // until the higher layer has re-commissioned
-                self.wait_until_joined().await;
-                if let Err(e) = self.receive_and_dispatch(cfg, handler).await {
-                    log::debug!("[ZDO] rx dispatch error: {e:?}");
-                }
-            }
-        }
-        loop {
-            self.wait_until_joined().await;
-            if let Err(e) = self.poll_and_dispatch(cfg, handler).await {
-                log::debug!("[ZDO] rx dispatch error: {e:?}");
-            }
-            delay.delay_ms(poll_interval_ms).await;
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use zigbee_mac::Address;
     use zigbee_mac::mlme::AssociationResponse;
+    use zigbee_mac::mlme::MacConfig;
     use zigbee_mac::mlme::MacError;
     use zigbee_mac::mlme::ScanResult;
     use zigbee_mac::mlme::ScanType;
@@ -1131,7 +1205,7 @@ mod tests {
         Mlme {}
         impl Mlme for Mlme {
             fn ieee_address(&self) -> IeeeAddress;
-            async fn set_short_address(&self, address: ShortAddress);
+            async fn configure(&self, config: MacConfig);
             async fn scan_network(
                 &self,
                 ty: ScanType,

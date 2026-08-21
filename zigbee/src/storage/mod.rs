@@ -21,6 +21,26 @@
 pub trait StorageDriver {
     /// Persists all information-base fields modified since the last call.
     async fn flush(&self);
+
+    /// Persists information-base changes as they happen, until cancelled.
+    ///
+    /// Drivers that write in the background implement this; the default never
+    /// completes, so a caller can drive any driver the same way.
+    async fn run(&self) {
+        core::future::pending::<()>().await;
+    }
+}
+
+/// Lets a driver be shared: the stack can hold a reference to one the
+/// application also flushes itself.
+impl<T: StorageDriver> StorageDriver for &T {
+    async fn flush(&self) {
+        (**self).flush().await;
+    }
+
+    async fn run(&self) {
+        (**self).run().await;
+    }
 }
 
 /// RAM-only operation: state is lost on reset.

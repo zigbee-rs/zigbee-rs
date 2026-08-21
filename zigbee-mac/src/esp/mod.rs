@@ -25,6 +25,7 @@ use crate::mlme::A_MAX_FRAME_RETRIES;
 use crate::mlme::A_RESPONSE_WAIT_TIME;
 use crate::mlme::AssociationResponse;
 use crate::mlme::MAX_IEEE802154_CHANNELS;
+use crate::mlme::MacConfig;
 use crate::mlme::MacError;
 use crate::mlme::Mlme;
 use crate::mlme::PanDescriptor;
@@ -553,11 +554,13 @@ impl EspMlmeInner<'_> {
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
         // retry the poll handshake (7.5.6.3)
+        let mut acked = false;
         for _ in 0..POLL_DATA_RETRIES {
             let (data_req, len) = self.data_request_frame(coord_address)?;
             match self.transmit_acked(&data_req[..len]).await {
                 // no ack after retries: the parent may be busy; keep listening
-                Ok(()) | Err(MacError::NoAck) => {}
+                Ok(()) => acked = true,
+                Err(MacError::NoAck) => {}
                 Err(e) => return Err(e),
             }
             // arm RX for the indirect response (~2-3ms after the poll ack);
@@ -568,7 +571,14 @@ impl EspMlmeInner<'_> {
                 return Ok((len, lqi));
             }
         }
-        Err(MacError::NoData)
+        // an unacknowledged poll says nothing about buffered data: the parent
+        // itself is unreachable, which the NWK layer treats as a missed
+        // keepalive (3.6.10.3)
+        if acked {
+            Err(MacError::NoData)
+        } else {
+            Err(MacError::NoAck)
+        }
     }
 
     async fn transmit_data(&mut self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
@@ -636,15 +646,31 @@ impl Mlme for EspMlme<'_> {
         zigbee_types::IeeeAddress(self.ieee_address)
     }
 
-    async fn set_short_address(&self, address: zigbee_types::ShortAddress) {
-        self.inner
-            .lock()
-            .await
-            .driver
-            .update_driver_config(|config| {
-                config.promiscuous = false;
-                config.short_addr = Some(address.0);
-            });
+    async fn configure(&self, config: MacConfig) {
+        let mut inner = self.inner.lock().await;
+        inner.driver.update_driver_config(|driver| {
+            if let Some(channel) = config.channel {
+                driver.channel = channel;
+            }
+            if let Some(pan_id) = config.pan_id {
+                driver.pan_id = Some(pan_id.0);
+            }
+            if let Some(short_address) = config.short_address {
+                driver.short_addr = Some(short_address.0);
+            }
+            if let Some(promiscuous) = config.promiscuous {
+                driver.promiscuous = promiscuous;
+            }
+            if let Some(auto_ack_rx) = config.auto_ack_rx {
+                driver.auto_ack_rx = auto_ack_rx;
+            }
+            if let Some(auto_ack_tx) = config.auto_ack_tx {
+                driver.auto_ack_tx = auto_ack_tx;
+            }
+        });
+        // arm RX for the new configuration: otherwise reception stays off
+        // until the next transmit triggers rx-on-when-idle
+        inner.driver.start_receive();
     }
 
     async fn scan_network(

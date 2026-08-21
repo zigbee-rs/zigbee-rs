@@ -74,7 +74,10 @@ fn append(out: &mut [u8], offset: &mut usize, bytes: &[u8]) -> Result<(), byte::
 }
 
 /// Static configuration of the node descriptor (2.3.2.3).
-#[derive(Debug, Clone, Copy)]
+///
+/// The default describes an end device with no capabilities announced; fill in
+/// what the node actually is.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NodeDescriptorConfig {
     pub logical_type: LogicalType,
     pub complex_descriptor_available: bool,
