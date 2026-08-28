@@ -10,7 +10,7 @@ use crate::nwk::nlme::Nlme;
 use crate::zdp::device_annce::CLUSTER_ID;
 pub use crate::zdp::device_annce::DeviceAnnce;
 
-/// ZigBee Device Profile identifier.
+/// Zigbee Device Profile identifier.
 const ZDP_PROFILE_ID: u16 = 0x0000;
 /// ZDO endpoint.
 const ZDO_ENDPOINT: u8 = 0x00;

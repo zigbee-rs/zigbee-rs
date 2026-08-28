@@ -1,7 +1,7 @@
 //! Implements the Zigbee Base Device Behavior (BDB) in `no-std` based on the
-//! [ZigBee Base Device Behavior Specification Rev. 13].
+//! [Zigbee Base Device Behavior Specification Rev. 13].
 //!
-//! [ZigBee Base Device Behavior Specification Rev. 13]: https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf
+//! [Zigbee Base Device Behavior Specification Rev. 13]: https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf
 //!
 //! This crate defines the standard commissioning procedures all devices must
 //! support. It is a thin commissioning orchestrator: it does not own the

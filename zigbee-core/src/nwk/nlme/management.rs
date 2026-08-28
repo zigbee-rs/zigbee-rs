@@ -40,13 +40,13 @@ pub struct NetworkDescriptor {
     pub logical_channel: u8,
     /// A zigbee stack profile
     pub stack_profile: u8,
-    /// version of the ZigBee protocol in use
+    /// version of the Zigbee protocol in use
     pub zigbee_version: u8,
     /// specifies how often the MAC sub-layer beacon is to be transmitted
     pub beacon_order: BeaconOrder,
     /// for beacon oriented networks
     pub superframe_order: SuperframeOrder,
-    /// indicates that at least one ZigBee router or network currently permits
+    /// indicates that at least one Zigbee router or network currently permits
     /// joining
     pub permit_joining: bool,
     /// set to TRUE if the device is capable of accepting join requests from

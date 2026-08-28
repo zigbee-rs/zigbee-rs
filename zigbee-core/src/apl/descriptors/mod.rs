@@ -1,8 +1,8 @@
-//! ZigBee Descriptors
+//! Zigbee Descriptors
 //!
 //! See Section 2.3.2
 //!
-//! ZigBee devices describe themselves using descriptor data structures.
+//! Zigbee devices describe themselves using descriptor data structures.
 //! There are five descriptors: node, node power, simple, complex, and user.
 
 pub mod node_descriptor;

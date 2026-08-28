@@ -1,11 +1,11 @@
-//! Implements the `ZigBee` Cluster Library in `no-std` based on the [ZigBee
+//! Implements the `Zigbee` Cluster Library in `no-std` based on the [Zigbee
 //! Cluster Library Rev 8]
 //!
 //! This crate defines application-level behaviors, like reading attributes,
 //! reporting, and commands. It contains standard clusters like Temperature
 //! Measurement, Basic Identify, etc.
 //!
-//! [ZigBee Cluster Library Rev 8]: https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf
+//! [Zigbee Cluster Library Rev 8]: https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf
 #![no_std]
 #![warn(
     // missing_docs,

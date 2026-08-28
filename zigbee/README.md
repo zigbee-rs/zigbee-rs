@@ -1,7 +1,7 @@
 # zigbee
 
 The crate an application depends on: it re-exports the layers of the stack —
-`nwk`, `aps`, `security` and `storage` from [`zigbee-core`](../zigbee-core),
+`nwk`, `aps`, `security` and `storage` from [`zigbee-core`](https://crates.io/crates/zigbee-core),
 the cluster library as `zcl`, the commissioning procedures as `bdb`, the MAC
 abstraction as `mac` and the shared types as `types` — and adds the runtime
 that drives them.

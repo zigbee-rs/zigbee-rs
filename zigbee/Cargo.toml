@@ -1,8 +1,8 @@
 [package]
 name = "zigbee"
-version = "0.1.0-alpha.4"
+version.workspace = true
 
-description = "ZigBee protocol stack in `no-std`: the application-facing runtime on top of `zigbee-core`"
+description = "Zigbee protocol stack in `no-std`: the application-facing runtime on top of `zigbee-core`"
 documentation = "https://docs.rs/zigbee"
 readme = "README.md"
 keywords = ["zigbee", "ieee802154", "no-std", "embedded"]
@@ -21,8 +21,11 @@ storage = ["zigbee-core/storage"]
 [dependencies]
 embedded-hal-async.workspace = true
 log.workspace = true
-zigbee-core = { version = "0.1.0-alpha.3", path = "../zigbee-core" }
-zigbee-cluster-library = { version = "0.1.0-alpha.3", path = "../zigbee-cluster-library" }
-zigbee-base-device-behavior = { version = "0.1.0-alpha.1", path = "../zigbee-base-device-behavior" }
-zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
-zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+zigbee-core.workspace = true
+zigbee-cluster-library.workspace = true
+zigbee-base-device-behavior.workspace = true
+zigbee-mac.workspace = true
+zigbee-types.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

@@ -9,39 +9,32 @@ _Zigbee is a wireless communication technology designed for low-power devices in
 
 _It enables these devices to connect and communicate with each other, allowing for efficient control and automation of various systems._
 
-> ⚠️⚠️⚠️
-> 
-> This repository is not yet functional. We appreciate your patience and welcome any [contribution](CONTRIBUTING.md)
->
-> We're actively working on adding more features and aim to fully implement the specification over time.
-
-
 
 ---
 
 In this repository:
-- [ZigBee Stack](./zigbee/README.md)
+- [Zigbee Stack](./zigbee/README.md)
 
   The crate an application depends on: re-exports every layer below and adds the
   runtime that drives them (receive loop, link maintenance, startup commissioning).
 
-- [ZigBee Core](./zigbee-core/README.md)
+- [Zigbee Core](./zigbee-core/README.md)
 
   The core network layer and security features.
   Deals with addressing, keys, trust center, formation and discovery mechanisms.
-  For more, see the official [ZigBee Specification Rev. 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
+  For more, see the official [Zigbee Specification Rev. 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
 
-- [ZigBee Base Device Behavior](./zigbee-base-device-behavior/README.md)
+- [Zigbee Base Device Behavior](./zigbee-base-device-behavior/README.md)
 
   Defines the standard commissioning procedures all devices must support.
   Provides a high-level abstraction over the zigbee stack.
-  For more, see the official [ZigBee Base Device Behavior Specification Rev. 13](https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf)
+  For more, see the official [Zigbee Base Device Behavior Specification Rev. 13](https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf)
 
-- [ZigBee Cluster Library](./zigbee-cluster-library/README.md)
+- [Zigbee Cluster Library](./zigbee-cluster-library/README.md)
 
   Defines application-level behaviors, like reading attributes, reporting, and commands.
   Contains standard clusters like Temperature Measurement, Basic Identify, etc.
-  For more, see the official [ZigBee Cluster Library Rev 8](https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf)
+  For more, see the official [Zigbee Cluster Library Rev 8](https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf)
 
 ---
 

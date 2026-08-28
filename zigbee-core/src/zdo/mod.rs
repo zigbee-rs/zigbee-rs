@@ -72,10 +72,7 @@ pub struct ZigbeeDevice<M> {
     rejoin_requested: Event,
 }
 
-/// zigbee network
-pub struct ZigBeeNetwork {}
-
-// ZigBee Device Profile identifier (endpoint 0)
+// Zigbee Device Profile identifier (endpoint 0)
 const ZDP_PROFILE_ID: u16 = 0x0000;
 const ZDO_ENDPOINT: u8 = 0x00;
 // a ZDP response cluster is its request cluster with this bit set (2.4.4)
@@ -360,7 +357,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// 2.1.3.1 - Device Discovery
-    /// is the process whereby a ZigBee device can discover other ZigBee
+    /// is the process whereby a Zigbee device can discover other Zigbee
     /// devices.
     pub fn start_device_discovery(&self) {
         match self.config.device_discovery_type {

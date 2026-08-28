@@ -1,11 +1,17 @@
 [package]
 name = "zigbee-types"
-version = "0.1.0"
+version.workspace = true
+
+description = "Shared `no-std` types for the `zigbee` protocol stack: addresses, fixed-capacity collections and async primitives"
+documentation = "https://docs.rs/zigbee-types"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "no-std", "embedded"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
 authors.workspace = true
 repository.workspace = true
-readme.workspace = true
 edition.workspace = true
-license.workspace = true
 
 [dependencies]
 atomic-waker.workspace = true
@@ -15,4 +21,7 @@ heapless.workspace = true
 spin.workspace = true
 embedded-storage.workspace = true
 
-zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
+zigbee-macros.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

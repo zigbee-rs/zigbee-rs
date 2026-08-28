@@ -238,7 +238,7 @@ impl_byte! {
 impl_byte! {
     /// Stack Profile field
     ///
-    /// See ZigBee specification Annex D for bit field layout.
+    /// See Zigbee specification Annex D for bit field layout.
     #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct StackProfile(pub u16);
 }

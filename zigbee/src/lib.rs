@@ -1,4 +1,4 @@
-//! ZigBee protocol stack in `no-std`.
+//! Zigbee protocol stack in `no-std`.
 //!
 //! This is the crate an application depends on: it re-exports the layers of
 //! the stack — [`nwk`], [`aps`], [`security`], the cluster library as [`zcl`],
@@ -46,7 +46,7 @@ pub use zigbee_base_device_behavior as bdb;
 /// The commissioning procedures the stack runs, reachable via
 /// [`Stack::bdb`] for the ones it does not run itself.
 pub use zigbee_base_device_behavior::BaseDeviceBehavior;
-/// The ZigBee Cluster Library: clusters, attributes and ZCL frames.
+/// The Zigbee Cluster Library: clusters, attributes and ZCL frames.
 pub use zigbee_cluster_library as zcl;
 pub use zigbee_core::CurrentPowerMode;
 pub use zigbee_core::CurrentPowerSourceLevel;
@@ -71,10 +71,10 @@ pub use zigbee_core::storage::FlashStorage;
 pub use zigbee_core::storage::NoStorage;
 #[cfg(feature = "storage")]
 pub use zigbee_core::storage::init_with_flash;
-/// ZigBee Device Objects — driven by [`Stack`] and [`bdb`].
+/// Zigbee Device Objects — driven by [`Stack`] and [`bdb`].
 #[doc(hidden)]
 pub use zigbee_core::zdo;
-/// ZigBee Device Profile (ZDP) frames.
+/// Zigbee Device Profile (ZDP) frames.
 pub use zigbee_core::zdp;
 /// The MAC sub-layer abstraction (`Mlme`) a [`Stack`] is built on.
 pub use zigbee_mac as mac;

@@ -1,8 +1,8 @@
 [package]
 name = "zigbee-base-device-behavior"
-version = "0.1.0-alpha.1"
+version.workspace = true
 
-description = "ZigBee base device behavior based on the official ZigBee Base Device Behavior Specification Rev 13"
+description = "Zigbee base device behavior based on the official Zigbee Base Device Behavior Specification Rev 13"
 documentation = "https://docs.rs/zigbee-base-device-behavior"
 readme = "README.md"
 keywords = ["zigbee", "ieee802154", "base-device-behavior", "bdb"]
@@ -18,10 +18,13 @@ embedded-hal-async.workspace = true
 spin.workspace = true
 thiserror.workspace = true
 log.workspace = true
-zigbee-core = { version = "0.1.0-alpha.3", path = "../zigbee-core" }
-zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
-zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+zigbee-core.workspace = true
+zigbee-mac.workspace = true
+zigbee-types.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
-zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+zigbee-types.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

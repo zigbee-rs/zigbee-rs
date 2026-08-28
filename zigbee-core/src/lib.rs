@@ -1,7 +1,7 @@
-//! Implements the ZigBee protocol stack in `no-std` based on the [ZigBee
+//! Implements the Zigbee protocol stack in `no-std` based on the [Zigbee
 //! Specification R23]
 //!
-//! [ZigBee Specification R23]: https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf
+//! [Zigbee Specification R23]: https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf
 //!
 //! This crate contains the core network layer and security features.
 //! It deals with addressing, keys, trust center, formation and discovery
@@ -77,7 +77,7 @@ pub mod aps;
 pub mod nwk;
 pub mod security;
 pub mod storage;
-/// ZigBee Device Profile (2.4).
+/// Zigbee Device Profile (2.4).
 pub mod zdp;
 
 // ZDO is not directly called by the application — it is controlled by BDB or

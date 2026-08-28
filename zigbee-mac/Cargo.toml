@@ -1,10 +1,17 @@
 [package]
 name = "zigbee-mac"
-version = "0.1.0"
-repository = "https://github.com/zigbee-rs"
+version = "0.1.0-alpha.4"
+
+description = "IEEE 802.15.4 MAC sub-layer abstraction in `no-std` for the Zigbee protocol stack, with pluggable radio backends"
+documentation = "https://docs.rs/zigbee-mac"
 readme = "README.md"
-edition = "2024"
+keywords = ["zigbee", "ieee802154", "mlme"]
+categories = ["network-programming", "no-std", "embedded"]
 license = "MIT OR Apache-2.0"
+
+authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
+repository = "https://github.com/zigbee-rs"
+edition = "2024"
 
 [dependencies]
 heapless = "0.9.1"
@@ -22,8 +29,8 @@ embassy-sync = { version = "0.8", optional = true }
 embassy-time = { version = "0.5", optional = true }
 embassy-futures = { version = "0.1", optional = true }
 
-zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
-zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+zigbee-macros = { version = "0.1.0-alpha.4", path = "../zigbee-macros" }
+zigbee-types = { version = "0.1.0-alpha.4", path = "../zigbee-types" }
 
 [features]
 default = []
@@ -42,3 +49,8 @@ esp32c6 = [
     "dep:embassy-time",
     "dep:embassy-futures",
 ]
+
+[package.metadata.docs.rs]
+# the esp32c6 backend pulls in esp-hal, which only builds for the chip's target
+features = ["esp32c6"]
+targets = ["riscv32imac-unknown-none-elf"]

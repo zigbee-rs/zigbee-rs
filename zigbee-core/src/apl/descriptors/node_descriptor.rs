@@ -3,7 +3,7 @@
 //! See Section 2.3.2.3
 //!
 //! The node descriptor contains information about the capabilities of the
-//! ZigBee node and is mandatory for each node.  There shall be only one node
+//! Zigbee node and is mandatory for each node.  There shall be only one node
 //! descriptor in a node.
 
 use byte::TryRead;
@@ -76,7 +76,7 @@ impl NodeDescriptor<'_> {
 
 impl_byte! {
     #[tag(u8)]
-    /// Logical type field (2.3.2.3.1): device type of the ZigBee node.
+    /// Logical type field (2.3.2.3.1): device type of the Zigbee node.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum LogicalType {
         Coordinator = 0b000,
@@ -135,7 +135,7 @@ pub enum MacCapabilityFlag {
     /// Set if the device does not disable its receiver to conserve power
     /// during idle periods.
     ReceiverOnWhenIdle = 3,
-    /// Set if the device supports the ZigBee security suite.
+    /// Set if the device supports the Zigbee security suite.
     SecurityCapability = 6,
     AllocateAddress = 7,
 }

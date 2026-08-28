@@ -1,10 +1,10 @@
 # zigbee-core
 
-A `no_std` ZigBee Protocol Stack implementation based on the [ZigBee specification 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
+A `no_std` Zigbee Protocol Stack implementation based on the [Zigbee specification 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
 
 The core network layer and security features. Deals with addressing, keys, trust center, formation and discovery mechanisms.
 
-Applications depend on [`zigbee`](../zigbee) instead, which re-exports this crate and adds the runtime that drives it.
+Applications depend on [`zigbee`](https://crates.io/crates/zigbee) instead, which re-exports this crate and adds the runtime that drives it.
 
 ---
 

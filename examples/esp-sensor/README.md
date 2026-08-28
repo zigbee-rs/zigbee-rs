@@ -1,4 +1,4 @@
-# ESP ZigBee sensor
+# ESP Zigbee sensor
 
 ESP sensor application to work with the [zigbee](https://crates.io/crates/zigbee) crate.
 
@@ -26,3 +26,15 @@ cargo run --release
 cp target/riscv32imac-unknown-none-elf/release/esp-sensor firmware.bin
 ```
 
+## Use it in your own project
+
+The manifest here depends on the crates by path so the example builds against
+this repository. To start from it, drop the paths and take the published crates:
+
+```toml
+[dependencies]
+zigbee = { version = "0.1.0-alpha.4", features = ["storage"] }
+zigbee-types = "0.1.0-alpha.4"
+zigbee-mac = { version = "0.1.0-alpha.4", features = ["esp32c6"] }
+zigbee-cluster-library = "0.1.0-alpha.4"
+```

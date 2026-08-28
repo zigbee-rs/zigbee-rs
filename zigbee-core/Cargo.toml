@@ -1,8 +1,8 @@
 [package]
 name = "zigbee-core"
-version = "0.1.0-alpha.3"
+version.workspace = true
 
-description = "ZigBee protocol stack in `no-std` based on the official ZigBee Specification Rev 23"
+description = "Core Zigbee layers in `no-std` — NWK, APS, security and ZDO; the implementation behind the `zigbee` crate"
 documentation = "https://docs.rs/zigbee-core"
 readme = "README.md"
 keywords = ["zigbee", "ieee802154", "embedded", "iot"]
@@ -32,10 +32,13 @@ heapless.workspace = true
 thiserror = { workspace = true, default-features = false }
 log.workspace = true
 
-zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
-zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
-zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+zigbee-mac.workspace = true
+zigbee-macros.workspace = true
+zigbee-types.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
 sequential-storage = { workspace = true, features = ["_test"] }
+
+[package.metadata.docs.rs]
+all-features = true
