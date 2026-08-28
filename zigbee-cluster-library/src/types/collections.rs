@@ -1,3 +1,5 @@
+#![allow(clippy::empty_enums)]
+
 use core::marker::PhantomData;
 
 use super::error::ZclError;
