@@ -1,8 +1,8 @@
 # Zigbee Cluster Library
 
-A `no-std` ZigBee Cluster Library implementation based on the [ZigBee Cluster Library Rev 8](https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf)
+A `no-std` Zigbee Cluster Library implementation based on the [Zigbee Cluster Library Rev 8](https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf)
 
-This library defines a set of standard clusters (collection of commands and attributes) that enable interoperable communication between devices in a ZigBee network.
+This library defines a set of standard clusters (collection of commands and attributes) that enable interoperable communication between devices in a Zigbee network.
 
 ## 🏛️ License
 

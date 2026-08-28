@@ -21,15 +21,15 @@ use zigbee::PowerSource;
 use zigbee::aps::aib;
 use zigbee::aps::apsde::ApsdeSapConfirmStatus;
 use zigbee::nwk::nib::CapabilityInformation;
-use zigbee::nwk::nlme::Nlme;
-use zigbee::nwk::nlme::management::NlmeJoinStatus;
-use zigbee::storage::StorageDriver;
-use zigbee::zdo::ZigbeeDevice;
+use zigbee::zdo::config::DiscoveryType;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
 use zigbee::zdo::descriptor::PowerDescriptorConfig;
-use zigbee_base_device_behavior::BaseDeviceBehavior;
+use zigbee::DeviceConfig;
+use zigbee::NetworkConfig;
+use zigbee::TimingConfig;
+use zigbee::config::StackConfig;
 use zigbee_cluster_library::basic;
 use zigbee_cluster_library::basic::BasicServer;
 use zigbee_cluster_library::common::data_types::SignedN;
@@ -111,33 +111,61 @@ static BASIC: BasicServer = BasicServer {
 
 type ZigbeeFlash = zigbee::storage::FlashStorage<BlockingAsync<FlashStorage<'static>>>;
 
-static DEVICE: StaticCell<ZigbeeDevice<EspMlme<'static>>> = StaticCell::new();
-static STORAGE: StaticCell<ZigbeeFlash> = StaticCell::new();
+/// Cluster servers answering inbound requests, in the order they are tried.
+type Handler = (
+    BasicServer<'static>,
+    ConfigureReportingServer,
+    &'static IdentifyServer,
+);
 
-fn descriptor_config() -> DeviceDescriptorConfig<'static> {
-    DeviceDescriptorConfig {
-        node: NodeDescriptorConfig {
+/// The running stack this application's tasks share.
+type Stack = zigbee::Stack<'static, EspMlme<'static>, Handler, ZigbeeFlash>;
+
+static STACK: StaticCell<Stack> = StaticCell::new();
+
+/// Everything this application configures: the network to be on, what this
+/// device is, the cadences, and the descriptors served to an interviewer. The
+/// logical type and capability flags of the node descriptor are derived from
+/// the device configuration, so they cannot drift apart.
+fn stack_config() -> StackConfig<'static> {
+    StackConfig::new(
+        NetworkConfig {
+            extended_pan_id: IeeeAddress(EXTENDED_PAN_ID),
+            channels: CHANNEL..CHANNEL + 1,
+            scan_duration: SCAN_DURATION,
+        },
+        DeviceConfig {
             logical_type: LogicalType::EndDevice,
-            complex_descriptor_available: false,
-            user_descriptor_available: false,
-            // bit 3: 2400 MHz band.
-            frequency_band: 0x08,
-            mac_capability_flags: CAPABILITY,
-            manufacturer_code: 0x1037,
-            maximum_buffer_size: 80,
-            maximum_incoming_transfer_size: 128,
-            server_mask: 0,
-            maximum_outgoing_transfer_size: 128,
-            descriptor_capability_field: 0,
+            capability_information: CapabilityInformation(CAPABILITY),
+            discovery_type: DiscoveryType::default(),
+            tc_link_key_exchange: true,
         },
-        power: PowerDescriptorConfig {
-            current_power_mode: CurrentPowerMode::Stimulated,
-            available_power_sources: &[PowerSource::DisposableBattery],
-            current_power_source: PowerSource::DisposableBattery,
-            current_power_source_level: CurrentPowerSourceLevel::Full,
+        TimingConfig {
+            poll_interval_ms: POLL_INTERVAL_MS,
+            ..TimingConfig::default()
         },
-        endpoints: &ENDPOINTS,
-    }
+        DeviceDescriptorConfig {
+            node: NodeDescriptorConfig {
+                // logical_type and mac_capability_flags come from DeviceConfig
+                // bit 3: 2400 MHz band.
+                frequency_band: 0x08,
+                manufacturer_code: 0x1037,
+                maximum_buffer_size: 80,
+                maximum_incoming_transfer_size: 128,
+                server_mask: 0,
+                maximum_outgoing_transfer_size: 128,
+                descriptor_capability_field: 0,
+                ..NodeDescriptorConfig::default()
+            },
+            power: PowerDescriptorConfig {
+                current_power_mode: CurrentPowerMode::Stimulated,
+                available_power_sources: &[PowerSource::DisposableBattery],
+                current_power_source: PowerSource::DisposableBattery,
+                current_power_source_level: CurrentPowerSourceLevel::Full,
+            },
+            endpoints: &ENDPOINTS,
+        },
+    )
 }
 
 /// Parent poll interval; must stay below the parent's ~7.68 s
@@ -147,16 +175,17 @@ const POLL_INTERVAL_MS: u32 = 500;
 /// Identify state, shared between the receive task and the application.
 static IDENTIFY: IdentifyServer = IdentifyServer::new();
 
-/// Receive loop: idles until the join completes, then answers ZDP discovery,
-/// Basic-cluster and Identify reads, Identify commands, Configure Reporting
-/// requests, and APS commands (TC link key exchange).
+/// Drives the stack: receives and answers ZDP discovery, Basic-cluster and
+/// Identify reads, Identify commands, Configure Reporting requests and APS
+/// commands, keeps the parent link alive, and persists NIB/AIB changes.
 #[embassy_executor::task]
-async fn rx_task(device: &'static ZigbeeDevice<EspMlme<'static>>) {
-    let cfg = descriptor_config();
-    let handler = (BASIC, ConfigureReportingServer, &IDENTIFY);
-    device
-        .rx_loop(&cfg, &handler, &mut Delay, POLL_INTERVAL_MS)
-        .await
+async fn stack_task(stack: &'static Stack) {
+    // returns only when no rejoin could get us back onto the network: the
+    // network is gone or our keys are stale, so re-commission from scratch
+    let outcome = stack.run(Delay).await;
+    println!("Off the network ({outcome:?}), forgetting it and rebooting");
+    stack.forget_network().await;
+    esp_hal::system::software_reset();
 }
 
 /// Counts the Identify state down once a second (ZCL 3.5.2.2.1); a real device
@@ -182,128 +211,48 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    // the stack owns persistence: it restores the information bases here and
-    // the storage task persists dirty state (keys, frame counters, tables)
-    // whenever the stack changes it
+    // the stack owns persistence: the information bases are restored here and
+    // the stack persists dirty state (keys, frame counters, tables) whenever it
+    // changes them
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let storage: &'static ZigbeeFlash =
-        STORAGE.init(zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await);
+    let storage = zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await;
 
-    // a restored short address means we are still on the network: the parent
-    // keeps sleepy children across our reboot, so resume polling instead of
-    // re-commissioning (NLME-JOIN refuses to re-associate a joined device)
-    let nib = zigbee::nwk::nib::get_ref();
-    let resume = *nib.network_address() != 0xffff;
-
-    // on resume the radio must be configured from the restored NIB up front —
-    // association normally does this, but we skip it
-    let mut mac_config = esp_radio::ieee802154::Config::default();
-    if resume {
-        mac_config.channel = CHANNEL;
-        mac_config.pan_id = Some(*nib.panid());
-        mac_config.short_addr = Some(*nib.network_address());
-        mac_config.auto_ack_tx = true;
-        mac_config.auto_ack_rx = true;
-    }
+    let config = stack_config();
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
-    let mac = EspMlme::new(ieee802154, mac_config);
+    // the stack programs the radio from the restored information base: on a
+    // reboot while joined it resumes instead of re-commissioning
+    let mac = EspMlme::new(ieee802154, esp_radio::ieee802154::Config::default());
     println!("Device IEEE address: {:#018x}", mac.ieee_address());
-    let nlme = Nlme::new(mac);
 
-    let config = zigbee::Config {
-        device_type: LogicalType::EndDevice,
-        ..zigbee::Config::default()
-    };
-    let device: &'static ZigbeeDevice<EspMlme<'static>> =
-        DEVICE.init(ZigbeeDevice::new(config, nlme));
-    let mut bdb = BaseDeviceBehavior::new(config);
+    let handler = (BASIC, ConfigureReportingServer, &IDENTIFY);
+    let stack: &'static Stack = STACK.init(Stack::new(mac, config, handler, storage));
 
-    // spawn the receive loop up front; it idles until the join completes,
-    // then answers the interview and delivers the TC link key replies
-    spawner.spawn(rx_task(device).expect("spawn rx_task"));
-    // persist NIB/AIB changes as they happen, including the keys obtained
-    // during commissioning
-    spawner.spawn(storage_task(storage).expect("spawn storage_task"));
+    // the stack task is all it takes: it commissions the device, answers the
+    // interview, keeps the parent link alive and persists NIB/AIB changes
+    spawner.spawn(stack_task(stack).expect("spawn stack_task"));
     spawner.spawn(identify_task().expect("spawn identify_task"));
 
-    if resume {
-        println!(
-            "Resuming on network: addr={:#06x} pan={:#06x} channel={CHANNEL}, attempting rejoin...",
-            *nib.network_address(),
-            *nib.panid(),
-        );
+    stack.wait_until_joined().await;
+
+    let nib = zigbee::nwk::nib::get_ref();
+    println!(
+        "On network: addr={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
+        *nib.network_address(),
+        *nib.panid(),
+        *nib.extended_panid(),
+        stack.config().channel(),
+        nib.update_id()
+    );
+    if let Some(material) = nib.security_material_set().first() {
+        println!("Network key installed: key={:02x?}", material.key);
     }
-
-    match bdb.start_initialization_procedure(device, &mut Delay).await {
-        Ok(Some(confirm)) if confirm.status == NlmeJoinStatus::Success => {
-            println!(
-                "Rejoined: addr={:#06x} pan={:#06x} channel={CHANNEL}",
-                *nib.network_address(),
-                *nib.panid(),
-            );
-        }
-        init_result => {
-            // a prior rejoin attempt leaves the old network address/key
-            // material in the NIB; forget it before commissioning fresh so
-            // NLME-JOIN's "already joined" check does not reject it
-            if let Ok(Some(confirm)) = init_result {
-                println!("Rejoin failed ({:?}), forgetting network", confirm.status);
-                device.forget_network();
-            }
-
-            println!("Joining EPID={EXTENDED_PAN_ID:#018x} on channel {CHANNEL}...");
-            let join = bdb
-                .network_steering(
-                    device,
-                    &mut Delay,
-                    IeeeAddress(EXTENDED_PAN_ID),
-                    CHANNEL..CHANNEL + 1,
-                    SCAN_DURATION,
-                    CapabilityInformation(CAPABILITY),
-                )
-                .await;
-
-            match join {
-                Ok(confirm) if confirm.status == NlmeJoinStatus::Success => {
-                    let nib = bdb.nib();
-                    println!(
-                        "Joined: addr={:#06x} pan={:#06x} epid={:#x} update_id={}",
-                        *nib.network_address(),
-                        *nib.panid(),
-                        *nib.extended_panid(),
-                        nib.update_id()
-                    );
-
-                    let network_key = nib.security_material_set().first().unwrap().key;
-                    println!("Network key installed: key={:02x?}", network_key);
-
-                    let link_key = aib::get_ref()
-                        .device_key_pair_set()
-                        .first()
-                        .unwrap()
-                        .link_key;
-                    println!("Link key installed: key={:02x?}", link_key);
-                }
-                Ok(confirm) => {
-                    println!("Join failed: {:?}", confirm.status);
-                    loop {
-                        Timer::after_secs(60).await;
-                    }
-                }
-                Err(e) => {
-                    println!("Join error: {e:#}");
-                    loop {
-                        Timer::after_secs(60).await;
-                    }
-                }
-            }
-        }
+    if let Some(pair) = aib::get_ref().device_key_pair_set().first() {
+        println!("Link key installed: key={:02x?}", pair.link_key);
     }
 
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths
-    let mut report_failures: u32 = 0;
     loop {
         zcl_seq = zcl_seq.wrapping_add(1);
 
@@ -316,7 +265,8 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         )
         .expect("encode temperature report");
 
-        let result = device
+        let result = stack
+            .device()
             .send_zcl_unicast(
                 ZclUnicast {
                     dst_short: ShortAddress::COORDINATOR.0,
@@ -333,41 +283,14 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         match result {
             Ok(confirm) if confirm.status == ApsdeSapConfirmStatus::Success => {
                 println!("Reported temperature: {} (seq={})", sample, zcl_seq);
-                report_failures = 0;
             }
-            // only a missing acknowledgement points at an unreachable parent;
-            // the other statuses are local or transient
-            Ok(confirm) => {
-                println!("Report failed: {:?}", confirm.status);
-                if confirm.status == ApsdeSapConfirmStatus::NoAck {
-                    report_failures += 1;
-                }
-            }
+            // a lost parent link is detected by the stack and handled by the
+            // link task; anything reported here is local or transient
+            Ok(confirm) => println!("Report failed: {:?}", confirm.status),
             Err(e) => println!("Encode error: {:?}", e),
-        }
-
-        // an unreachable parent (no MAC ack) means we were likely aged out of
-        // its child table — forget the network and re-commission from scratch
-        if report_failures >= MAX_REPORT_FAILURES {
-            println!("Parent unreachable, forgetting network and rebooting");
-            device.forget_network();
-            // make sure the cleared state hits flash before the reset
-            storage.flush().await;
-            esp_hal::system::software_reset();
         }
 
         sample = sample.wrapping_add(10);
         Timer::after_secs(30).await;
     }
-}
-
-/// consecutive report failures before the network is forgotten and the device
-/// re-commissions.
-const MAX_REPORT_FAILURES: u32 = 4;
-
-/// Persists information-base changes (keys, frame counters, neighbor table)
-/// to flash as the stack makes them.
-#[embassy_executor::task]
-async fn storage_task(storage: &'static ZigbeeFlash) {
-    storage.run().await
 }

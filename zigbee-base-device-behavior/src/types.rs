@@ -2,7 +2,7 @@
 //!
 //! BDB 5.2.1 and 5.2.9
 
-use zigbee::nwk::nlme::management::NetworkDescriptor;
+use zigbee_core::nwk::nlme::management::NetworkDescriptor;
 
 /// Commissioning modes (BDB 5.2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

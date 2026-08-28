@@ -36,9 +36,8 @@ static_cell = "2.1"
 esp-storage = { version = "0.9.0", features = ["esp32c6"] }
 
 zigbee = { path = "../../zigbee", features = ["storage"] }
-zigbee-types = { version = "0.1.0", path = "../../zigbee-types" }
+zigbee-types = { path = "../../zigbee-types" }
 zigbee-mac = { path = "../../zigbee-mac", features = ["esp32c6"] }
-zigbee-base-device-behavior = { path = "../../zigbee-base-device-behavior" }
 zigbee-cluster-library = { path = "../../zigbee-cluster-library" }
 
 [profile.release]

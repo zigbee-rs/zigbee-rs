@@ -1,4 +1,5 @@
 use ieee802154::mac::Address;
+use ieee802154::mac::PanId;
 use ieee802154::mac::beacon::SuperframeSpecification;
 use ieee802154::mac::command::AssociationStatus;
 use ieee802154::mac::command::CapabilityInformation;
@@ -36,13 +37,17 @@ pub trait Mlme {
     /// e.g. read from efuse.
     fn ieee_address(&self) -> IeeeAddress;
 
-    /// MLME-SET.request of `macShortAddress` (IEEE 802.15.4 7.4.2).
+    /// MLME-SET.request of the addressing attributes (IEEE 802.15.4 7.4.2)
+    /// and the operating channel.
     ///
-    /// Applies the address the network layer was assigned, so the hardware
-    /// filter accepts unicasts sent to it. [`Self::associate`] already does
-    /// this for the address it obtained; the NWK layer calls this when an
-    /// address is assigned by other means, e.g. a rejoin response.
-    async fn set_short_address(&self, address: ShortAddress);
+    /// Applies what the network layer knows about this device, so the
+    /// hardware filter accepts frames addressed to it: the channel it
+    /// operates on, `macPANId`, and the `macShortAddress` it was assigned.
+    /// [`Self::associate`] already does this for an association; the NWK layer
+    /// calls this when the values come from elsewhere — a rejoin response, a
+    /// parent on another channel, or a restored information base after a
+    /// reset (3.6.8).
+    async fn configure(&self, config: MacConfig);
 
     async fn scan_network(
         &self,
@@ -64,9 +69,11 @@ pub trait Mlme {
     /// receive mode to capture both the ACK (with frame-pending check)
     /// and the subsequent data frame in a single uninterrupted session.
     ///
-    /// Returns `Ok((bytes_written, lqi))` on success, or
+    /// Returns `Ok((bytes_written, lqi))` on success,
     /// `Err(MacError::NoData)` if the ACK has frame-pending clear or
-    /// no data frame arrives within the timeout.
+    /// no data frame arrives within the timeout, and `Err(MacError::NoAck)`
+    /// if the data request itself went unacknowledged — the coordinator is
+    /// unreachable rather than merely idle.
     async fn poll_data(
         &self,
         coord_address: Address,
@@ -89,6 +96,60 @@ pub trait Mlme {
     /// sequence number, addressing) and appends `payload` as the MAC
     /// service data unit.
     async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
+}
+
+/// MAC attributes the network layer programs (see [`Mlme::configure`]).
+///
+/// Every field is optional: `None` leaves that attribute as the implementation
+/// has it, so a caller only states what it actually knows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MacConfig {
+    /// `phyCurrentChannel`: the channel the network operates on.
+    pub channel: Option<u8>,
+    /// `macPANId` of that network.
+    pub pan_id: Option<PanId>,
+    /// `macShortAddress` assigned to this device.
+    pub short_address: Option<ShortAddress>,
+    /// `macPromiscuousMode` (7.4.2): pass every frame up instead of filtering
+    /// on the addresses above.
+    pub promiscuous: Option<bool>,
+    /// Acknowledge received frames that request it (7.5.6.4).
+    pub auto_ack_rx: Option<bool>,
+    /// Wait for the acknowledgement of transmitted frames that request it.
+    pub auto_ack_tx: Option<bool>,
+}
+
+impl MacConfig {
+    /// Attributes of a device operating as a member of a network: filtering on
+    /// its addresses, acknowledging and expecting acknowledgements.
+    pub fn joined(channel: u8, pan_id: PanId, short_address: ShortAddress) -> Self {
+        Self {
+            channel: Some(channel),
+            pan_id: Some(pan_id),
+            short_address: Some(short_address),
+            promiscuous: Some(false),
+            auto_ack_rx: Some(true),
+            auto_ack_tx: Some(true),
+        }
+    }
+}
+
+impl MacConfig {
+    /// Tune the radio to a channel, leaving the addressing attributes alone.
+    pub fn channel(channel: u8) -> Self {
+        Self {
+            channel: Some(channel),
+            ..Self::default()
+        }
+    }
+
+    /// Apply an assigned short address, leaving channel and PAN id alone.
+    pub fn short_address(address: ShortAddress) -> Self {
+        Self {
+            short_address: Some(address),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -177,7 +238,7 @@ impl_byte! {
 impl_byte! {
     /// Stack Profile field
     ///
-    /// See ZigBee specification Annex D for bit field layout.
+    /// See Zigbee specification Annex D for bit field layout.
     #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct StackProfile(pub u16);
 }

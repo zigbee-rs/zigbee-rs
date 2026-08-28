@@ -1,4 +1,4 @@
-# Welcome to ZigBee in Rust
+# Welcome to Zigbee in Rust
 
 This is a **FOSS** (free and open-source software) and lives from contributions of the community.
 

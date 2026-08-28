@@ -1,0 +1,44 @@
+[package]
+name = "zigbee-core"
+version.workspace = true
+
+description = "Core Zigbee layers in `no-std` — NWK, APS, security and ZDO; the implementation behind the `zigbee` crate"
+documentation = "https://docs.rs/zigbee-core"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "embedded", "iot"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[features]
+alloc = []
+in-memory-nib = ["alloc"]
+storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
+
+[dependencies]
+byte.workspace = true
+embedded-hal-async.workspace = true
+ccm.workspace = true
+aes.workspace = true
+aead.workspace = true
+itertools.workspace = true
+embedded-storage-async = { workspace = true, optional = true }
+sequential-storage = { workspace = true, optional = true }
+spin.workspace = true
+heapless.workspace = true
+thiserror = { workspace = true, default-features = false }
+log.workspace = true
+
+zigbee-mac.workspace = true
+zigbee-macros.workspace = true
+zigbee-types.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+sequential-storage = { workspace = true, features = ["_test"] }
+
+[package.metadata.docs.rs]
+all-features = true

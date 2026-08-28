@@ -1,4 +1,4 @@
-# nRF52 ZigBee sensor
+# nRF52 Zigbee sensor
 
 nRF sensor application to work with the [zigbee](https://crates.io/crates/zigbee) crate. 
 
