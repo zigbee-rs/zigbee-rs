@@ -1,15 +1,15 @@
 //! Everything an application configures, in one place.
 //!
-//! The layers below take their own spec-shaped configuration — `zigbee::Config`
-//! for the ZDO, `DeviceDescriptorConfig` for the descriptors an interviewer
-//! asks for — and several values appear in more than one of them: the logical
-//! device type, the MAC capability byte, the operating channel. [`StackConfig`]
-//! is the single source for those, deriving the per-layer configuration from
-//! it so the copies cannot drift apart.
+//! The layers below take their own spec-shaped configuration —
+//! `zigbee_core::Config` for the ZDO, `DeviceDescriptorConfig` for the
+//! descriptors an interviewer asks for — and several values appear in more than
+//! one of them: the logical device type, the MAC capability byte, the operating
+//! channel. [`StackConfig`] is the single source for those, deriving the
+//! per-layer configuration from it so the copies cannot drift apart.
 
-use zigbee::nwk::nib::CapabilityInformation;
-use zigbee::zdo::config::DiscoveryType;
-use zigbee::zdo::descriptor::DeviceDescriptorConfig;
+use zigbee_core::nwk::nib::CapabilityInformation;
+use zigbee_core::zdo::config::DiscoveryType;
+use zigbee_core::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee_types::IeeeAddress;
 
 /// The network this device belongs to.
@@ -26,7 +26,7 @@ pub struct NetworkConfig {
 /// What this device is on that network.
 pub struct DeviceConfig {
     /// Coordinator, router, or end device.
-    pub logical_type: zigbee::LogicalType,
+    pub logical_type: zigbee_core::LogicalType,
     /// Capability information this device joins with (Table 3-62); its
     /// receiver-on-when-idle bit also decides how [`crate::rx_loop`] receives.
     pub capability_information: CapabilityInformation,
@@ -63,7 +63,7 @@ impl Default for TimingConfig {
 ///
 /// Build it once with [`StackConfig::new`] and hand it to every entry point of
 /// this crate; [`Self::zdo`] produces the configuration
-/// [`zigbee::ZigbeeDevice`] and BDB expect.
+/// [`zigbee_core::ZigbeeDevice`] and BDB expect.
 pub struct StackConfig<'a> {
     network: NetworkConfig,
     device: DeviceConfig,
@@ -118,9 +118,9 @@ impl<'a> StackConfig<'a> {
     }
 
     /// The ZDO configuration derived from this one, for
-    /// [`zigbee::ZigbeeDevice::new`] and `BaseDeviceBehavior::new`.
-    pub fn zdo(&self) -> zigbee::Config {
-        zigbee::Config {
+    /// [`zigbee_core::ZigbeeDevice::new`] and `BaseDeviceBehavior::new`.
+    pub fn zdo(&self) -> zigbee_core::Config {
+        zigbee_core::Config {
             radio_channel: self.channel(),
             device_discovery_type: self.device.discovery_type,
             device_type: self.device.logical_type,

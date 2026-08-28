@@ -7,8 +7,8 @@
 //! requests, which a coordinator issues during interview to resolve the device
 //! to its definition.
 
-use zigbee::zdo::ClusterRequest;
-use zigbee::zdo::ClusterRequestHandler;
+use zigbee_core::zdo::ClusterRequest;
+use zigbee_core::zdo::ClusterRequestHandler;
 
 use crate::attributes::AttributeSource;
 use crate::attributes::handle_read_attributes;

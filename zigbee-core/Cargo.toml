@@ -1,0 +1,41 @@
+[package]
+name = "zigbee-core"
+version = "0.1.0-alpha.3"
+
+description = "ZigBee protocol stack in `no-std` based on the official ZigBee Specification Rev 23"
+documentation = "https://docs.rs/zigbee-core"
+readme = "README.md"
+keywords = ["zigbee", "ieee802154", "embedded", "iot"]
+categories = ["network-programming", "no-std", "embedded"]
+license = "MIT OR Apache-2.0"
+
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[features]
+alloc = []
+in-memory-nib = ["alloc"]
+storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
+
+[dependencies]
+byte.workspace = true
+embedded-hal-async.workspace = true
+ccm.workspace = true
+aes.workspace = true
+aead.workspace = true
+itertools.workspace = true
+embedded-storage-async = { workspace = true, optional = true }
+sequential-storage = { workspace = true, optional = true }
+spin.workspace = true
+heapless.workspace = true
+thiserror = { workspace = true, default-features = false }
+log.workspace = true
+
+zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
+zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
+zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
+
+[dev-dependencies]
+mockall.workspace = true
+sequential-storage = { workspace = true, features = ["_test"] }

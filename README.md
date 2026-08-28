@@ -22,6 +22,11 @@ _It enables these devices to connect and communicate with each other, allowing f
 In this repository:
 - [ZigBee Stack](./zigbee/README.md)
 
+  The crate an application depends on: re-exports every layer below and adds the
+  runtime that drives them (receive loop, link maintenance, startup commissioning).
+
+- [ZigBee Core](./zigbee-core/README.md)
+
   The core network layer and security features.
   Deals with addressing, keys, trust center, formation and discovery mechanisms.
   For more, see the official [ZigBee Specification Rev. 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)

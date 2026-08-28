@@ -38,7 +38,6 @@ esp-storage = { version = "0.9.0", features = ["esp32c6"] }
 zigbee = { path = "../../zigbee", features = ["storage"] }
 zigbee-types = { version = "0.1.0", path = "../../zigbee-types" }
 zigbee-mac = { path = "../../zigbee-mac", features = ["esp32c6"] }
-zigbee-app = { path = "../../zigbee-app", features = ["storage"] }
 zigbee-cluster-library = { path = "../../zigbee-cluster-library" }
 
 [profile.release]

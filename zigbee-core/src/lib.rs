@@ -1,0 +1,92 @@
+//! Implements the ZigBee protocol stack in `no-std` based on the [ZigBee
+//! Specification R23]
+//!
+//! [ZigBee Specification R23]: https://csa-iot.org/wp-content/uploads/2024/07/docs-05-3474-23-csg-zigbee-specificationR23.1.pdf
+//!
+//! This crate contains the core network layer and security features.
+//! It deals with addressing, keys, trust center, formation and discovery
+//! mechanisms.
+#![no_std]
+#![deny(clippy::panic, unused_must_use)]
+#![warn(
+    clippy::missing_safety_doc,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::tests_outside_test_module,
+    unused_crate_dependencies,
+    unused_qualifications,
+    single_use_lifetimes,
+    non_ascii_idents
+)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_raw_string_hashes,
+    clippy::blocks_in_conditions,
+    clippy::missing_const_for_fn,
+    clippy::future_not_send,
+    clippy::ignored_unit_patterns,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::struct_excessive_bools,
+    dead_code,
+    unused_imports,
+    unused_macros,
+    clippy::doc_markdown,
+    clippy::cast_lossless,
+    private_interfaces,
+    clippy::cognitive_complexity,
+    clippy::new_without_default,
+    clippy::non_std_lazy_statics,
+    static_mut_refs,
+    clippy::needless_range_loop,
+    clippy::redundant_pub_crate,
+    clippy::too_many_arguments,
+    clippy::derive_partial_eq_without_eq,
+    clippy::too_long_first_doc_paragraph,
+    clippy::derivable_impls,
+    clippy::unused_self,
+    async_fn_in_trait
+)]
+#![feature(macro_metavar_expr_concat)]
+
+#[cfg(test)]
+extern crate std;
+
+/// Serializes tests that touch the NIB or AIB.
+///
+/// Both are process-wide singletons shared by every test in this binary, so a
+/// per-module lock does not serialize against a sibling module holding its own.
+/// Every test that reads or writes them must hold *this* one.
+#[cfg(test)]
+pub(crate) static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+// dev-dependency only used by the storage tests
+#[cfg(all(test, not(feature = "storage")))]
+use sequential_storage as _;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+use alloc as _;
+
+pub mod apl;
+pub mod aps;
+pub mod nwk;
+pub mod security;
+pub mod storage;
+/// ZigBee Device Profile (2.4).
+pub mod zdp;
+
+// ZDO is not directly called by the application — it is controlled by BDB or
+// used internally by the stack.
+#[doc(hidden)]
+pub mod zdo;
+
+pub use apl::descriptors::node_descriptor::LogicalType;
+pub use apl::descriptors::node_power_descriptor::CurrentPowerMode;
+pub use apl::descriptors::node_power_descriptor::CurrentPowerSourceLevel;
+pub use apl::descriptors::node_power_descriptor::PowerSource;
+pub use zdo::config::Config;

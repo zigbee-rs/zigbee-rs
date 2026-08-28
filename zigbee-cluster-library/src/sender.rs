@@ -8,13 +8,13 @@
 use byte::BytesExt;
 use embedded_hal_async::delay::DelayNs;
 use heapless::Vec;
-use zigbee::aps::apsde::ApsdeSapConfirm;
-use zigbee::aps::apsde::ApsdeSapRequest;
-use zigbee::aps::types::Address;
-use zigbee::aps::types::DstAddrMode;
-use zigbee::aps::types::SrcEndpoint;
-use zigbee::aps::types::TxOptions;
-use zigbee::zdo::ZigbeeDevice;
+use zigbee_core::aps::apsde::ApsdeSapConfirm;
+use zigbee_core::aps::apsde::ApsdeSapRequest;
+use zigbee_core::aps::types::Address;
+use zigbee_core::aps::types::DstAddrMode;
+use zigbee_core::aps::types::SrcEndpoint;
+use zigbee_core::aps::types::TxOptions;
+use zigbee_core::zdo::ZigbeeDevice;
 use zigbee_mac::mlme::Mlme;
 
 use crate::common::data_types::ZclDataType;
@@ -28,8 +28,9 @@ use crate::payload::ZclFramePayload;
 
 /// Maximum ZCL frame size used for the internal serialization buffer.
 ///
-/// Matches the working buffer in [`zigbee::aps::apsme::Apsme::unicast_data`]
-/// minus a conservative APS header allowance.
+/// Matches the working buffer in
+/// [`zigbee_core::aps::apsme::Apsme::unicast_data`] minus a conservative APS
+/// header allowance.
 const ZCL_TX_BUF_SIZE: usize = 96;
 
 /// Errors produced when building or sending a ZCL frame.

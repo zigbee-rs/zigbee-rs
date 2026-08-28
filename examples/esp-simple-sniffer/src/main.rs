@@ -10,8 +10,8 @@ use esp_hal::esp_riscv_rt::entry;
 use esp_radio::ieee802154::{Config, Ieee802154, ReceivedFrame};
 use esp_println::println;
 use ieee802154::mac::Address;
-use zigbee::nwk::frame::Frame as NwkFrame;
-use zigbee::security::SecurityContext;
+use zigbee_core::nwk::frame::Frame as NwkFrame;
+use zigbee_core::security::SecurityContext;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -20,8 +20,8 @@ fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    zigbee::nwk::nib::init();
-    zigbee::aps::aib::init();
+    zigbee_core::nwk::nib::init();
+    zigbee_core::aps::aib::init();
     let mut ieee802154 = Ieee802154::new(peripherals.IEEE802154);
 
     ieee802154.set_config(Config {

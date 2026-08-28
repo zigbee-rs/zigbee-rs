@@ -9,8 +9,8 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
 use heapless::Vec;
-use zigbee::nwk::nlme::Nlme;
-use zigbee::nwk::nlme::management::NetworkDescriptor;
+use zigbee_core::nwk::nlme::Nlme;
+use zigbee_core::nwk::nlme::management::NetworkDescriptor;
 use zigbee_mac::esp::EspMlme;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -29,7 +29,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
-    zigbee::nwk::nib::init();
+    zigbee_core::nwk::nib::init();
 
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
     let mac = EspMlme::new(ieee802154, Default::default());

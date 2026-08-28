@@ -1,42 +1,26 @@
-# Zigbee Stack
+# zigbee
 
-A `no_std` ZigBee Protocol Stack implementation based on the [ZigBee specification 22](https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf)
+The crate an application depends on: it re-exports the layers of the stack —
+`nwk`, `aps`, `security` and `storage` from [`zigbee-core`](../zigbee-core),
+the cluster library as `zcl`, the commissioning procedures as `bdb`, the MAC
+abstraction as `mac` and the shared types as `types` — and adds the runtime
+that drives them.
 
-The core network layer and security features. Deals with addressing, keys, trust center, formation and discovery mechanisms.
+The layers below implement the specification and nothing else. This crate holds
+the behavior the specs deliberately leave to the implementer, so an application
+does not have to reinvent it:
 
----
+| Function | What it decides |
+|----------|-----------------|
+| `commission` | startup order: resume, rejoin, or steer onto a network |
+| `rx_loop` | receive/dispatch strategy and poll cadence |
+| `link_maintenance` | keepalive period (3.6.10.3) and how to recover a lost parent link |
+| `keepalive` | one keepalive, when the loop is driven elsewhere |
 
-```mermaid
-sequenceDiagram
-    participant Device
-    participant Coordinator
-    rect rgb(255, 120, 120)
-    note right of Device: Unencrypted
-    Device->>Coordinator: Beacon Request (0x07)
-    Coordinator-->>Device: Zigbee Beacon
-    Device->>Coordinator: Association Request (0x01)
-    Coordinator-->>Device: Association Request
-    end
-    rect rgb(255, 180, 100)
-    note right of Device: APS encrypted only
-    Coordinator-->>Device: Transport Key
-    end
-    rect rgb(125, 235, 150)
-    note right of Device: NWK encrypted
-    Device->>Coordinator: Device Announcement
-    end
-```
+`rx_loop` and `link_maintenance` are meant to run as two tasks sharing a
+`&'static ZigbeeDevice`.
 
-## 🏛️ License
+## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-## 🧩 Contribution
-
-This is a free and open project and lives from contributions of the community.
-
-See our [Contribution Guide](CONTRIBUTING.md)
-
+Licensed under either of Apache License, Version 2.0 or MIT license at your
+option.

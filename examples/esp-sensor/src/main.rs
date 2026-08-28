@@ -26,10 +26,10 @@ use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
 use zigbee::zdo::descriptor::PowerDescriptorConfig;
-use zigbee_app::DeviceConfig;
-use zigbee_app::NetworkConfig;
-use zigbee_app::TimingConfig;
-use zigbee_app::config::StackConfig;
+use zigbee::DeviceConfig;
+use zigbee::NetworkConfig;
+use zigbee::TimingConfig;
+use zigbee::config::StackConfig;
 use zigbee_cluster_library::basic;
 use zigbee_cluster_library::basic::BasicServer;
 use zigbee_cluster_library::common::data_types::SignedN;
@@ -119,7 +119,7 @@ type Handler = (
 );
 
 /// The running stack this application's tasks share.
-type Stack = zigbee_app::Stack<'static, EspMlme<'static>, Handler, ZigbeeFlash>;
+type Stack = zigbee::Stack<'static, EspMlme<'static>, Handler, ZigbeeFlash>;
 
 static STACK: StaticCell<Stack> = StaticCell::new();
 

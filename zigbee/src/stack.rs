@@ -6,18 +6,18 @@ use core::task::Poll;
 use core::task::ready;
 
 use embedded_hal_async::delay::DelayNs;
-use zigbee::nwk::frame::command::network_status::NetworkStatusCode;
-use zigbee::nwk::nib;
-use zigbee::nwk::nlme::KeepaliveMethod;
-use zigbee::nwk::nlme::NetworkError;
-use zigbee::nwk::nlme::Nlme;
-use zigbee::nwk::nlme::management::NlmeJoinConfirm;
-use zigbee::nwk::nlme::management::NlmeJoinStatus;
-use zigbee::storage::NoStorage;
-use zigbee::storage::StorageDriver;
-use zigbee::zdo::ClusterRequestHandler;
-use zigbee::zdo::ZigbeeDevice;
 use zigbee_base_device_behavior::BaseDeviceBehavior;
+use zigbee_core::nwk::frame::command::network_status::NetworkStatusCode;
+use zigbee_core::nwk::nib;
+use zigbee_core::nwk::nlme::KeepaliveMethod;
+use zigbee_core::nwk::nlme::NetworkError;
+use zigbee_core::nwk::nlme::Nlme;
+use zigbee_core::nwk::nlme::management::NlmeJoinConfirm;
+use zigbee_core::nwk::nlme::management::NlmeJoinStatus;
+use zigbee_core::storage::NoStorage;
+use zigbee_core::storage::StorageDriver;
+use zigbee_core::zdo::ClusterRequestHandler;
+use zigbee_core::zdo::ZigbeeDevice;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::ShortAddress;
 
@@ -68,7 +68,7 @@ where
 {
     /// Build the stack on top of a MAC.
     ///
-    /// The information bases must already be restored (`zigbee::storage`),
+    /// The information bases must already be restored (`zigbee_core::storage`),
     /// because the NWK layer reads them here.
     pub fn new(mac: M, config: StackConfig<'d>, handler: H, storage: S) -> Self {
         let device = ZigbeeDevice::new(config.zdo(), Nlme::new(mac));

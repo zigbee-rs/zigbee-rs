@@ -30,7 +30,7 @@ embassy-executor = "0.10.0"
 embassy-time = "0.5.0"
 heapless = "0.9.1"
 
-zigbee = { path = "../../zigbee" }
+zigbee-core = { path = "../../zigbee-core" }
 zigbee-types = { version = "0.1.0", path = "../../zigbee-types" }
 zigbee-mac = { path = "../../zigbee-mac", features = ["esp32c6"] }
 

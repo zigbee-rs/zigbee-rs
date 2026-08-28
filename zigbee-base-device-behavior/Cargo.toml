@@ -18,7 +18,7 @@ embedded-hal-async.workspace = true
 spin.workspace = true
 thiserror.workspace = true
 log.workspace = true
-zigbee = { path = "../zigbee" }
+zigbee-core = { version = "0.1.0-alpha.3", path = "../zigbee-core" }
 zigbee-mac = { version = "0.1.0", path = "../zigbee-mac" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 

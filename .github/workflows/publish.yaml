@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - zigbee
+          - zigbee-core
           - zigbee-cluster-library
 
 

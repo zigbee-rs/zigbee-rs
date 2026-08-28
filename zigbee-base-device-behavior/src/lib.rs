@@ -45,26 +45,26 @@ const TC_LINK_KEY_EXCHANGE_TIMEOUT_MS: u32 = BDBC_TC_LINK_KEY_EXCHANGE_TIMEOUT a
 
 use types::BdbCommissioningStatus;
 use types::CommissioningMode;
-use zigbee::Config;
-use zigbee::LogicalType;
-use zigbee::aps::aib;
-use zigbee::aps::frame::command::Command;
-use zigbee::aps::frame::command::RequestKey;
-use zigbee::aps::frame::command::VerifyKey;
-use zigbee::nwk::nib;
-use zigbee::nwk::nib::CapabilityInformation;
-use zigbee::nwk::nib::Nib;
-use zigbee::nwk::nlme::NetworkError;
-use zigbee::nwk::nlme::Nlme;
-use zigbee::nwk::nlme::management::NlmeJoinConfirm;
-use zigbee::nwk::nlme::management::NlmeJoinRequest;
-use zigbee::nwk::nlme::management::NlmeJoinStatus;
-use zigbee::nwk::nlme::management::NlmeNetworkFormationRequest;
-use zigbee::nwk::nlme::management::NlmePermitJoiningRequest;
-use zigbee::nwk::nlme::management::RejoinNetwork;
-use zigbee::security::primitives::HmacAes128Mmo;
-use zigbee::zdo::ZigbeeDevice;
-use zigbee::zdo::descriptor::NodeDescRsp;
+use zigbee_core::Config;
+use zigbee_core::LogicalType;
+use zigbee_core::aps::aib;
+use zigbee_core::aps::frame::command::Command;
+use zigbee_core::aps::frame::command::RequestKey;
+use zigbee_core::aps::frame::command::VerifyKey;
+use zigbee_core::nwk::nib;
+use zigbee_core::nwk::nib::CapabilityInformation;
+use zigbee_core::nwk::nib::Nib;
+use zigbee_core::nwk::nlme::NetworkError;
+use zigbee_core::nwk::nlme::Nlme;
+use zigbee_core::nwk::nlme::management::NlmeJoinConfirm;
+use zigbee_core::nwk::nlme::management::NlmeJoinRequest;
+use zigbee_core::nwk::nlme::management::NlmeJoinStatus;
+use zigbee_core::nwk::nlme::management::NlmeNetworkFormationRequest;
+use zigbee_core::nwk::nlme::management::NlmePermitJoiningRequest;
+use zigbee_core::nwk::nlme::management::RejoinNetwork;
+use zigbee_core::security::primitives::HmacAes128Mmo;
+use zigbee_core::zdo::ZigbeeDevice;
+use zigbee_core::zdo::descriptor::NodeDescRsp;
 use zigbee_mac::mlme::MacConfig;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::ByteArray;
@@ -381,7 +381,7 @@ impl BaseDeviceBehavior {
 
         // BDB 10.2.5 steps 10-13, 4.4.10.7.4
         let hash = HmacAes128Mmo::hmac(new_key.as_slice(), &[0x03]).map_err(|_| {
-            NetworkError::SecurityError(zigbee::security::SecurityError::Unspecified)
+            NetworkError::SecurityError(zigbee_core::security::SecurityError::Unspecified)
         })?;
         // 4.4.10.7.3
         let device_addr = *nib::get_ref().ieee_address();
@@ -477,7 +477,7 @@ mod tests {
     use core::sync::atomic::AtomicBool;
     use core::sync::atomic::Ordering;
 
-    use zigbee::nwk::nib;
+    use zigbee_core::nwk::nib;
     use zigbee_mac::Address;
     use zigbee_mac::mlme::AssociationResponse;
     use zigbee_mac::mlme::MacError;
@@ -565,13 +565,13 @@ mod tests {
     }
 
     // NIB is a process-wide singleton with a non-cfg(test) `init()` (no
-    // `try_init`/`reset` outside the `zigbee` crate itself), so every case
+    // `try_init`/`reset` outside the `zigbee-core` crate itself), so every case
     // that needs it lives in one #[test] to keep initialization order
     // deterministic across the crate's test binary.
     #[test]
     fn start_initialization_procedure_early_returns() {
         nib::init();
-        zigbee::aps::aib::init();
+        zigbee_core::aps::aib::init();
 
         let device = make_device(LogicalType::EndDevice);
         let bdb = BaseDeviceBehavior::new(Config {

@@ -12,8 +12,8 @@ use core::sync::atomic::Ordering;
 
 use byte::BytesExt;
 use byte::TryRead;
-use zigbee::zdo::ClusterRequest;
-use zigbee::zdo::ClusterRequestHandler;
+use zigbee_core::zdo::ClusterRequest;
+use zigbee_core::zdo::ClusterRequestHandler;
 
 use crate::attributes::AttributeSink;
 use crate::attributes::AttributeSource;
