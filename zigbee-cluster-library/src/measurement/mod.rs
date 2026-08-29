@@ -24,3 +24,6 @@ pub mod occupancy;
 
 // 4.9
 pub mod electrical;
+
+// 4.12
+pub mod wind_speed;
