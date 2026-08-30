@@ -1,6 +1,6 @@
 [package]
 name = "zigbee-mac"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 
 description = "IEEE 802.15.4 MAC sub-layer abstraction in `no-std` for the Zigbee protocol stack, with pluggable radio backends"
 documentation = "https://docs.rs/zigbee-mac"
@@ -29,8 +29,8 @@ embassy-sync = { version = "0.8", optional = true }
 embassy-time = { version = "0.5", optional = true }
 embassy-futures = { version = "0.1", optional = true }
 
-zigbee-macros = { version = "0.1.0-alpha.4", path = "../zigbee-macros" }
-zigbee-types = { version = "0.1.0-alpha.4", path = "../zigbee-types" }
+zigbee-macros = { version = "0.1.0-alpha.5", path = "../zigbee-macros" }
+zigbee-types = { version = "0.1.0-alpha.5", path = "../zigbee-types" }
 
 [features]
 default = []

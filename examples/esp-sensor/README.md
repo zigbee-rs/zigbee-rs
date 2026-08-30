@@ -33,8 +33,8 @@ this repository. To start from it, drop the paths and take the published crates:
 
 ```toml
 [dependencies]
-zigbee = { version = "0.1.0-alpha.4", features = ["storage"] }
-zigbee-types = "0.1.0-alpha.4"
-zigbee-mac = { version = "0.1.0-alpha.4", features = ["esp32c6"] }
-zigbee-cluster-library = "0.1.0-alpha.4"
+zigbee = { version = "0.1.0-alpha.5", features = ["storage"] }
+zigbee-types = "0.1.0-alpha.5"
+zigbee-mac = { version = "0.1.0-alpha.5", features = ["esp32c6"] }
+zigbee-cluster-library = "0.1.0-alpha.5"
 ```

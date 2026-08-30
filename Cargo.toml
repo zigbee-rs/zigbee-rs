@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.5"
 authors = ["Stürmer, Benjamin <benjamin@stuermer.pro>"]
 repository = "https://github.com/zigbee-rs"
 readme = "README.md"
@@ -21,12 +21,12 @@ exclude = [
 resolver = "3"
 
 [workspace.dependencies]
-zigbee-core = { version = "0.1.0-alpha.4", path = "zigbee-core" }
-zigbee-types = { version = "0.1.0-alpha.4", path = "zigbee-types" }
-zigbee-macros = { version = "0.1.0-alpha.4", path = "zigbee-macros" }
-zigbee-mac = { version = "0.1.0-alpha.4", path = "zigbee-mac" }
-zigbee-cluster-library = { version = "0.1.0-alpha.4", path = "zigbee-cluster-library" }
-zigbee-base-device-behavior = { version = "0.1.0-alpha.4", path = "zigbee-base-device-behavior" }
+zigbee-core = { version = "0.1.0-alpha.5", path = "zigbee-core" }
+zigbee-types = { version = "0.1.0-alpha.5", path = "zigbee-types" }
+zigbee-macros = { version = "0.1.0-alpha.5", path = "zigbee-macros" }
+zigbee-mac = { version = "0.1.0-alpha.5", path = "zigbee-mac" }
+zigbee-cluster-library = { version = "0.1.0-alpha.5", path = "zigbee-cluster-library" }
+zigbee-base-device-behavior = { version = "0.1.0-alpha.5", path = "zigbee-base-device-behavior" }
 
 aes = "0.8.4"
 atomic-waker = "1.1"
