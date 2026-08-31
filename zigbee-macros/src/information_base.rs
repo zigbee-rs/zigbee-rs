@@ -5,12 +5,15 @@ macro_rules! construct_ib {
     (@default) => { ::core::default::Default::default() };
     (
         $(#[doc = $ib_doc:literal])*
+        #[ids = $ib_id:ident]
+        #[fields = $ib_fields:ident]
         $ib_vis:vis struct $ib_name:ident {
             $(
                 $(#[doc = $doc:literal])*
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
                 $(#[storage_key = $skey:literal])?
+                #[setter = $update:ident]
                 $field:ident: $field_ty:path $(= $default:expr)?,
             )+
         }
@@ -75,11 +78,11 @@ macro_rules! construct_ib {
         #[repr(usize)]
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-        $ib_vis enum ${ concat($ib_name, Id) } {
+        $ib_vis enum $ib_id {
             $($field),+
         }
 
-        impl ${ concat($ib_name, Id) } {
+        impl $ib_id {
             // upper bound of the `byte`-encoded size per field: encodings are
             // packed and never larger than the in-memory representation
             const ENCODED_SIZE_LUT: &[usize] = &[
@@ -100,7 +103,7 @@ macro_rules! construct_ib {
             ];
 
             /// Upper bound of the encoded size over all persisted fields.
-            pub const MAX_FIELD_SIZE: usize = ${ concat($ib_name, Id) }::max_field_size();
+            pub const MAX_FIELD_SIZE: usize = $ib_id::max_field_size();
 
             /// All field ids in declaration order.
             pub const VARIANTS: &[Self] = &[$(Self::$field),+];
@@ -155,19 +158,19 @@ macro_rules! construct_ib {
 
         const _: () = {
             // dirty mask is a u64 bitmask indexed by field position
-            assert!(${ concat($ib_name, Id) }::STORAGE_KEY_LUT.len() <= 64);
-            assert!(${ concat($ib_name, Id) }::storage_keys_unique());
+            assert!($ib_id::STORAGE_KEY_LUT.len() <= 64);
+            assert!($ib_id::storage_keys_unique());
         };
 
         // plain in-memory representation with one lock per field so readers
         // never contend with each other; serialization only happens when a
         // field is exported to / imported from persistent storage
         #[allow(non_camel_case_types)]
-        struct ${ concat($ib_name, Fields) } {
+        struct $ib_fields {
             $($field: ::spin::RwLock<$field_ty>,)+
         }
 
-        impl ${ concat($ib_name, Fields) } {
+        impl $ib_fields {
             fn defaults() -> Self {
                 Self {
                     $($field: ::spin::RwLock::new($crate::construct_ib!(@default $($default)?)),)+
@@ -177,7 +180,7 @@ macro_rules! construct_ib {
 
         $(#[doc = $ib_doc])*
         $ib_vis struct $ib_name {
-            fields: ${ concat($ib_name, Fields) },
+            fields: $ib_fields,
             // bitmask of persisted fields modified since the last take_dirty
             dirty: ::spin::Mutex<u64>,
         }
@@ -185,7 +188,7 @@ macro_rules! construct_ib {
         impl $ib_name {
             pub fn new() -> Self {
                 Self {
-                    fields: ${ concat($ib_name, Fields) }::defaults(),
+                    fields: $ib_fields::defaults(),
                     dirty: ::spin::Mutex::new(0),
                 }
             }
@@ -198,7 +201,7 @@ macro_rules! construct_ib {
             }
 
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
-            pub fn mark_dirty(&self, id: ${ concat($ib_name, Id) }) {
+            pub fn mark_dirty(&self, id: $ib_id) {
                 *self.dirty.lock() |= 1 << (id as u64);
                 DIRTY_SIGNAL.signal();
             }
@@ -207,13 +210,13 @@ macro_rules! construct_ib {
             ///
             /// Returns `None` for RAM-only fields (no storage key) or if `buf`
             /// is too small.
-            pub fn export_field(&self, id: ${ concat($ib_name, Id) }, buf: &mut [u8]) -> Option<usize> {
+            pub fn export_field(&self, id: $ib_id, buf: &mut [u8]) -> Option<usize> {
                 use byte::BytesExt;
                 use byte::TryWrite;
                 id.storage_key()?;
                 match id {
                     $(
-                        ${ concat($ib_name, Id) }::$field => {
+                        $ib_id::$field => {
                             let value: $field_ty =
                                 ::core::clone::Clone::clone(&*self.fields.$field.read());
                             let _cx = ::byte::LE;
@@ -232,12 +235,12 @@ macro_rules! construct_ib {
             ///
             /// Returns `false` if the data does not parse as the field type,
             /// leaving the current value untouched.
-            pub fn import_field(&self, id: ${ concat($ib_name, Id) }, data: &[u8]) -> bool {
+            pub fn import_field(&self, id: $ib_id, data: &[u8]) -> bool {
                 use byte::BytesExt;
                 use byte::TryRead;
                 match id {
                     $(
-                        ${ concat($ib_name, Id) }::$field => {
+                        $ib_id::$field => {
                             let _cx = ::byte::LE;
                             $(
                                 let _cx = $ctx_hdr;
@@ -262,11 +265,11 @@ macro_rules! construct_ib {
                 }
 
                 /// Updates the field in place under its write lock.
-                pub fn ${ concat(update_, $field) }(&self, f: impl FnOnce(&mut $field_ty)) {
+                pub fn $update(&self, f: impl FnOnce(&mut $field_ty)) {
                     f(&mut *self.fields.$field.write());
 
-                    if ${ concat($ib_name, Id) }::$field.storage_key().is_some() {
-                        *self.dirty.lock() |= 1 << (${ concat($ib_name, Id) }::$field as u64);
+                    if $ib_id::$field.storage_key().is_some() {
+                        *self.dirty.lock() |= 1 << ($ib_id::$field as u64);
                         DIRTY_SIGNAL.signal();
                     }
                 }
