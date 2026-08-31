@@ -10,3 +10,4 @@ Cargo.lock
 # Debug and profiling cruft
 *.profraw
 *profdata
+/lcov.info
