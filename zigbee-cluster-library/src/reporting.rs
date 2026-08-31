@@ -78,7 +78,8 @@ mod tests {
         let n = ConfigureReportingServer
             .handle(&request(0x0402, &asdu), &mut out)
             .expect("configure reporting handled");
-        // header (0x18, seq 0x2b, ConfigureReportingResponse 0x07) + status SUCCESS
+        // header (0x18, seq 0x2b, ConfigureReportingResponse 0x07) + status
+        // SUCCESS
         assert_eq!(&out[..n], &[0x18, 0x2b, 0x07, 0x00]);
     }
 

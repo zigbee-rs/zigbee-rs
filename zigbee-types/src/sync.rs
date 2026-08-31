@@ -103,7 +103,8 @@ impl<T> Signal<T> {
                 return Poll::Ready(value);
             }
             self.waker.register(cx.waker());
-            // re-check to close the race with a signal between check and register
+            // re-check to close the race with a signal between check and
+            // register
             match self.try_take() {
                 Some(value) => Poll::Ready(value),
                 None => Poll::Pending,
@@ -152,7 +153,8 @@ impl Event {
                 return Poll::Ready(());
             }
             self.waker.register(cx.waker());
-            // re-check to close the race with a signal between check and register
+            // re-check to close the race with a signal between check and
+            // register
             if self.set.swap(false, Ordering::AcqRel) {
                 return Poll::Ready(());
             }

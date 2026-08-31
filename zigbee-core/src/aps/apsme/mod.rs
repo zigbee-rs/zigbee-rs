@@ -1232,7 +1232,8 @@ mod tests {
         );
         assert_eq!(*nib.active_key_seq_number(), 4);
 
-        // the next rotation overwrites the now-alternate key, not the active one
+        // the next rotation overwrites the now-alternate key, not the active
+        // one
         apsme.handle_aps_command(&aib, &nib, &network_key(5, [0xbb; 16], TC_IEEE), true);
         let set = nib.security_material_set();
         assert_eq!(set.len(), 2);
