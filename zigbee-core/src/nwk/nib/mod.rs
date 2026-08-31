@@ -126,111 +126,156 @@ construct_ib! {
     #[fields = NibFields]
     pub struct Nib {
         /// Sequence number
-        sequence_number / update_sequence_number: u8, // random value, read only
+        #[setter = update_sequence_number]
+        sequence_number: u8, // random value, read only
         #[storage_key = 9]
-        passive_ack_timeout / update_passive_ack_timeout: u32, // stack profile
+        #[setter = update_passive_ack_timeout]
+        passive_ack_timeout: u32, // stack profile
         #[storage_key = 10]
-        max_broadcast_retries / update_max_broadcast_retries: u8 = 0x03,
+        #[setter = update_max_broadcast_retries]
+        max_broadcast_retries: u8 = 0x03,
         #[storage_key = 11]
-        max_children / update_max_children: u8, // stack profile
+        #[setter = update_max_children]
+        max_children: u8, // stack profile
         #[storage_key = 12]
-        max_depth / update_max_depth: u8, // stack profile, read only
+        #[setter = update_max_depth]
+        max_depth: u8, // stack profile, read only
         #[storage_key = 13]
-        max_routers / update_max_routers: u8, // stack profile
+        #[setter = update_max_routers]
+        max_routers: u8, // stack profile
         #[storage_key = 8]
-        neighbor_table / update_neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
+        #[setter = update_neighbor_table]
+        neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
         #[storage_key = 14]
-        network_broadcast_delivery_time / update_network_broadcast_delivery_time: u32, // stack profile
+        #[setter = update_network_broadcast_delivery_time]
+        network_broadcast_delivery_time: u32, // stack profile
         #[storage_key = 15]
-        report_constant_cost / update_report_constant_cost: u8 = 0x00, // 0x00 - 0x01
-        route_table / update_route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
+        #[setter = update_report_constant_cost]
+        report_constant_cost: u8 = 0x00, // 0x00 - 0x01
+        #[setter = update_route_table]
+        route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 16]
-        sym_link / update_sym_link: bool = false, // bool
+        #[setter = update_sym_link]
+        sym_link: bool = false, // bool
         #[storage_key = 7]
-        capability_information / update_capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
+        #[setter = update_capability_information]
+        capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
         #[storage_key = 17]
-        addr_alloc / update_addr_alloc: u8 = 0x0, // 0x00 - 0x02
+        #[setter = update_addr_alloc]
+        addr_alloc: u8 = 0x0, // 0x00 - 0x02
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 18]
-        use_tree_routing / update_use_tree_routing: bool = true,
+        #[setter = update_use_tree_routing]
+        use_tree_routing: bool = true,
         #[storage_key = 19]
-        manager_addr / update_manager_addr: u16 = 0x0000, // <= 0xfff7
+        #[setter = update_manager_addr]
+        manager_addr: u16 = 0x0000, // <= 0xfff7
         #[storage_key = 20]
-        max_source_route / update_max_source_route: u8 = 0x0c,
+        #[setter = update_max_source_route]
+        max_source_route: u8 = 0x0c,
         #[storage_key = 4]
-        update_id / update_update_id: u8 = 0x00,
+        #[setter = update_update_id]
+        update_id: u8 = 0x00,
         #[storage_key = 21]
-        transaction_persistence_time / update_transaction_persistence_time: u16 = 0x01f4,
+        #[setter = update_transaction_persistence_time]
+        transaction_persistence_time: u16 = 0x01f4,
         #[storage_key = 1]
-        network_address / update_network_address: u16 = 0xffff, //  <= 0xfff7
+        #[setter = update_network_address]
+        network_address: u16 = 0xffff, //  <= 0xfff7
         #[storage_key = 22]
-        stack_profile / update_stack_profile: u8, // <= 0x0f
-        broadcast_transaction_table / update_broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
+        #[setter = update_stack_profile]
+        stack_profile: u8, // <= 0x0f
+        #[setter = update_broadcast_transaction_table]
+        broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
         #[storage_key = 23]
-        group_idtable / update_group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
+        #[setter = update_group_idtable]
+        group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
         #[storage_key = 3]
-        extended_panid / update_extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
+        #[setter = update_extended_panid]
+        extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 24]
-        use_multicast / update_use_multicast: bool = true,
-        route_record_table / update_route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
+        #[setter = update_use_multicast]
+        use_multicast: bool = true,
+        #[setter = update_route_record_table]
+        route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 25]
-        is_concentrator / update_is_concentrator: bool = false,
+        #[setter = update_is_concentrator]
+        is_concentrator: bool = false,
         #[storage_key = 26]
-        concentrator_radius / update_concentrator_radius: u8 = 0x00,
+        #[setter = update_concentrator_radius]
+        concentrator_radius: u8 = 0x00,
         #[storage_key = 27]
-        concentrator_discovery_time / update_concentrator_discovery_time: u8 = 0x00,
+        #[setter = update_concentrator_discovery_time]
+        concentrator_discovery_time: u8 = 0x00,
         // nib security attributes
         #[storage_key = 28]
-        security_level / update_security_level: SecurityLevel = SecurityLevel::EncMic32,
+        #[setter = update_security_level]
+        security_level: SecurityLevel = SecurityLevel::EncMic32,
         #[storage_key = 6]
-        security_material_set / update_security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
+        #[setter = update_security_material_set]
+        security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
         #[storage_key = 5]
-        active_key_seq_number / update_active_key_seq_number: u8 = 0x00,
+        #[setter = update_active_key_seq_number]
+        active_key_seq_number: u8 = 0x00,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 29]
-        all_fresh / update_all_fresh: bool = true,
+        #[setter = update_all_fresh]
+        all_fresh: bool = true,
 
         #[storage_key = 30]
-        link_status_period / update_link_status_period: u8 = 0x0f,
+        #[setter = update_link_status_period]
+        link_status_period: u8 = 0x0f,
         #[storage_key = 31]
-        router_age_limit / update_router_age_limit: u8 = 0x03,
+        #[setter = update_router_age_limit]
+        router_age_limit: u8 = 0x03,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 32]
-        unique_addr / update_unique_addr: bool = true,
+        #[setter = update_unique_addr]
+        unique_addr: bool = true,
         #[storage_key = 33]
-        address_map / update_address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
+        #[setter = update_address_map]
+        address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 34]
-        time_stamp / update_time_stamp: bool = false,
+        #[setter = update_time_stamp]
+        time_stamp: bool = false,
         #[storage_key = 2]
-        panid / update_panid: u16 = 0xffff,
-        tx_total / update_tx_total: u16 = 0x0000,
+        #[setter = update_panid]
+        panid: u16 = 0xffff,
+        #[setter = update_tx_total]
+        tx_total: u16 = 0x0000,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 35]
-        leave_request_allowed / update_leave_request_allowed: bool = true,
+        #[setter = update_leave_request_allowed]
+        leave_request_allowed: bool = true,
         #[storage_key = 36]
-        parent_information / update_parent_information: u8 = 0x00,
+        #[setter = update_parent_information]
+        parent_information: u8 = 0x00,
         #[storage_key = 37]
-        end_device_timeout_default / update_end_device_timeout_default: u8 = 0x08,
+        #[setter = update_end_device_timeout_default]
+        end_device_timeout_default: u8 = 0x08,
         // negotiated timeout enumeration (3.6.10.2); 0xff = not negotiated
         #[storage_key = 39]
-        end_device_timeout / update_end_device_timeout: u8 = 0xff,
+        #[setter = update_end_device_timeout]
+        end_device_timeout: u8 = 0xff,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 38]
-        leave_request_without_rejoin_allowed / update_leave_request_without_rejoin_allowed: bool = true,
-        ieee_address / update_ieee_address: IeeeAddress, // read only
+        #[setter = update_leave_request_without_rejoin_allowed]
+        leave_request_without_rejoin_allowed: bool = true,
+        #[setter = update_ieee_address]
+        ieee_address: IeeeAddress, // read only
         // TODO: mac_interface_table (StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>) not yet implemented
     }
 }

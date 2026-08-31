@@ -13,7 +13,8 @@ macro_rules! construct_ib {
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
                 $(#[storage_key = $skey:literal])?
-                $field:ident / $update:ident: $field_ty:path $(= $default:expr)?,
+                #[setter = $update:ident]
+                $field:ident: $field_ty:path $(= $default:expr)?,
             )+
         }
     ) => {
