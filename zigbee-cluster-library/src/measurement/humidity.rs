@@ -5,18 +5,15 @@
 //! Provides an interface to relative humidity measurement functionality,
 //! including configuration and provision of notifications of relative humidity
 //! measurements.
+//!
+//! The specification defines this cluster as one of three sharing the Water
+//! Content Measurement attribute set, so the definitions live in
+//! [`super::water_content`] and are re-exported here.
+
+pub use super::water_content::FULL_SCALE;
+pub use super::water_content::UNKNOWN;
+pub use super::water_content::WaterContent;
+pub use super::water_content::attribute;
 
 /// Cluster identifier (ZCL 4.7).
-pub const CLUSTER_ID: u16 = 0x0405;
-
-/// Attribute identifiers (ZCL 4.7.2.2.1).
-pub mod attribute {
-    /// `MeasuredValue` (`Uint16`, hundredths of a percent).
-    pub const MEASURED_VALUE: u16 = 0x0000;
-    /// `MinMeasuredValue` (`Uint16`).
-    pub const MIN_MEASURED_VALUE: u16 = 0x0001;
-    /// `MaxMeasuredValue` (`Uint16`).
-    pub const MAX_MEASURED_VALUE: u16 = 0x0002;
-    /// `Tolerance` (`Uint16`).
-    pub const TOLERANCE: u16 = 0x0003;
-}
+pub const CLUSTER_ID: u16 = super::water_content::RELATIVE_HUMIDITY_CLUSTER_ID;

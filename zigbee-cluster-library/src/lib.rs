@@ -41,10 +41,12 @@ macro_rules! bad_input {
     };
 }
 
+pub mod analog_input;
 pub mod attributes;
 pub mod basic;
 pub mod common;
 pub mod identify;
+pub mod power_configuration;
 pub mod profile;
 pub mod types;
 

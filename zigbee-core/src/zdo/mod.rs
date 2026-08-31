@@ -571,7 +571,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     // close the receive loop's join gate on NLME-LEAVE.indication with a NULL
-    // device address (3.2.2.19); parks the loop until re-commissioned or rejoined
+    // device address (3.2.2.19); parks the loop until re-commissioned or
+    // rejoined
     fn close_gate_on_leave_indication(&self) {
         let Some(indication) = self.nlme.take_leave_indication() else {
             return;

@@ -55,7 +55,8 @@ impl<'a> TryRead<'a, SecurityContext<'a>> for Frame<'a> {
     #[allow(clippy::ptr_cast_constness, clippy::as_ptr_cast_mut)]
     fn try_read(bytes: &'a [u8], cx: SecurityContext) -> byte::Result<(Self, usize)> {
         let len = bytes.len();
-        // SAFETY: the slice is not used afterwards, so casting away constness is sound
+        // SAFETY: the slice is not used afterwards, so casting away constness
+        // is sound
         let bytes: &'a mut [u8] =
             unsafe { slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, len) };
         let frame = cx.decrypt_nwk_frame_in_place(bytes)?;
@@ -79,7 +80,8 @@ pub struct DataFrame<'a> {
 }
 
 impl<'a> DataFrame<'a> {
-    // SAFETY: caller must ensure the buffer referenced by `self` is mutable locally
+    // SAFETY: caller must ensure the buffer referenced by `self` is mutable
+    // locally
     pub(crate) unsafe fn payload_as_mut(&mut self) -> &'a mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.payload.as_ptr().cast_mut(), self.payload.len()) }
     }

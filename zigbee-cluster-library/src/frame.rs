@@ -226,8 +226,8 @@ impl<'a> TryRead<'a, ()> for Status {
 impl TryWrite<()> for Status {
     fn try_write(self, bytes: &mut [u8], _: ()) -> byte::Result<usize> {
         let offset = &mut 0;
-        // errata: deprecated variants are substituted for their replacements on the
-        // wire
+        // errata: deprecated variants are substituted for their replacements on
+        // the wire
         let raw: u8 = match self {
             Self::Unknown => return Err(bad_input!("unknown ZCL status")),
             Self::UnsupGeneralCommand
@@ -722,8 +722,8 @@ mod tests {
 
     #[test]
     fn write_attributes_response_failure_records_roundtrip() {
-        // some writes failed: only the failed records are present, each with attribute
-        // id
+        // some writes failed: only the failed records are present, each with
+        // attribute id
         let input: &[u8] = &[
             0x18, // frame control: global, server to client, default response disabled
             0x14, // sequence number

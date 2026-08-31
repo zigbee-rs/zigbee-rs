@@ -128,8 +128,8 @@ impl<'a> SecurityContext<'a> {
         let _mic_len = sec_level.mic_length();
 
         let key_sequence_number = *self.nib.active_key_seq_number();
-        // read the key + counter and increment the counter (4.3.1.1) in one atomic
-        // update
+        // read the key + counter and increment the counter (4.3.1.1) in one
+        // atomic update
         let mut security_material = None;
         self.nib.update_security_material_set(|set| {
             if let Some(material) = set
@@ -184,16 +184,17 @@ impl<'a> SecurityContext<'a> {
         &self,
         frame_buffer: &'b mut [u8],
     ) -> Result<NwkFrame<'b>, SecurityError> {
-        // 4.3.1.2: overwrite the security level with the value from the NIB (default
-        // 0x05)
+        // 4.3.1.2: overwrite the security level with the value from the NIB
+        // (default 0x05)
         let sec_level = *self.nib.security_level();
 
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
 
         let (_, nwk_hdr_len) = NwkHeader::try_read(frame_buffer, ())?;
-        // SAFETY: the header buffer is not mutated, so dropping the &mut here to
-        // satisfy the borrow checker when returning NwkFrame<'_> is sound
+        // SAFETY: the header buffer is not mutated, so dropping the &mut here
+        // to satisfy the borrow checker when returning NwkFrame<'_> is
+        // sound
         let hdr_buf = unsafe { slice::from_raw_parts(frame_buffer.as_ptr(), nwk_hdr_len) };
         let (nwk_hdr, _) = NwkHeader::try_read(hdr_buf, ())?;
         if !nwk_hdr.frame_control.security_flag() {
@@ -215,7 +216,8 @@ impl<'a> SecurityContext<'a> {
             return Err(SecurityError::InvalidData);
         };
 
-        // select the key from NIB; guard scoped so the write lock below cannot deadlock
+        // select the key from NIB; guard scoped so the write lock below cannot
+        // deadlock
         let key = {
             let sec_material_set = self.nib.security_material_set();
             let sec_material = sec_material_set
@@ -243,7 +245,8 @@ impl<'a> SecurityContext<'a> {
         };
         let key = key.as_slice();
 
-        // write back the NIB security level into the aux header; required as ccm input
+        // write back the NIB security level into the aux header; required as
+        // ccm input
         aux_hdr.security_control.set_security_level(sec_level);
         let mut offset = nwk_hdr_len;
         frame_buffer.write_with(&mut offset, aux_hdr, ())?;
@@ -274,8 +277,8 @@ impl<'a> SecurityContext<'a> {
             self.nib.update_active_key_seq_number(|value| *value = ksn);
         }
 
-        // anti-replay tracking: record the now-authenticated counter as the most
-        // recent accepted value for this sender
+        // anti-replay tracking: record the now-authenticated counter as the
+        // most recent accepted value for this sender
         let mut record_result = Ok(());
         self.nib.update_security_material_set(|set| {
             if let Some(material) = set.iter_mut().find(|k| {
@@ -455,15 +458,16 @@ impl<'a> SecurityContext<'a> {
         &self,
         frame_buffer: &'b mut [u8],
     ) -> Result<ApsFrame<'b>, SecurityError> {
-        // 4.4.1.2: overwrite the security level with the value from the NIB (default
-        // 0x05)
+        // 4.4.1.2: overwrite the security level with the value from the NIB
+        // (default 0x05)
         let sec_level = *self.nib.security_level();
         let mic_length = sec_level.mic_length();
         byte::check_len(frame_buffer, mic_length)?;
 
         let (_, aps_hdr_len) = ApsHeader::try_read(frame_buffer, ())?;
-        // SAFETY: the header buffer is not mutated, so dropping the &mut here to
-        // satisfy the borrow checker when returning ApsFrame<'_> is sound
+        // SAFETY: the header buffer is not mutated, so dropping the &mut here
+        // to satisfy the borrow checker when returning ApsFrame<'_> is
+        // sound
         let hdr_buf = unsafe { slice::from_raw_parts(frame_buffer.as_ptr(), aps_hdr_len) };
         let (aps_hdr, _) = ApsHeader::try_read(hdr_buf, ())?;
 
@@ -482,7 +486,8 @@ impl<'a> SecurityContext<'a> {
         // TODO: spec indexes by the APS frame source address, but the APS frame
         // has no source field, only the security header
         // known_device gates the anti-replay check below so a legitimate first
-        // frame (counter may be 0) is not rejected before any counter is on record
+        // frame (counter may be 0) is not rejected before any counter is on
+        // record
         let (known_device, link_key, last_incoming_counter) = {
             let key_set = self.aib.device_key_pair_set();
             key_set
@@ -509,12 +514,14 @@ impl<'a> SecurityContext<'a> {
         };
 
         // anti-replay applies to every link-key type, including the global
-        // trust-center key, once a frame has previously been accepted from this device
+        // trust-center key, once a frame has previously been accepted from this
+        // device
         if known_device && aux_hdr.frame_counter <= last_incoming_counter {
             return Err(SecurityError::Unspecified);
         }
 
-        // write back the NIB security level into the aux header; required as ccm input
+        // write back the NIB security level into the aux header; required as
+        // ccm input
         aux_hdr.security_control.set_security_level(sec_level);
         let mut offset = aps_hdr_len;
         frame_buffer.write_with(&mut offset, aux_hdr, ())?;
@@ -535,8 +542,9 @@ impl<'a> SecurityContext<'a> {
             .decrypt_in_place_detached(&nonce, aad, enc_data, tag)
             .map_err(SecurityError::CcmError)?;
 
-        // anti-replay tracking: record the now-authenticated counter as the most
-        // recent accepted value for this device, inserting the entry if new
+        // anti-replay tracking: record the now-authenticated counter as the
+        // most recent accepted value for this device, inserting the
+        // entry if new
         self.aib.update_device_key_pair_set(|key_set| {
             let key_config = key_set.find_or_insert_with_mut(
                 |k| k.device_address == source_address,

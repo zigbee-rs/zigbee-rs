@@ -118,9 +118,10 @@ impl EspMlmeInner<'_> {
 
     async fn next_frame(&mut self) -> Result<ReceivedFrame, MacError> {
         loop {
-            // wait for a fully-received frame before draining: draining re-issues
-            // RxStart and aborts a frame still on the air (dropped a fast ~2ms
-            // indirect response). signal is level-held, so drain until empty then reset
+            // wait for a fully-received frame before draining: draining
+            // re-issues RxStart and aborts a frame still on the air
+            // (dropped a fast ~2ms indirect response). signal is
+            // level-held, so drain until empty then reset
             self.driver.wait_rx_available().await;
             if let Some(result) = self.poll_frame() {
                 return result;
@@ -280,8 +281,9 @@ impl EspMlmeInner<'_> {
     ) -> Result<Option<AssociationResponse>, MacError> {
         // wait ~4ms before each drain (> a frame's ~0.8ms air time): draining
         // mid-reception re-issues RxStart and aborts the frame. time-based, not
-        // signal-based: the RX signal may not fire even when the frame is queued.
-        // no logging in the loop — the UART critical section stalls the RX ISR
+        // signal-based: the RX signal may not fire even when the frame is
+        // queued. no logging in the loop — the UART critical section
+        // stalls the RX ISR
         let timeout = Timer::after_micros(timeout_us);
         let receive = async {
             loop {
@@ -461,9 +463,10 @@ impl EspMlmeInner<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        // filter on our extended address: the association response is an indirect
-        // tx addressed to it (7.5.6.4). auto_ack_rx must stay on to ack it —
-        // promiscuous suppresses the ack and floods the RX queue with broadcasts
+        // filter on our extended address: the association response is an
+        // indirect tx addressed to it (7.5.6.4). auto_ack_rx must stay
+        // on to ack it — promiscuous suppresses the ack and floods the
+        // RX queue with broadcasts
         self.driver.update_driver_config(|config| {
             *config = Default::default();
             config.channel = channel;
@@ -477,14 +480,16 @@ impl EspMlmeInner<'_> {
         self.driver.start_receive();
 
         let ext_addr = self.driver.ieee_address();
-        // 7.3.1.1: source PAN is the broadcast PAN (0xffff), source is the ext addr
+        // 7.3.1.1: source PAN is the broadcast PAN (0xffff), source is the ext
+        // addr
         let src = Address::Extended(PanId::broadcast(), ext_addr);
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
 
         // retry the full handshake (7.5.3.1): a lost/unacked request leaves the
         // parent with nothing to buffer, so re-send each round. within a round
         // listen first (rx-on-when-idle parent replies directly) then poll for
-        // indirect delivery. never flush — a direct response may already be queued
+        // indirect delivery. never flush — a direct response may already be
+        // queued
         let mut response = None;
         'association: for _ in 0..ASSOCIATE_REQUEST_RETRIES {
             let frame = self.association_request_frame(dest, Some(src), capabilities)?;
@@ -514,8 +519,9 @@ impl EspMlmeInner<'_> {
                     Err(e) => return Err(e),
                 }
                 // arm RX for the indirect response (~2-3ms after the poll ack);
-                // start_receive is a no-op if already receiving. no log here — the
-                // UART critical section stalls the RX ISR and a TI parent replies once
+                // start_receive is a no-op if already receiving. no log here —
+                // the UART critical section stalls the RX ISR
+                // and a TI parent replies once
                 self.driver.start_receive();
                 if let Some(r) = self.recv_association_response(timeout_us).await? {
                     response = Some(r);
@@ -709,8 +715,9 @@ impl Mlme for EspMlme<'_> {
 
     async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
         loop {
-            // drain under a brief lock, then idle-wait lock-free so a concurrent
-            // transmit can acquire the radio while we wait for the next frame
+            // drain under a brief lock, then idle-wait lock-free so a
+            // concurrent transmit can acquire the radio while we
+            // wait for the next frame
             {
                 let mut inner = self.inner.lock().await;
                 if let Some(received) = inner.try_drain(buf)? {

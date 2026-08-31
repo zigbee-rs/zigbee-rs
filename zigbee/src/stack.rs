@@ -260,8 +260,8 @@ where
         let device = &self.device;
         let handler = &self.handler;
         let cfg = self.config.descriptors();
-        // a restored network address means the device resumed on a network without
-        // a fresh key exchange — release the gate immediately
+        // a restored network address means the device resumed on a network
+        // without a fresh key exchange — release the gate immediately
         if *nib::get_ref().network_address() != ShortAddress::default().0 {
             device.mark_rejoined();
         }
@@ -382,8 +382,8 @@ where
             return Ok(());
         };
 
-        // 3.6.10.6: an unanswered keepalive drains the local timeout, so a single
-        // missed one does not yet count as a lost parent
+        // 3.6.10.6: an unanswered keepalive drains the local timeout, so a
+        // single missed one does not yet count as a lost parent
         log::warn!("[APP] keepalive failed: {e:?}");
         let interval = nlme.keepalive_interval_ms().unwrap_or(0);
         if nlme.tick_parent_timeout(interval) {

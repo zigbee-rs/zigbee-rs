@@ -1384,7 +1384,8 @@ where
                             // set the relationship field to parent and clear
                             // optional Table 3-64 fields on all entries, which
                             // should not be retained after joining
-                            // TODO: retain only entries belonging to the joined network
+                            // TODO: retain only entries belonging to the joined
+                            // network
                             self.nib().update_neighbor_table(|table| {
                                 table[candidate_idx].relationship = relationship::PARENT;
                                 for neighbor in table.iter_mut() {
@@ -1854,8 +1855,9 @@ mod tests {
         nib::reset();
         // the security context used by frame builders also needs the AIB
         crate::aps::aib::try_init();
-        // reset() only rewrites fields with a declared default; StorageVec fields
-        // (no default) persist across tests in the global NIB, so clear explicitly
+        // reset() only rewrites fields with a declared default; StorageVec
+        // fields (no default) persist across tests in the global NIB,
+        // so clear explicitly
         nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
         mac.expect_ieee_address()
             .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
