@@ -14,40 +14,42 @@ const MAX_APS_DEVICE_KEY_PAIR_SET: usize = 2; // TODO
 
 construct_ib! {
     /// 2.2.7.2 - AIB (APS Information Base Attributes)
+    #[ids = AibId]
+    #[fields = AibFields]
     pub struct Aib {
         #[storage_key = 4]
-        binding_table: StorageVec<Binding, MAX_APS_BINDING_TABLE>,
+        binding_table / update_binding_table: StorageVec<Binding, MAX_APS_BINDING_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 6]
-        designated_coordinator: bool = false,
+        designated_coordinator / update_designated_coordinator: bool = false,
         #[storage_key = 7]
-        channel_mask_list: StorageVec<IeeeAddress, MAX_APS_CHANNEL_MASK_LIST>,
+        channel_mask_list / update_channel_mask_list: StorageVec<IeeeAddress, MAX_APS_CHANNEL_MASK_LIST>,
         #[storage_key = 3]
-        use_extended_pan_id: IeeeAddress,
+        use_extended_pan_id / update_use_extended_pan_id: IeeeAddress,
         #[storage_key = 5]
-        group_table: StorageVec<ApsGroup, MAX_APS_GROUP_TABLE>,
+        group_table / update_group_table: StorageVec<ApsGroup, MAX_APS_GROUP_TABLE>,
         #[storage_key = 8]
-        non_member_radius: u8 = 0x02,
+        non_member_radius / update_non_member_radius: u8 = 0x02,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 9]
-        use_insecure_join: bool = false,
+        use_insecure_join / update_use_insecure_join: bool = false,
         #[storage_key = 10]
-        interframe_delay: u8,
-        last_channel_energy: u8 = 0x00,
-        last_channel_failure_rate: u8 = 0x00,
-        channel_timer: u8 = 0x00,
+        interframe_delay / update_interframe_delay: u8,
+        last_channel_energy / update_last_channel_energy: u8 = 0x00,
+        last_channel_failure_rate / update_last_channel_failure_rate: u8 = 0x00,
+        channel_timer / update_channel_timer: u8 = 0x00,
         #[storage_key = 11]
-        max_window_size: StorageVec<ApsWindowSize, MAX_APS_MAX_WINDOW_SIZE>,
-        parent_announce_timer: u8 = 0x00,
+        max_window_size / update_max_window_size: StorageVec<ApsWindowSize, MAX_APS_MAX_WINDOW_SIZE>,
+        parent_announce_timer / update_parent_announce_timer: u8 = 0x00,
         // security attributes
         #[storage_key = 2]
-        device_key_pair_set: StorageVec<DeviceKeyPairDescriptor, MAX_APS_DEVICE_KEY_PAIR_SET>,
+        device_key_pair_set / update_device_key_pair_set: StorageVec<DeviceKeyPairDescriptor, MAX_APS_DEVICE_KEY_PAIR_SET>,
         #[storage_key = 1]
-        trust_center_address: IeeeAddress = IeeeAddress(0xffff_ffff_ffff_ffff),
+        trust_center_address / update_trust_center_address: IeeeAddress = IeeeAddress(0xffff_ffff_ffff_ffff),
         #[storage_key = 12]
-        security_timeout_period: u16 = 0x00,
+        security_timeout_period / update_security_timeout_period: u16 = 0x00,
         // TODO: trust_center_policies attribute
     }
 }

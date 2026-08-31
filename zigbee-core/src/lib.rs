@@ -49,7 +49,6 @@
     clippy::unused_self,
     async_fn_in_trait
 )]
-#![feature(macro_metavar_expr_concat)]
 
 #[cfg(test)]
 extern crate std;
