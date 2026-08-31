@@ -122,112 +122,159 @@ construct_ib! {
     /// Network Information Base.
     ///
     /// See Section 3.5.2.
+    #[ids = NibId]
+    #[fields = NibFields]
     pub struct Nib {
         /// Sequence number
+        #[setter = update_sequence_number]
         sequence_number: u8, // random value, read only
         #[storage_key = 9]
+        #[setter = update_passive_ack_timeout]
         passive_ack_timeout: u32, // stack profile
         #[storage_key = 10]
+        #[setter = update_max_broadcast_retries]
         max_broadcast_retries: u8 = 0x03,
         #[storage_key = 11]
+        #[setter = update_max_children]
         max_children: u8, // stack profile
         #[storage_key = 12]
+        #[setter = update_max_depth]
         max_depth: u8, // stack profile, read only
         #[storage_key = 13]
+        #[setter = update_max_routers]
         max_routers: u8, // stack profile
         #[storage_key = 8]
+        #[setter = update_neighbor_table]
         neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
         #[storage_key = 14]
+        #[setter = update_network_broadcast_delivery_time]
         network_broadcast_delivery_time: u32, // stack profile
         #[storage_key = 15]
+        #[setter = update_report_constant_cost]
         report_constant_cost: u8 = 0x00, // 0x00 - 0x01
+        #[setter = update_route_table]
         route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 16]
+        #[setter = update_sym_link]
         sym_link: bool = false, // bool
         #[storage_key = 7]
+        #[setter = update_capability_information]
         capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
         #[storage_key = 17]
+        #[setter = update_addr_alloc]
         addr_alloc: u8 = 0x0, // 0x00 - 0x02
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 18]
+        #[setter = update_use_tree_routing]
         use_tree_routing: bool = true,
         #[storage_key = 19]
+        #[setter = update_manager_addr]
         manager_addr: u16 = 0x0000, // <= 0xfff7
         #[storage_key = 20]
+        #[setter = update_max_source_route]
         max_source_route: u8 = 0x0c,
         #[storage_key = 4]
+        #[setter = update_update_id]
         update_id: u8 = 0x00,
         #[storage_key = 21]
+        #[setter = update_transaction_persistence_time]
         transaction_persistence_time: u16 = 0x01f4,
         #[storage_key = 1]
+        #[setter = update_network_address]
         network_address: u16 = 0xffff, //  <= 0xfff7
         #[storage_key = 22]
+        #[setter = update_stack_profile]
         stack_profile: u8, // <= 0x0f
+        #[setter = update_broadcast_transaction_table]
         broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
         #[storage_key = 23]
+        #[setter = update_group_idtable]
         group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
         #[storage_key = 3]
+        #[setter = update_extended_panid]
         extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 24]
+        #[setter = update_use_multicast]
         use_multicast: bool = true,
+        #[setter = update_route_record_table]
         route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 25]
+        #[setter = update_is_concentrator]
         is_concentrator: bool = false,
         #[storage_key = 26]
+        #[setter = update_concentrator_radius]
         concentrator_radius: u8 = 0x00,
         #[storage_key = 27]
+        #[setter = update_concentrator_discovery_time]
         concentrator_discovery_time: u8 = 0x00,
         // nib security attributes
         #[storage_key = 28]
+        #[setter = update_security_level]
         security_level: SecurityLevel = SecurityLevel::EncMic32,
         #[storage_key = 6]
+        #[setter = update_security_material_set]
         security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
         #[storage_key = 5]
+        #[setter = update_active_key_seq_number]
         active_key_seq_number: u8 = 0x00,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 29]
+        #[setter = update_all_fresh]
         all_fresh: bool = true,
 
         #[storage_key = 30]
+        #[setter = update_link_status_period]
         link_status_period: u8 = 0x0f,
         #[storage_key = 31]
+        #[setter = update_router_age_limit]
         router_age_limit: u8 = 0x03,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 32]
+        #[setter = update_unique_addr]
         unique_addr: bool = true,
         #[storage_key = 33]
+        #[setter = update_address_map]
         address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 34]
+        #[setter = update_time_stamp]
         time_stamp: bool = false,
         #[storage_key = 2]
+        #[setter = update_panid]
         panid: u16 = 0xffff,
+        #[setter = update_tx_total]
         tx_total: u16 = 0x0000,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 35]
+        #[setter = update_leave_request_allowed]
         leave_request_allowed: bool = true,
         #[storage_key = 36]
+        #[setter = update_parent_information]
         parent_information: u8 = 0x00,
         #[storage_key = 37]
+        #[setter = update_end_device_timeout_default]
         end_device_timeout_default: u8 = 0x08,
         // negotiated timeout enumeration (3.6.10.2); 0xff = not negotiated
         #[storage_key = 39]
+        #[setter = update_end_device_timeout]
         end_device_timeout: u8 = 0xff,
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 38]
+        #[setter = update_leave_request_without_rejoin_allowed]
         leave_request_without_rejoin_allowed: bool = true,
+        #[setter = update_ieee_address]
         ieee_address: IeeeAddress, // read only
         // TODO: mac_interface_table (StorageVec<MacInterface, MAX_MAC_INTERFACE_TABLE>) not yet implemented
     }

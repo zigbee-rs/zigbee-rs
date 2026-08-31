@@ -21,11 +21,12 @@ permissions:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
         toolchain:
-          # - stable
+          - stable
           - nightly
     steps:
       - name: Checkout
@@ -75,7 +76,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           # TODO(#77): switch to stable once the crate builds without nightly
-          toolchain: nightly
+          toolchain: stable
           components: llvm-tools-preview
 
       - name: Setup LCOV
@@ -117,11 +118,12 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
         toolchain:
-          # - stable
+          - stable
           - nightly
     steps:
       - name: Checkout
