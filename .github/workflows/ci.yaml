@@ -12,8 +12,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
-  RUSTDOCFLAGS: -Cpanic=abort
+  RUSTFLAGS: -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off
 
 permissions:
   contents: write
@@ -23,6 +22,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         toolchain:
           # - stable
@@ -38,13 +38,45 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: llvm-tools-preview, clippy, rustfmt
+          components: clippy, rustfmt
 
-      - name: Download & Install grcov
-        run: |
-          mkdir -p "${HOME}/.local/bin"
-          curl -sL https://github.com/mozilla/grcov/releases/latest/download/grcov-x86_64-unknown-linux-gnu.tar.bz2 | tar jxf - -C "${HOME}/.local/bin"
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-dependencies
+        with:
+          path: |
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-tests-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run clippy
+        run: cargo clippy --all-features --workspace -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        env:
+          CARGO_INCREMENTAL: 0
+        run: cargo test --all-features --workspace
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          # TODO(#77): switch to stable once the crate builds without nightly
+          toolchain: nightly
+          components: llvm-tools-preview
 
       - name: Setup LCOV
         uses: hrishikesh-kadam/setup-lcov@v1
@@ -61,34 +93,23 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings --verbose
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run tests
-        env:
-          CARGO_INCREMENTAL: 0
-          RUSTFLAGS: '-Cinstrument-coverage'
-          LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
-        run: cargo test --all-features
+          key: ${{ runner.os }}-coverage-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path ./target/debug/lcov.info
+        env:
+          CARGO_INCREMENTAL: 0
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path ./lcov.info
 
       - name: remove full path from coverage
-        run: sed -i "s;$PWD/;;g" ./target/debug/lcov.info
+        run: sed -i "s;$PWD/;;g" ./lcov.info
 
       - name: Report code coverage
         uses: zgosalvez/github-actions-report-lcov@v7
         with:
-          coverage-files: ./target/debug/lcov.info
+          coverage-files: ./lcov.info
           minimum-coverage: 14
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -97,6 +118,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         toolchain:
           # - stable
@@ -112,7 +134,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: llvm-tools-preview
 
       - name: Cache dependencies
         uses: actions/cache@v5
@@ -126,10 +147,9 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Run build
         env:
           CARGO_INCREMENTAL: 0
-        run: cargo build 
-
+        run: cargo build
