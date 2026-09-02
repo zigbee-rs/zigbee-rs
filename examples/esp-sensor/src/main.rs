@@ -30,18 +30,17 @@ use zigbee::DeviceConfig;
 use zigbee::NetworkConfig;
 use zigbee::TimingConfig;
 use zigbee::config::StackConfig;
-use zigbee_cluster_library::basic;
-use zigbee_cluster_library::basic::BasicServer;
-use zigbee_cluster_library::common::data_types::SignedN;
-use zigbee_cluster_library::common::data_types::ZclDataType;
-use zigbee_cluster_library::identify;
-use zigbee_cluster_library::identify::IdentifyServer;
-use zigbee_cluster_library::measurement::temperature;
+use zigbee_cluster_library::clusters::general::basic;
+use zigbee_cluster_library::clusters::general::basic::BasicServer;
+use zigbee_cluster_library::clusters::general::identify;
+use zigbee_cluster_library::clusters::general::identify::IdentifyServer;
+use zigbee_cluster_library::clusters::measurement::temperature;
 use zigbee_cluster_library::profile;
+use zigbee_cluster_library::reporting::AttributeReportBuilder;
 use zigbee_cluster_library::reporting::ConfigureReportingServer;
 use zigbee_cluster_library::sender::ZclSender;
-use zigbee_cluster_library::sender::ZclUnicast;
-use zigbee_cluster_library::sender::build_report_attributes;
+use zigbee_cluster_library::sender::ZclReportTarget;
+use zigbee_cluster_library::types::integers::Int16;
 use zigbee_mac::esp::EspMlme;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
@@ -256,26 +255,22 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     loop {
         zcl_seq = zcl_seq.wrapping_add(1);
 
-        let frame = build_report_attributes(
-            zcl_seq,
-            [(
-                temperature::attribute::MEASURED_VALUE,
-                ZclDataType::SignedInt(SignedN::Int16(sample)),
-            )],
-        )
-        .expect("encode temperature report");
+        let mut buf = [0u8; 64];
+        let report = AttributeReportBuilder::new(&mut buf, zcl_seq)
+            .and_then(|frame| frame.push(&temperature::MEASURED_VALUE, Int16(sample)))
+            .and_then(AttributeReportBuilder::finish)
+            .expect("encode temperature report");
 
         let result = stack
             .device()
-            .send_zcl_unicast(
-                ZclUnicast {
+            .send_attribute_report(
+                ZclReportTarget {
                     dst_short: ShortAddress::COORDINATOR.0,
                     src_endpoint: SENSOR_ENDPOINT,
                     dst_endpoint: COORDINATOR_ENDPOINT,
                     profile_id: profile::HOME_AUTOMATION,
-                    cluster_id: temperature::CLUSTER_ID,
                 },
-                frame,
+                report,
                 &mut Delay,
             )
             .await;

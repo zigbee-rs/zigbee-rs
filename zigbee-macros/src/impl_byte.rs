@@ -2,6 +2,48 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! impl_byte {
+    // narrow integer newtype: the ZCL odd widths (24/40/48/56 bit) have no
+    // Rust primitive, so the wire width is given explicitly and the value is
+    // sign-extended on read when the inner type is signed
+    (
+        #[width = $width:literal]
+        $(#[$m:meta])*
+        $v:vis struct $name:ident($vt:vis $ty:ty);
+    ) => {
+        $(#[$m])*
+        $v struct $name($vt $ty);
+
+        impl $name {
+            /// Wire width in bytes.
+            pub const WIDTH: usize = $width;
+        }
+
+        impl<C: ::core::default::Default> ::byte::TryRead<'_, C> for $name {
+            fn try_read(bytes: &[u8], _: C) -> ::byte::Result<(Self, usize)> {
+                let src = bytes.get(..$width).ok_or(::byte::Error::Incomplete)?;
+                let mut raw = [0u8; 8];
+                raw[..$width].copy_from_slice(src);
+                let wide = u64::from_le_bytes(raw);
+                let shift = 64 - ($width * 8);
+                let value = if <$ty>::MIN == 0 {
+                    wide as $ty
+                } else {
+                    (((wide << shift) as i64) >> shift) as $ty
+                };
+                Ok((Self(value), $width))
+            }
+        }
+
+        impl<C: ::core::default::Default> ::byte::TryWrite<C> for $name {
+            fn try_write(self, bytes: &mut [u8], _: C) -> ::byte::Result<usize> {
+                let dst = bytes.get_mut(..$width).ok_or(::byte::Error::Incomplete)?;
+                #[allow(clippy::cast_possible_wrap, clippy::cast_lossless)]
+                let wide = self.0 as i64;
+                dst.copy_from_slice(&wide.to_le_bytes()[..$width]);
+                Ok($width)
+            }
+        }
+    };
     (
         $(#[$m:meta])*
         $v:vis struct $name:ident($vt:vis $ty:ty);

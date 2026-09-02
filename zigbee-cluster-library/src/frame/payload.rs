@@ -6,9 +6,9 @@ use heapless::Vec;
 use crate::frame::GeneralCommand;
 use crate::frame::Status;
 use crate::frame::WriteAttributeStatus;
-use crate::header::ZclHeader;
-use crate::header::command_identifier::CommandIdentifier;
-use crate::header::frame_control::FrameType;
+use crate::frame::header::ZclHeader;
+use crate::frame::header::command_identifier::CommandIdentifier;
+use crate::frame::header::frame_control::FrameType;
 use crate::types::ids::CommandId;
 
 #[derive(Debug, PartialEq)]

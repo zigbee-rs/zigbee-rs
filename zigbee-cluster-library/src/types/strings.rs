@@ -1,352 +1,209 @@
-use super::error::ZclError;
+//! String and octet-string data types.
+//!
+//! See ZCL Section 2.6.2.10 to 2.6.2.13.
+//!
+//! Four wire types share two shapes: a one-byte length for the short forms and
+//! a two-byte length for the long ones, over either UTF-8 text or opaque
+//! octets. The maximum length is one below the all-ones length, which is the
+//! non-value.
+
+use byte::BytesExt;
+use byte::ctx;
+
+use super::codec::ZclKind;
 use super::ids::TypeId;
-use super::nullable::ZclHasNull;
-use super::schema::ZclSchema;
 
-/// Borrowed character-string bytes with lazy UTF-8 validation.
-/// Used for dynamic/untrusted frames where eager validation may be too
-/// expensive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ZclText<'a>(&'a [u8]);
+/// Longest `CharacterString` or `OctetString` (2.6.2.10, 2.6.2.12).
+pub const SHORT_MAX_LEN: usize = 254;
+/// Longest `LongCharacterString` or `LongOctetString` (2.6.2.11, 2.6.2.13).
+pub const LONG_MAX_LEN: usize = 65534;
 
-impl<'a> ZclText<'a> {
-    pub const fn new(bytes: &'a [u8]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(self) -> &'a [u8] {
-        self.0
-    }
-
-    pub fn as_str(self) -> Result<&'a str, ZclError> {
-        core::str::from_utf8(self.0).map_err(|_| ZclError::InvalidUtf8)
-    }
-}
-
-/// Guaranteed-UTF-8 short string; max 254 bytes. Used on schema-known paths.
+/// A `CharacterString` value: UTF-8, at most [`SHORT_MAX_LEN`] bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShortStr<'a>(&'a str);
 
 impl<'a> ShortStr<'a> {
-    pub fn new(s: &'a str) -> Result<Self, ZclError> {
-        if s.len() > 254 {
-            return Err(ZclError::InvalidLength);
+    /// Wraps `s`, rejecting a string too long for the one-byte length.
+    pub const fn new(s: &'a str) -> Option<Self> {
+        if s.len() > SHORT_MAX_LEN {
+            return None;
         }
-        Ok(Self(s))
+        Some(Self(s))
     }
 
-    pub fn as_str(self) -> &'a str {
+    pub const fn as_str(self) -> &'a str {
         self.0
     }
 }
 
-/// Guaranteed-UTF-8 long string; max 65534 bytes. Used on schema-known paths.
+/// A `LongCharacterString` value: UTF-8, at most [`LONG_MAX_LEN`] bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LongStr<'a>(&'a str);
 
 impl<'a> LongStr<'a> {
-    pub fn new(s: &'a str) -> Result<Self, ZclError> {
-        if s.len() > 65534 {
-            return Err(ZclError::InvalidLength);
+    /// Wraps `s`, rejecting a string too long for the two-byte length.
+    pub const fn new(s: &'a str) -> Option<Self> {
+        if s.len() > LONG_MAX_LEN {
+            return None;
         }
-        Ok(Self(s))
+        Some(Self(s))
     }
 
-    pub fn as_str(self) -> &'a str {
+    pub const fn as_str(self) -> &'a str {
         self.0
     }
 }
 
-/// Schema for ZCL `CharacterString` (0x42). Value is `ShortStr<'_>`.
-/// Length byte 0xFF is the null sentinel; bare `ShortText` rejects it.
-/// Use `Nullable<ShortText>` for nullable attributes.
+/// Reads a length-prefixed byte run, rejecting the all-ones non-value.
+fn read_run<'a, const N: usize>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<&'a [u8]> {
+    let len = match N {
+        1 => usize::from(bytes.read_with::<u8>(offset, ctx::LE)?),
+        _ => usize::from(bytes.read_with::<u16>(offset, ctx::LE)?),
+    };
+    if len == (1usize << (N * 8)) - 1 {
+        return Err(bad_input!("string non-value"));
+    }
+    let raw = bytes
+        .get(*offset..*offset + len)
+        .ok_or(byte::Error::Incomplete)?;
+    *offset += len;
+    Ok(raw)
+}
+
+/// Writes a length-prefixed byte run.
+fn write_run<const N: usize>(
+    value: &[u8],
+    bytes: &mut [u8],
+    offset: &mut usize,
+) -> byte::Result<()> {
+    // one below the all-ones length, which is reserved for the non-value
+    if value.len() >= (1usize << (N * 8)) - 1 {
+        return Err(bad_input!("string too long"));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    match N {
+        // the length was bounds-checked against the prefix width above
+        1 => bytes.write_with(offset, value.len() as u8, ctx::LE)?,
+        _ => bytes.write_with(offset, value.len() as u16, ctx::LE)?,
+    }
+    bytes
+        .get_mut(*offset..*offset + value.len())
+        .ok_or(byte::Error::Incomplete)?
+        .copy_from_slice(value);
+    *offset += value.len();
+    Ok(())
+}
+
+fn as_utf8(raw: &[u8]) -> byte::Result<&str> {
+    core::str::from_utf8(raw).map_err(|_| bad_input!("invalid utf-8"))
+}
+
+/// `CharacterString` (2.6.2.10).
 pub struct ShortText;
 
-impl ZclSchema for ShortText {
+impl ZclKind for ShortText {
     type Value<'a> = ShortStr<'a>;
     const TYPE_ID: TypeId = TypeId::CharacterString;
-    const ENCODED_SIZE: Option<usize> = None;
-
-    fn decode(bytes: &[u8]) -> Result<(ShortStr<'_>, usize), ZclError> {
-        let len_byte = bytes.first().copied().ok_or(ZclError::InsufficientBytes)?;
-        if len_byte == 0xFF {
-            return Err(ZclError::NullSentinel);
-        }
-        let len = usize::from(len_byte);
-        let raw = bytes.get(1..1 + len).ok_or(ZclError::InsufficientBytes)?;
-        let s = core::str::from_utf8(raw).map_err(|_| ZclError::InvalidUtf8)?;
-        Ok((ShortStr(s), 1 + len))
+    fn read<'a>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<ShortStr<'a>> {
+        Ok(ShortStr(as_utf8(read_run::<1>(bytes, offset)?)?))
     }
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn encode(value: ShortStr<'_>, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        let raw = value.0.as_bytes();
-        let len = raw.len();
-        if len > 254 {
-            return Err(ZclError::InvalidLength);
-        }
-        let total = 1 + len;
-        if bytes.len() < total {
-            return Err(ZclError::BufferTooSmall);
-        }
-        bytes[0] = len as u8; // len ≤ 254, checked above
-        bytes[1..total].copy_from_slice(raw);
-        Ok(total)
+    fn write(value: ShortStr<'_>, bytes: &mut [u8], offset: &mut usize) -> byte::Result<()> {
+        write_run::<1>(value.0.as_bytes(), bytes, offset)
     }
 }
 
-impl ZclHasNull for ShortText {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.first() == Some(&0xFF)).then_some(1)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.first_mut()
-            .map(|b| {
-                *b = 0xFF;
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-/// Schema for ZCL `LongCharacterString` (0x44). Value is `LongStr<'_>`.
+/// `LongCharacterString` (2.6.2.11).
 pub struct LongText;
 
-impl ZclSchema for LongText {
+impl ZclKind for LongText {
     type Value<'a> = LongStr<'a>;
     const TYPE_ID: TypeId = TypeId::LongCharacterString;
-    const ENCODED_SIZE: Option<usize> = None;
-
-    fn decode(bytes: &[u8]) -> Result<(LongStr<'_>, usize), ZclError> {
-        if bytes.len() < 2 {
-            return Err(ZclError::InsufficientBytes);
-        }
-        let len_u16 = u16::from_le_bytes([bytes[0], bytes[1]]);
-        if len_u16 == 0xFFFF {
-            return Err(ZclError::NullSentinel);
-        }
-        let len = usize::from(len_u16);
-        if len > 65534 {
-            return Err(ZclError::InvalidLength);
-        }
-        let raw = bytes.get(2..2 + len).ok_or(ZclError::InsufficientBytes)?;
-        let s = core::str::from_utf8(raw).map_err(|_| ZclError::InvalidUtf8)?;
-        Ok((LongStr(s), 2 + len))
+    fn read<'a>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<LongStr<'a>> {
+        Ok(LongStr(as_utf8(read_run::<2>(bytes, offset)?)?))
     }
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn encode(value: LongStr<'_>, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        let raw = value.0.as_bytes();
-        let len = raw.len();
-        if len > 65534 {
-            return Err(ZclError::InvalidLength);
-        }
-        let total = 2 + len;
-        if bytes.len() < total {
-            return Err(ZclError::BufferTooSmall);
-        }
-        bytes[..2].copy_from_slice(&(len as u16).to_le_bytes()); // len ≤ 65534, checked above
-        bytes[2..total].copy_from_slice(raw);
-        Ok(total)
+    fn write(value: LongStr<'_>, bytes: &mut [u8], offset: &mut usize) -> byte::Result<()> {
+        write_run::<2>(value.0.as_bytes(), bytes, offset)
     }
 }
 
-impl ZclHasNull for LongText {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..2) == Some(&[0xFF, 0xFF])).then_some(2)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..2)
-            .map(|s| {
-                s.copy_from_slice(&[0xFF, 0xFF]);
-                2
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-/// Schema for ZCL `OctetString` (0x41). Value is `&[u8]`.
-/// Length byte 0xFF is the null sentinel; bare `ShortOctetString` rejects it.
+/// `OctetString` (2.6.2.12).
 pub struct ShortOctetString;
 
-impl ZclSchema for ShortOctetString {
+impl ZclKind for ShortOctetString {
     type Value<'a> = &'a [u8];
     const TYPE_ID: TypeId = TypeId::OctetString;
-    const ENCODED_SIZE: Option<usize> = None;
-
-    fn decode(bytes: &[u8]) -> Result<(&[u8], usize), ZclError> {
-        let len_byte = bytes.first().copied().ok_or(ZclError::InsufficientBytes)?;
-        if len_byte == 0xFF {
-            return Err(ZclError::NullSentinel);
-        }
-        let len = usize::from(len_byte);
-        let data = bytes.get(1..1 + len).ok_or(ZclError::InsufficientBytes)?;
-        Ok((data, 1 + len))
+    fn read<'a>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<&'a [u8]> {
+        read_run::<1>(bytes, offset)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn encode(value: &[u8], bytes: &mut [u8]) -> Result<usize, ZclError> {
-        let len = value.len();
-        if len > 254 {
-            return Err(ZclError::InvalidLength);
-        }
-        let total = 1 + len;
-        if bytes.len() < total {
-            return Err(ZclError::BufferTooSmall);
-        }
-        bytes[0] = len as u8; // len ≤ 254, checked above
-        bytes[1..total].copy_from_slice(value);
-        Ok(total)
+    fn write(value: &[u8], bytes: &mut [u8], offset: &mut usize) -> byte::Result<()> {
+        write_run::<1>(value, bytes, offset)
     }
 }
 
-impl ZclHasNull for ShortOctetString {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.first() == Some(&0xFF)).then_some(1)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.first_mut()
-            .map(|b| {
-                *b = 0xFF;
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-/// Schema for ZCL `LongOctetString` (0x43). Value is `&[u8]`.
+/// `LongOctetString` (2.6.2.13).
 pub struct LongOctetString;
 
-impl ZclSchema for LongOctetString {
+impl ZclKind for LongOctetString {
     type Value<'a> = &'a [u8];
     const TYPE_ID: TypeId = TypeId::LongOctetString;
-    const ENCODED_SIZE: Option<usize> = None;
-
-    fn decode(bytes: &[u8]) -> Result<(&[u8], usize), ZclError> {
-        if bytes.len() < 2 {
-            return Err(ZclError::InsufficientBytes);
-        }
-        let len_u16 = u16::from_le_bytes([bytes[0], bytes[1]]);
-        if len_u16 == 0xFFFF {
-            return Err(ZclError::NullSentinel);
-        }
-        let len = usize::from(len_u16);
-        let data = bytes.get(2..2 + len).ok_or(ZclError::InsufficientBytes)?;
-        Ok((data, 2 + len))
+    fn read<'a>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<&'a [u8]> {
+        read_run::<2>(bytes, offset)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
-    fn encode(value: &[u8], bytes: &mut [u8]) -> Result<usize, ZclError> {
-        let len = value.len();
-        if len > 65534 {
-            return Err(ZclError::InvalidLength);
-        }
-        let total = 2 + len;
-        if bytes.len() < total {
-            return Err(ZclError::BufferTooSmall);
-        }
-        bytes[..2].copy_from_slice(&(len as u16).to_le_bytes()); // len ≤ 65534, checked above
-        bytes[2..total].copy_from_slice(value);
-        Ok(total)
-    }
-}
-
-impl ZclHasNull for LongOctetString {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..2) == Some(&[0xFF, 0xFF])).then_some(2)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..2)
-            .map(|s| {
-                s.copy_from_slice(&[0xFF, 0xFF]);
-                2
-            })
-            .ok_or(ZclError::BufferTooSmall)
+    fn write(value: &[u8], bytes: &mut [u8], offset: &mut usize) -> byte::Result<()> {
+        write_run::<2>(value, bytes, offset)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::nullable::Nullable;
 
     #[test]
-    fn short_str_new_max_len() {
-        let s = "a".repeat(254);
-        assert!(ShortStr::new(&s).is_ok());
+    fn short_text_round_trips() {
+        let mut buf = [0u8; 32];
+        let offset = &mut 0;
+        ShortText::write(ShortStr::new("zigbee-rs").unwrap(), &mut buf, offset)
+            .expect("string encoded");
+        assert_eq!(&buf[..*offset], b"\x09zigbee-rs");
+
+        let read = &mut 0;
+        let value = ShortText::read(&buf[..*offset], read).expect("string decoded");
+        assert_eq!(value.as_str(), "zigbee-rs");
     }
 
     #[test]
-    fn short_str_new_rejects_over_254() {
-        let s = "a".repeat(255);
-        assert_eq!(ShortStr::new(&s).unwrap_err(), ZclError::InvalidLength);
+    fn long_text_uses_a_two_byte_length() {
+        let mut buf = [0u8; 32];
+        let offset = &mut 0;
+        LongText::write(LongStr::new("ab").unwrap(), &mut buf, offset).expect("string encoded");
+        assert_eq!(&buf[..*offset], b"\x02\x00ab");
+    }
+
+    // 2.6.2.10 / 2.6.2.11: the all-ones length is the non-value
+    #[test]
+    fn the_non_value_length_is_rejected() {
+        assert!(ShortText::read(&[0xFF], &mut 0).is_err());
+        assert!(LongText::read(&[0xFF, 0xFF], &mut 0).is_err());
     }
 
     #[test]
-    fn short_text_roundtrip() {
-        let mut buf = [0u8; 16];
-        let s = ShortStr::new("Hello").unwrap();
-        let n = ShortText::encode(s, &mut buf).unwrap();
-        assert_eq!(n, 6);
-        assert_eq!(&buf[..n], &[5, b'H', b'e', b'l', b'l', b'o']);
-        let (decoded, used) = ShortText::decode(&buf[..n]).unwrap();
-        assert_eq!(used, 6);
-        assert_eq!(decoded.as_str(), "Hello");
-    }
-
-    #[test]
-    fn short_text_decode_rejects_null_sentinel() {
+    fn invalid_utf8_is_rejected_but_octets_are_not() {
+        assert!(ShortText::read(&[0x01, 0xFF], &mut 0).is_err());
         assert_eq!(
-            ShortText::decode(&[0xFF]).unwrap_err(),
-            ZclError::NullSentinel
+            ShortOctetString::read(&[0x01, 0xFF], &mut 0).expect("octets decoded"),
+            &[0xFFu8]
         );
     }
 
     #[test]
-    fn nullable_short_text_null() {
-        let (v, n) = Nullable::<ShortText>::decode(&[0xFF]).unwrap();
-        assert_eq!(n, 1);
-        assert!(v.is_none());
-    }
-
-    #[test]
-    fn nullable_short_text_value() {
-        let bytes = [5u8, b'H', b'e', b'l', b'l', b'o'];
-        let (v, n) = Nullable::<ShortText>::decode(&bytes).unwrap();
-        assert_eq!(n, 6);
-        assert_eq!(v.unwrap().as_str(), "Hello");
-    }
-
-    #[test]
-    fn short_octet_string_roundtrip() {
-        let mut buf = [0u8; 8];
-        let data: &[u8] = &[0xDE, 0xAD, 0xBE];
-        let n = ShortOctetString::encode(data, &mut buf).unwrap();
-        assert_eq!(n, 4);
-        assert_eq!(&buf[..n], &[3, 0xDE, 0xAD, 0xBE]);
-        let (decoded, used) = ShortOctetString::decode(&buf[..n]).unwrap();
-        assert_eq!(used, 4);
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn long_text_roundtrip() {
-        let mut buf = [0u8; 16];
-        let s = LongStr::new("Hi").unwrap();
-        let n = LongText::encode(s, &mut buf).unwrap();
-        assert_eq!(n, 4);
-        assert_eq!(&buf[..n], &[2, 0, b'H', b'i']);
-        let (decoded, used) = LongText::decode(&buf[..n]).unwrap();
-        assert_eq!(used, 4);
-        assert_eq!(decoded.as_str(), "Hi");
-    }
-
-    #[test]
-    fn short_text_invalid_utf8_rejected() {
-        let bytes = [2u8, 0xFF, 0xFE];
-        assert_eq!(
-            ShortText::decode(&bytes).unwrap_err(),
-            ZclError::InvalidUtf8
-        );
+    fn a_string_too_long_for_its_length_prefix_is_rejected() {
+        let long = [b'a'; 300];
+        let text = core::str::from_utf8(&long).unwrap();
+        assert!(ShortStr::new(text).is_none());
+        assert!(LongStr::new(text).is_some());
     }
 }

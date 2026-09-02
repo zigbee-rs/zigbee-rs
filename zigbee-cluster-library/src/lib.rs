@@ -41,29 +41,10 @@ macro_rules! bad_input {
     };
 }
 
-pub mod analog_input;
-pub mod attributes;
-pub mod basic;
-pub mod common;
-pub mod identify;
-pub mod power_configuration;
-pub mod profile;
-pub mod types;
-
-/// General ZCL Frame
+pub mod clusters;
 pub mod frame;
-pub mod payload;
+pub mod profile;
 pub mod reporting;
-
-pub mod header;
-
-// Chapter 4
-pub mod measurement;
-// Chapter 5
-pub mod lighting;
-// Chapter 6
-pub mod hvac;
-// Chapter 10
-pub mod energy;
-
 pub mod sender;
+pub mod server;
+pub mod types;

@@ -1,155 +1,124 @@
+//! Bitmap data types.
+//!
+//! See ZCL Section 2.6.2.6.
+//!
+//! Every bit pattern of a bitmap is valid and bitmaps have no non-value, so
+//! decoding cannot fail on content — only on running out of bytes.
+
 use core::marker::PhantomData;
 
-use super::error::ZclError;
+use super::codec::ZclKind;
+use super::codec::read_le;
+use super::codec::write_le;
 use super::ids::TypeId;
-use super::schema::ZclSchema;
 
-/// Trait for types encodable as ZCL Bitmap8. All u8 bit patterns are valid —
-/// decode is infallible.
-pub trait ZclBitmap8: Sized + Copy {
-    fn from_bits(bits: u8) -> Self;
-    fn into_bits(self) -> u8;
+/// Declares a bitmap kind and the trait a device type implements to be carried
+/// by it.
+macro_rules! bitmap {
+    ($kind:ident, $trait:ident, $repr:ty, $width:literal, $type_id:expr, $doc:literal) => {
+        #[doc = $doc]
+        pub trait $trait: Sized + Copy {
+            fn from_bits(bits: $repr) -> Self;
+            fn into_bits(self) -> $repr;
+        }
+
+        #[doc = $doc]
+        ///
+        /// Carries any type implementing the matching trait, so one Rust type
+        /// can appear under more than one wire type.
+        pub struct $kind<T>(PhantomData<T>);
+
+        impl<T: $trait> ZclKind for $kind<T> {
+            type Value<'a> = T;
+            const TYPE_ID: TypeId = $type_id;
+            const ENCODED_SIZE: Option<usize> = Some($width);
+            // every pattern is a valid bitmap, and there is no non-value
+            const ALL_PATTERNS_VALID: bool = true;
+            fn read(bytes: &[u8], offset: &mut usize) -> byte::Result<T> {
+                #[allow(clippy::cast_possible_truncation)]
+                Ok(T::from_bits(read_le::<$width>(bytes, offset)? as $repr))
+            }
+
+            fn write(value: T, bytes: &mut [u8], offset: &mut usize) -> byte::Result<()> {
+                write_le::<$width>(u64::from(value.into_bits()), bytes, offset)
+            }
+        }
+    };
 }
 
-/// Trait for types encodable as ZCL Bitmap16. All u16 bit patterns are valid.
-pub trait ZclBitmap16: Sized + Copy {
-    fn from_bits(bits: u16) -> Self;
-    fn into_bits(self) -> u16;
-}
-
-/// Trait for types encodable as ZCL Bitmap32. All u32 bit patterns are valid.
-pub trait ZclBitmap32: Sized + Copy {
-    fn from_bits(bits: u32) -> Self;
-    fn into_bits(self) -> u32;
-}
-
-/// Trait for types encodable as ZCL Bitmap64. All u64 bit patterns are valid.
-pub trait ZclBitmap64: Sized + Copy {
-    fn from_bits(bits: u64) -> Self;
-    fn into_bits(self) -> u64;
-}
-
-/// Schema wrapper for `T: ZclBitmap8`. Decode is infallible — all bit patterns
-/// valid. Does NOT implement `ZclHasNull` — bitmaps have no null sentinel.
-pub struct Bitmap8<T>(PhantomData<T>);
-
-impl<T: ZclBitmap8> ZclSchema for Bitmap8<T> {
-    type Value<'a>
-        = T
-    where
-        T: 'a;
-    const TYPE_ID: TypeId = TypeId::Bitmap8;
-    const ENCODED_SIZE: Option<usize> = Some(1);
-    const ALL_PATTERNS_VALID: bool = true;
-
-    fn decode(bytes: &[u8]) -> Result<(T, usize), ZclError> {
-        let raw = bytes.first().copied().ok_or(ZclError::InsufficientBytes)?;
-        Ok((T::from_bits(raw), 1))
-    }
-
-    fn encode(value: T, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        bytes
-            .first_mut()
-            .map(|b| {
-                *b = value.into_bits();
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-/// Schema wrapper for `T: ZclBitmap16`. Decode is infallible.
-pub struct Bitmap16<T>(PhantomData<T>);
-
-impl<T: ZclBitmap16> ZclSchema for Bitmap16<T> {
-    type Value<'a>
-        = T
-    where
-        T: 'a;
-    const TYPE_ID: TypeId = TypeId::Bitmap16;
-    const ENCODED_SIZE: Option<usize> = Some(2);
-    const ALL_PATTERNS_VALID: bool = true;
-
-    fn decode(bytes: &[u8]) -> Result<(T, usize), ZclError> {
-        let raw = bytes
-            .get(..2)
-            .ok_or(ZclError::InsufficientBytes)
-            .map(|s| u16::from_le_bytes([s[0], s[1]]))?;
-        Ok((T::from_bits(raw), 2))
-    }
-
-    fn encode(value: T, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        bytes.get_mut(..2).ok_or(ZclError::BufferTooSmall).map(|s| {
-            s.copy_from_slice(&value.into_bits().to_le_bytes());
-            2
-        })
-    }
-}
-
-/// Schema wrapper for `T: ZclBitmap32`. Decode is infallible.
-pub struct Bitmap32<T>(PhantomData<T>);
-
-impl<T: ZclBitmap32> ZclSchema for Bitmap32<T> {
-    type Value<'a>
-        = T
-    where
-        T: 'a;
-    const TYPE_ID: TypeId = TypeId::Bitmap32;
-    const ENCODED_SIZE: Option<usize> = Some(4);
-    const ALL_PATTERNS_VALID: bool = true;
-
-    fn decode(bytes: &[u8]) -> Result<(T, usize), ZclError> {
-        let raw = bytes
-            .get(..4)
-            .ok_or(ZclError::InsufficientBytes)
-            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))?;
-        Ok((T::from_bits(raw), 4))
-    }
-
-    fn encode(value: T, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        bytes.get_mut(..4).ok_or(ZclError::BufferTooSmall).map(|s| {
-            s.copy_from_slice(&value.into_bits().to_le_bytes());
-            4
-        })
-    }
-}
-
-/// Schema wrapper for `T: ZclBitmap64`. Decode is infallible.
-pub struct Bitmap64<T>(PhantomData<T>);
-
-impl<T: ZclBitmap64> ZclSchema for Bitmap64<T> {
-    type Value<'a>
-        = T
-    where
-        T: 'a;
-    const TYPE_ID: TypeId = TypeId::Bitmap64;
-    const ENCODED_SIZE: Option<usize> = Some(8);
-    const ALL_PATTERNS_VALID: bool = true;
-
-    fn decode(bytes: &[u8]) -> Result<(T, usize), ZclError> {
-        let raw = bytes
-            .get(..8)
-            .ok_or(ZclError::InsufficientBytes)
-            .map(|s| u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]))?;
-        Ok((T::from_bits(raw), 8))
-    }
-
-    fn encode(value: T, bytes: &mut [u8]) -> Result<usize, ZclError> {
-        bytes.get_mut(..8).ok_or(ZclError::BufferTooSmall).map(|s| {
-            s.copy_from_slice(&value.into_bits().to_le_bytes());
-            8
-        })
-    }
-}
+bitmap!(
+    Bitmap8,
+    ZclBitmap8,
+    u8,
+    1,
+    TypeId::Bitmap8,
+    "`bitmap8` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap16,
+    ZclBitmap16,
+    u16,
+    2,
+    TypeId::Bitmap16,
+    "`bitmap16` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap24,
+    ZclBitmap24,
+    u32,
+    3,
+    TypeId::Bitmap24,
+    "`bitmap24` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap32,
+    ZclBitmap32,
+    u32,
+    4,
+    TypeId::Bitmap32,
+    "`bitmap32` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap40,
+    ZclBitmap40,
+    u64,
+    5,
+    TypeId::Bitmap40,
+    "`bitmap40` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap48,
+    ZclBitmap48,
+    u64,
+    6,
+    TypeId::Bitmap48,
+    "`bitmap48` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap56,
+    ZclBitmap56,
+    u64,
+    7,
+    TypeId::Bitmap56,
+    "`bitmap56` (2.6.2.6)."
+);
+bitmap!(
+    Bitmap64,
+    ZclBitmap64,
+    u64,
+    8,
+    TypeId::Bitmap64,
+    "`bitmap64` (2.6.2.6)."
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestFlags(u8);
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Flags(u8);
 
-    impl ZclBitmap8 for TestFlags {
+    impl ZclBitmap8 for Flags {
         fn from_bits(bits: u8) -> Self {
             Self(bits)
         }
@@ -158,30 +127,59 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bitmap8_roundtrip() {
-        let mut buf = [0u8; 1];
-        assert_eq!(
-            Bitmap8::<TestFlags>::encode(TestFlags(0b1010_1010), &mut buf).unwrap(),
-            1
-        );
-        assert_eq!(buf, [0b1010_1010]);
-        assert_eq!(
-            Bitmap8::<TestFlags>::decode(&buf).unwrap(),
-            (TestFlags(0b1010_1010), 1)
-        );
+    // the same Rust type can also be carried as a wider bitmap, which is why
+    // the codec lives on the kind and not on the value
+    impl ZclBitmap16 for Flags {
+        fn from_bits(bits: u16) -> Self {
+            #[allow(clippy::cast_possible_truncation)]
+            Self(bits as u8)
+        }
+        fn into_bits(self) -> u16 {
+            u16::from(self.0)
+        }
     }
 
     #[test]
-    fn bitmap8_accepts_all_bit_patterns() {
-        // 0xFF is not a null sentinel for bitmaps — must decode successfully
+    fn one_type_can_be_carried_under_two_wire_types() {
+        let mut buf = [0u8; 8];
+
+        let offset = &mut 0;
+        Bitmap8::<Flags>::write(Flags(0b1010), &mut buf, offset).expect("bitmap8 encoded");
+        assert_eq!(&buf[..*offset], &[0b1010]);
+
+        let offset = &mut 0;
+        Bitmap16::<Flags>::write(Flags(0b1010), &mut buf, offset).expect("bitmap16 encoded");
+        assert_eq!(&buf[..*offset], &[0b1010, 0x00]);
+
+        assert_eq!(<Bitmap8<Flags> as ZclKind>::TYPE_ID, TypeId::Bitmap8);
+        assert_eq!(<Bitmap16<Flags> as ZclKind>::TYPE_ID, TypeId::Bitmap16);
+    }
+
+    // 2.6.2.6: every bit pattern is valid, so only a short buffer fails
+    #[test]
+    fn every_pattern_decodes() {
         assert_eq!(
-            Bitmap8::<TestFlags>::decode(&[0xFF]).unwrap(),
-            (TestFlags(0xFF), 1)
+            Bitmap8::<Flags>::read(&[0xFF], &mut 0).expect("decoded"),
+            Flags(0xFF)
         );
-        assert_eq!(
-            Bitmap8::<TestFlags>::decode(&[0x00]).unwrap(),
-            (TestFlags(0x00), 1)
-        );
+        assert!(Bitmap8::<Flags>::read(&[], &mut 0).is_err());
+        assert!(<Bitmap8<Flags> as ZclKind>::ALL_PATTERNS_VALID);
+    }
+
+    #[test]
+    fn odd_width_bitmaps_use_their_nominal_width() {
+        assert_eq!(<Bitmap24<Flags2> as ZclKind>::ENCODED_SIZE, Some(3));
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Flags2(u32);
+
+    impl ZclBitmap24 for Flags2 {
+        fn from_bits(bits: u32) -> Self {
+            Self(bits)
+        }
+        fn into_bits(self) -> u32 {
+            self.0
+        }
     }
 }
