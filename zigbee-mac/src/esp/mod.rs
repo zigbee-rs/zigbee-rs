@@ -46,7 +46,7 @@ const ASSOCIATE_POLL_RETRIES: u8 = 5;
 // number of poll rounds per steady-state MLME-POLL before reporting no data
 const POLL_DATA_RETRIES: u8 = 5;
 
-/// ESP32-C6 [`Mlme`] implementation.
+/// `esp-radio` [`Mlme`] implementation
 ///
 /// The radio is a single shared resource: the inner state is held behind an
 /// async mutex so the trait's `&self` methods can be driven concurrently from a

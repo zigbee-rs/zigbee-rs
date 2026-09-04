@@ -4,7 +4,7 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[cfg(feature = "esp32c6")]
+#[cfg(feature = "esp")]
 pub mod esp;
 
 pub mod mlme;
