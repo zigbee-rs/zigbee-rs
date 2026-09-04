@@ -19,11 +19,16 @@ vendor dependency.
 
 | Backend | Feature | Status |
 |---------|---------|--------|
-| ESP32-C6 | `esp32c6` | available |
+| ESP32-C6 | `esp32c6` | available, hardware-tested |
+| ESP32-H2 | `esp32h2` | available, hardware-tested |
+| ESP32-C5 | `esp32c5` | available, compile-tested only |
 | any other radio | — | implement `Mlme` yourself |
 
-No backend is enabled by default. Implementing `Mlme` is the only thing a new
-platform needs; nothing above this crate has to change.
+These three are the only Espressif SoCs with an 802.15.4 radio.
+They share one `esp-radio` backed backend (`zigbee_mac::esp`), and the chip feature only selects
+which chip the `esp-*` crates are built for. The features are mutually exclusive, and no backend is enabled by default.
+
+Implementing `Mlme` is the only thing a new platform needs; nothing above this crate has to change.
 
 ## 🏛️ License
 

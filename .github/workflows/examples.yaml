@@ -24,7 +24,7 @@ jobs:
 
       - id: list
         run: |
-          examples=$(find examples -mindepth 1 -maxdepth 1 -type d | xargs -I{} basename {} | sort | jq -R . | jq -sc .)
+          examples=$(find examples -mindepth 1 -maxdepth 1 -type d | xargs -I{} basename {} | grep -v '^esp-sensor$' | sort | jq -R . | jq -sc .)
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
 
   build:
@@ -46,3 +46,22 @@ jobs:
         env:
           CARGO_INCREMENTAL: 0
         run: cargo build
+
+  build-esp-sensor:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32c6, esp32h2, esp32c5]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        working-directory: ./examples/esp-sensor
+        run: rustup show
+
+      - name: Build esp-sensor (${{ matrix.chip }})
+        working-directory: ./examples/esp-sensor
+        env:
+          CARGO_INCREMENTAL: 0
+        run: cargo build --features ${{ matrix.chip }}

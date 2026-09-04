@@ -182,15 +182,21 @@ pub enum MacError {
     NoData,
     #[error("no acknowledgment received")]
     NoAck,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(feature = "esp")]
     #[error("transmit failed (no ack, channel busy or coex abort)")]
     TxFailed,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(feature = "esp")]
     #[error("transmit-done signal timed out")]
     TxTimeout,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(feature = "esp")]
     #[error("radio error")]
     RadioError(#[from] esp_radio::ieee802154::Error),
+    #[cfg(feature = "esp")]
+    #[error("timed out waiting for the radio (held by another MAC operation)")]
+    RadioLockTimeout,
+    #[cfg(feature = "esp")]
+    #[error("radio lock wait queue full (too many concurrent MAC operations)")]
+    RadioLockQueueFull,
 }
 
 impl From<byte::Error> for MacError {

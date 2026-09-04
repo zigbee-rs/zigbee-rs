@@ -5,27 +5,59 @@ name = "esp-sensor"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+esp32c6 = [
+    "dep:esp32c6-pac",
+    "esp-alloc/esp32c6",
+    "esp-backtrace/esp32c6",
+    "esp-bootloader-esp-idf/esp32c6",
+    "esp-hal/esp32c6",
+    "esp-radio/esp32c6",
+    "esp-rtos/esp32c6",
+    "esp-storage/esp32c6",
+    "zigbee-mac/esp32c6",
+]
+esp32c5 = [
+    "esp-alloc/esp32c5",
+    "esp-backtrace/esp32c5",
+    "esp-bootloader-esp-idf/esp32c5",
+    "esp-hal/esp32c5",
+    "esp-radio/esp32c5",
+    "esp-rtos/esp32c5",
+    "esp-storage/esp32c5",
+    "zigbee-mac/esp32c5",
+]
+esp32h2 = [
+    "dep:esp32h2-pac",
+    "esp-alloc/esp32h2",
+    "esp-backtrace/esp32h2",
+    "esp-bootloader-esp-idf/esp32h2",
+    "esp-hal/esp32h2",
+    "esp-radio/esp32h2",
+    "esp-rtos/esp32h2",
+    "esp-storage/esp32h2",
+    "zigbee-mac/esp32h2",
+]
+
 [dependencies]
 esp-alloc = { version = "0.10.0" }
 esp-backtrace = { version = "0.19.0", features = [
     "panic-handler",
     "println",
-	"esp32c6",
 ] }
-# esp32c6 0.23.3 is a breaking patch release (removes `pac::RNG`, adds an
-# argument to `i2c_sclk_conf`) and does not compile against esp-hal 1.1.x.
-# Pinned until an esp-hal release that matches it. Cargo.lock is gitignored,
-# so without this a fresh clone resolves 0.23.3 and fails to build.
-esp32c6 = "=0.23.2"
-esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32c6"] }
-esp-hal = { version = "1.1.0", features = ["log-04", "unstable", "esp32c6"] }
+# both PACs are pinned for the same reason: their latest patch release is a breaking one that does not compile against esp-hal 1.1.x.
+# esp32c6 0.23.3 removes `pac::RNG` and adds an argument to `i2c_sclk_conf`;
+# esp32h2 0.19.3 renames `lp_timer::int_clr::soc_wakeup_int_clr` to `soc_wakeup`.
+esp32c6-pac = { package = "esp32c6", version = "=0.23.2", optional = true }
+esp32h2-pac = { package = "esp32h2", version = "=0.19.2", optional = true }
+esp-bootloader-esp-idf = { version = "0.5.0" }
+esp-hal = { version = "1.1.0", features = ["log-04", "unstable"] }
 esp-println = { version = "0.17.0", features = ["log-04"] }
 esp-radio = { version = "1.0.0-beta.0", features = [
     "ieee802154",
     "unstable",
-	"esp32c6",
 ] }
-esp-rtos = { version = "0.3.0", features = ["embassy", "log-04", "esp32c6"] }
+esp-rtos = { version = "0.3.0", features = ["embassy", "log-04"] }
 embassy-executor = "0.10.0"
 embassy-time = "0.5.0"
 embassy-embedded-hal = "0.5.0"
@@ -33,11 +65,11 @@ heapless = "0.9.1"
 static_cell = "2.1"
 
 # flash access for the zigbee storage feature
-esp-storage = { version = "0.9.0", features = ["esp32c6"] }
+esp-storage = { version = "0.9.0" }
 
 zigbee = { path = "../../zigbee", features = ["storage"] }
 zigbee-types = { path = "../../zigbee-types" }
-zigbee-mac = { path = "../../zigbee-mac", features = ["esp32c6"] }
+zigbee-mac = { path = "../../zigbee-mac" }
 zigbee-cluster-library = { path = "../../zigbee-cluster-library" }
 
 [profile.release]
