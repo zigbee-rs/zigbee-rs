@@ -33,7 +33,7 @@ mod tests {
     use byte::TryRead;
 
     use super::*;
-    use crate::header::frame_control::FrameType;
+    use crate::frame::header::frame_control::FrameType;
 
     #[test]
     fn unpack_header_without_manufacturer_code() {

@@ -1,303 +1,101 @@
+//! Nullable attributes.
+//!
+//! See ZCL Section 2.6.2.
+//!
+//! Most ZCL types reserve one bit pattern as a non-value, meaning "unknown" or
+//! "not applicable". [`ZclKind`] impls reject it, so a value that decodes is
+//! always meaningful; wrap a type in [`Nullable`] to accept it as `None`
+//! instead.
+
 use core::marker::PhantomData;
 
-use super::error::ZclError;
-use super::schema::ZclSchema;
+use super::codec::ZclKind;
+use super::ids::TypeId;
 
-/// Marker trait for ZCL types that have a defined null/invalid sentinel on the
-/// wire. Types that implement this can be wrapped in `Nullable<T>`.
-/// Bitmap types do NOT implement this — all bit patterns are valid for bitmaps.
-pub trait ZclHasNull: ZclSchema {
-    /// If `bytes` begins with the null sentinel for this type, return
-    /// `Some(bytes_consumed)`. Returns `None` if the bytes do not begin
-    /// with the null sentinel.
-    fn null_size(bytes: &[u8]) -> Option<usize>;
-    /// Write the null sentinel into `buf`. Returns bytes written.
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError>;
+/// A ZCL type with a defined non-value on the wire.
+///
+/// Bitmaps do not implement this — every bit pattern of a bitmap is a value —
+/// so `Nullable<Bitmap8<T>>` does not compile.
+pub trait ZclHasNull: ZclKind {
+    /// Width of the non-value if `bytes` carries it at `offset`, else `None`.
+    fn null_size(bytes: &[u8], offset: usize) -> Option<usize>;
+
+    /// Write the non-value, advancing `offset`.
+    fn write_null(bytes: &mut [u8], offset: &mut usize) -> byte::Result<()>;
 }
 
-/// Schema wrapper for types with a null sentinel. Decoded value is
-/// `Option<T::Value<'_>>`. `TYPE_ID` is the same as the wrapped type —
-/// nullability is semantic, not a wire distinction.
+/// Accepts the wrapped type's non-value as `None` (2.6.2).
 ///
-/// `Nullable<Bitmap8<T>>` does not compile because `Bitmap8<T>` does not
-/// implement `ZclHasNull`.
+/// Nullability is semantic rather than a wire distinction, so the type
+/// identifier is the wrapped type's.
 pub struct Nullable<T>(PhantomData<T>);
 
-impl<T: ZclHasNull> ZclSchema for Nullable<T> {
-    type Value<'a>
-        = Option<T::Value<'a>>
-    where
-        T: 'a;
-    const TYPE_ID: super::ids::TypeId = T::TYPE_ID;
+impl<T: ZclHasNull> ZclKind for Nullable<T> {
+    type Value<'a> = Option<T::Value<'a>>;
+    const TYPE_ID: TypeId = T::TYPE_ID;
     const ENCODED_SIZE: Option<usize> = T::ENCODED_SIZE;
 
-    fn decode(bytes: &[u8]) -> Result<(Option<T::Value<'_>>, usize), ZclError> {
-        if let Some(n) = T::null_size(bytes) {
-            return Ok((None, n));
+    #[allow(single_use_lifetimes)]
+    fn read<'a>(bytes: &'a [u8], offset: &mut usize) -> byte::Result<Option<T::Value<'a>>> {
+        if let Some(width) = T::null_size(bytes, *offset) {
+            *offset += width;
+            return Ok(None);
         }
-        let (value, n) = T::decode(bytes)?;
-        Ok((Some(value), n))
+        T::read(bytes, offset).map(Some)
     }
 
-    fn decode_prefix(bytes: &[u8]) -> Result<(Option<T::Value<'_>>, usize), ZclError> {
-        if let Some(n) = T::null_size(bytes) {
-            return Ok((None, n));
-        }
-        let (value, n) = T::decode_prefix(bytes)?;
-        Ok((Some(value), n))
-    }
-
-    fn encode(value: Option<T::Value<'_>>, bytes: &mut [u8]) -> Result<usize, ZclError> {
+    fn write(
+        value: Option<T::Value<'_>>,
+        bytes: &mut [u8],
+        offset: &mut usize,
+    ) -> byte::Result<()> {
         match value {
-            None => T::encode_null(bytes),
-            Some(v) => {
-                let written = T::encode(v, bytes)?;
-                // redundant for built in types, added for safety if other
-                // ZclHasNull impls encode a sentinel value
-                if T::null_size(&bytes[..written]).is_some() {
-                    return Err(ZclError::InvalidValue);
+            None => T::write_null(bytes, offset),
+            Some(value) => {
+                let start = *offset;
+                T::write(value, bytes, offset)?;
+                // a value that encodes to the non-value would read back as
+                // None, so reject it rather than emit an ambiguous record
+                if T::null_size(bytes, start).is_some() {
+                    return Err(bad_input!("value encodes to the non-value"));
                 }
-                Ok(written)
+                Ok(())
             }
         }
-    }
-}
-
-impl ZclHasNull for bool {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.first() == Some(&0xFF)).then_some(1)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.first_mut()
-            .map(|b| {
-                *b = 0xFF;
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for u8 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.first() == Some(&0xFF)).then_some(1)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.first_mut()
-            .map(|b| {
-                *b = 0xFF;
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for u16 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..2) == Some(&[0xFF, 0xFF])).then_some(2)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..2)
-            .map(|s| {
-                s.copy_from_slice(&[0xFF, 0xFF]);
-                2
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for u32 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..4) == Some(&[0xFF, 0xFF, 0xFF, 0xFF])).then_some(4)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..4)
-            .map(|s| {
-                s.copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
-                4
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for u64 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..8) == Some(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])).then_some(8)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..8)
-            .map(|s| {
-                s.copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-                8
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for i8 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.first() == Some(&0x80)).then_some(1)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.first_mut()
-            .map(|b| {
-                *b = 0x80;
-                1
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for i16 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..2) == Some(&[0x00, 0x80])).then_some(2)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..2)
-            .map(|s| {
-                s.copy_from_slice(&[0x00, 0x80]);
-                2
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for i32 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..4) == Some(&[0x00, 0x00, 0x00, 0x80])).then_some(4)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..4)
-            .map(|s| {
-                s.copy_from_slice(&[0x00, 0x00, 0x00, 0x80]);
-                4
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for i64 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        (bytes.get(..8) == Some(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80])).then_some(8)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        buf.get_mut(..8)
-            .map(|s| {
-                s.copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]);
-                8
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for f32 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        let arr = bytes.get(..4)?;
-        let v = Self::from_le_bytes([arr[0], arr[1], arr[2], arr[3]]);
-        v.is_nan().then_some(4)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        // canonical quiet NaN (0x7FC00000 LE) — matches zigpy and common ZCL
-        // stacks; any NaN decodes as null, we encode the canonical form
-        // for interop
-        buf.get_mut(..4)
-            .map(|s| {
-                s.copy_from_slice(&[0x00, 0x00, 0xC0, 0x7F]);
-                4
-            })
-            .ok_or(ZclError::BufferTooSmall)
-    }
-}
-
-impl ZclHasNull for f64 {
-    fn null_size(bytes: &[u8]) -> Option<usize> {
-        let arr = bytes.get(..8)?;
-        let v = Self::from_le_bytes([
-            arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7],
-        ]);
-        v.is_nan().then_some(8)
-    }
-    fn encode_null(buf: &mut [u8]) -> Result<usize, ZclError> {
-        // quiet NaN (0x7FF8000000000000 LE), matches zigpy
-        buf.get_mut(..8)
-            .map(|s| {
-                s.copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x7F]);
-                8
-            })
-            .ok_or(ZclError::BufferTooSmall)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::integers::Uint8;
 
     #[test]
-    fn nullable_u8_null() {
-        assert_eq!(Nullable::<u8>::decode(&[0xFF]).unwrap(), (None, 1));
-    }
-
-    #[test]
-    fn nullable_u8_value() {
-        assert_eq!(Nullable::<u8>::decode(&[0x00]).unwrap(), (Some(0u8), 1));
-        assert_eq!(Nullable::<u8>::decode(&[0x2A]).unwrap(), (Some(42u8), 1));
-    }
-
-    #[test]
-    fn nullable_u16_null() {
-        assert_eq!(Nullable::<u16>::decode(&[0xFF, 0xFF]).unwrap(), (None, 2));
-    }
-
-    #[test]
-    fn nullable_u16_value() {
+    fn the_non_value_reads_as_none_and_round_trips() {
+        let mut buf = [0u8; 4];
+        let offset = &mut 0;
+        Nullable::<Uint8>::write(None, &mut buf, offset).expect("encoded");
+        assert_eq!(&buf[..*offset], &[0xFF]);
         assert_eq!(
-            Nullable::<u16>::decode(&[0x34, 0x12]).unwrap(),
-            (Some(0x1234u16), 2)
+            Nullable::<Uint8>::read(&buf, &mut 0).expect("decoded"),
+            None
         );
     }
 
     #[test]
-    fn nullable_i16_null() {
-        assert_eq!(Nullable::<i16>::decode(&[0x00, 0x80]).unwrap(), (None, 2));
-    }
-
-    #[test]
-    fn nullable_i16_value() {
+    fn a_value_reads_as_some() {
         assert_eq!(
-            Nullable::<i16>::decode(&[0xFF, 0xFF]).unwrap(),
-            (Some(-1i16), 2)
+            Nullable::<Uint8>::read(&[0x2a], &mut 0).expect("decoded"),
+            Some(Uint8(0x2a))
         );
     }
 
+    // nullability is semantic: the wire type is unchanged
     #[test]
-    fn nullable_bool_null() {
-        assert_eq!(Nullable::<bool>::decode(&[0xFF]).unwrap(), (None, 1));
-    }
-
-    #[test]
-    fn nullable_bool_value() {
-        assert_eq!(Nullable::<bool>::decode(&[0x01]).unwrap(), (Some(true), 1));
-        assert_eq!(Nullable::<bool>::decode(&[0x00]).unwrap(), (Some(false), 1));
-    }
-
-    #[test]
-    fn nullable_i32_null() {
+    fn the_type_identifier_is_the_wrapped_one() {
         assert_eq!(
-            Nullable::<i32>::decode(&[0x00, 0x00, 0x00, 0x80]).unwrap(),
-            (None, 4)
+            <Nullable<Uint8> as ZclKind>::TYPE_ID,
+            <Uint8 as ZclKind>::TYPE_ID
         );
-    }
-
-    #[test]
-    fn nullable_encode_null() {
-        let mut buf = [0u8; 2];
-        assert_eq!(Nullable::<i16>::encode(None, &mut buf).unwrap(), 2);
-        assert_eq!(buf, [0x00, 0x80]);
-    }
-
-    #[test]
-    fn nullable_encode_value() {
-        let mut buf = [0u8; 2];
-        assert_eq!(Nullable::<i16>::encode(Some(-100), &mut buf).unwrap(), 2);
-        assert_eq!(buf, (-100i16).to_le_bytes());
     }
 }

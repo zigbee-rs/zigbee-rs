@@ -95,6 +95,37 @@ pub struct ClusterRequest<'a> {
     pub asdu: &'a [u8],
 }
 
+/// Where a response goes, and how much of the output buffer it filled.
+///
+/// The APS layer defines no convention for how an application profile answers
+/// a request (2.2.4.1.3), so the addressing belongs to whoever built the
+/// response rather than to the layer sending it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClusterReply {
+    pub cluster_id: u16,
+    pub profile_id: u16,
+    /// Endpoint on the requester the response is addressed to.
+    pub dst_endpoint: u8,
+    /// Endpoint on this device the response is sent from.
+    pub src_endpoint: u8,
+    /// Bytes written to the output buffer.
+    pub len: usize,
+}
+
+impl ClusterReply {
+    /// Answer on the request's own cluster and profile with the endpoints
+    /// swapped, the convention the ZCL follows.
+    pub const fn matching(request: &ClusterRequest<'_>, len: usize) -> Self {
+        Self {
+            cluster_id: request.cluster_id,
+            profile_id: request.profile_id,
+            dst_endpoint: request.src_endpoint,
+            src_endpoint: request.dst_endpoint,
+            len,
+        }
+    }
+}
+
 /// Handler for inbound application-profile (non-ZDP) requests.
 ///
 /// Implemented by cluster servers (e.g. the ZCL Basic cluster) to answer
@@ -102,14 +133,14 @@ pub struct ClusterRequest<'a> {
 /// be shared with the receive task.
 pub trait ClusterRequestHandler {
     /// Build a response ASDU for an application-profile request, writing it
-    /// into `out` and returning its length, or `None` for no reply.
-    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize>;
+    /// into `out` and reporting where it goes, or `None` for no reply.
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply>;
 }
 
 /// Lets a handler be shared by reference, so a cluster server the application
 /// also reads from can live outside the receive task.
 impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
-    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
         (**self).handle(request, out)
     }
 }
@@ -119,7 +150,7 @@ impl<T: ClusterRequestHandler + ?Sized> ClusterRequestHandler for &T {
 /// plus a generic reporting responder) into the single handler
 /// a receive loop expects.
 impl<A: ClusterRequestHandler, B: ClusterRequestHandler> ClusterRequestHandler for (A, B) {
-    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
         self.0
             .handle(request, out)
             .or_else(|| self.1.handle(request, out))
@@ -133,8 +164,47 @@ where
     B: ClusterRequestHandler,
     C: ClusterRequestHandler,
 {
-    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<usize> {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
         (&self.0, (&self.1, &self.2)).handle(request, out)
+    }
+}
+
+/// Chains four handlers, left to right.
+impl<A, B, C, D> ClusterRequestHandler for (A, B, C, D)
+where
+    A: ClusterRequestHandler,
+    B: ClusterRequestHandler,
+    C: ClusterRequestHandler,
+    D: ClusterRequestHandler,
+{
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
+        (&self.0, (&self.1, &self.2, &self.3)).handle(request, out)
+    }
+}
+
+/// Chains five handlers, left to right.
+impl<A, B, C, D, E> ClusterRequestHandler for (A, B, C, D, E)
+where
+    A: ClusterRequestHandler,
+    B: ClusterRequestHandler,
+    C: ClusterRequestHandler,
+    D: ClusterRequestHandler,
+    E: ClusterRequestHandler,
+{
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
+        (&self.0, (&self.1, &self.2, &self.3, &self.4)).handle(request, out)
+    }
+}
+
+/// A ZDP response, which always travels between the two ZDO endpoints on the
+/// Device Profile (2.4).
+const fn zdp_reply(cluster_id: u16, len: usize) -> ClusterReply {
+    ClusterReply {
+        cluster_id,
+        profile_id: ZDP_PROFILE_ID,
+        dst_endpoint: ZDO_ENDPOINT,
+        src_endpoint: ZDO_ENDPOINT,
+        len,
     }
 }
 
@@ -455,8 +525,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
     async fn finish_rejoin(&self) -> Result<(), NetworkError> {
         self.mark_rejoined();
         // 3.6.10.2: renegotiated after every rejoin, even with the same parent
+        log::debug!("[ZDO] rejoined, negotiating end-device timeout");
         let _ = self.nlme.negotiate_end_device_timeout().await;
-        self.announce_self().await
+        log::debug!("[ZDO] announcing self");
+        let result = self.announce_self().await;
+        log::debug!("[ZDO] rejoin complete: {result:?}");
+        result
     }
 
     /// Security Manager: poll for a Transport-Key command and install the
@@ -552,10 +626,6 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// Wait until the network key is installed and the device is joined.
-    ///
-    /// Gates the receive loop: spawn the RX task before commissioning and
-    /// await this first, so the parent is not polled while the join is still
-    /// in progress.
     pub async fn wait_until_joined(&self) {
         self.joined.wait_set().await;
     }
@@ -717,8 +787,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let indication = match self.apsme.poll_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
             // ambient traffic we cannot decode (foreign or pre-key frames caught
-            // in the receive window) — normal, not a fault.
-            Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
+            // in the receive window) — normal, not a fault. Traced because a
+            // frame that was meant for us and failed to decrypt looks exactly
+            // like never having received one.
+            Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
+                log::debug!("[ZDO] dropped undecodable frame on poll: {e:?}");
+                return Ok(());
+            }
             Err(e) => return Err(e),
         };
         self.dispatch(indication, cfg, handler).await
@@ -735,8 +810,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let mut rx = [0u8; 256];
         let indication = match self.apsme.receive_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
-            // ambient traffic we cannot decode — normal, not a fault
-            Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
+            // ambient traffic we cannot decode — normal, not a fault, but
+            // traced: see `poll_and_dispatch`
+            Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
+                log::debug!("[ZDO] dropped undecodable frame on receive: {e:?}");
+                return Ok(());
+            }
             Err(e) => return Err(e),
         };
         self.dispatch(indication, cfg, handler).await
@@ -780,7 +859,6 @@ impl<M: Mlme> ZigbeeDevice<M> {
         // unsendable.
         let mut leave_after_reply = None;
 
-        // (response cluster, profile, dst endpoint, src endpoint, length)
         // a broadcast is answered differently from a unicast, both for
         // Match_Desc_req (2.4.4.2.7) and Mgmt_Leave_req (3.6.1.10.3 step 1)
         let nwk_dst = match indication.dst_address {
@@ -792,13 +870,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             self.build_mgmt_leave_rsp(indication.asdu, ShortAddress(nwk_dst), &mut out)
                 .map(|(len, request)| {
                     leave_after_reply = request;
-                    (
-                        descriptor::MGMT_LEAVE_RSP,
-                        ZDP_PROFILE_ID,
-                        ZDO_ENDPOINT,
-                        ZDO_ENDPOINT,
-                        len,
-                    )
+                    zdp_reply(descriptor::MGMT_LEAVE_RSP, len)
                 })
         } else if profile == ZDP_PROFILE_ID && cluster == descriptor::NODE_DESC_RSP {
             // answer to our own Node_Desc_req: hand it to whoever is waiting
@@ -808,9 +880,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             None
         } else if profile == ZDP_PROFILE_ID {
             self.build_zdp_response(cluster, indication.asdu, nwk_dst, cfg, &mut out)
-                .map(|(rsp_cluster, len)| {
-                    (rsp_cluster, ZDP_PROFILE_ID, ZDO_ENDPOINT, ZDO_ENDPOINT, len)
-                })
+                .map(|(rsp_cluster, len)| zdp_reply(rsp_cluster, len))
         } else {
             let request = ClusterRequest {
                 profile_id: profile,
@@ -820,23 +890,26 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 unicast: nwk_dst < NWK_BROADCAST_ADDRESS_MIN,
                 asdu: indication.asdu,
             };
-            handler
-                .handle(&request, &mut out)
-                // application reply: same cluster/profile, endpoints swapped
-                .map(|len| (cluster, profile, src_endpoint, dst_endpoint, len))
+            // the handler owns the response addressing: this layer knows
+            // nothing about how the profile answers
+            handler.handle(&request, &mut out)
         };
 
-        if let Some((rsp_cluster, rsp_profile, rsp_dst_ep, rsp_src_ep, len)) = response {
-            log::debug!("[ZDO] tx response cluster={rsp_cluster:#06x} ({len} bytes) to {src:#06x}");
+        if let Some(reply) = response {
+            log::debug!(
+                "[ZDO] tx response cluster={:#06x} ({} bytes) to {src:#06x}",
+                reply.cluster_id,
+                reply.len
+            );
             self.apsme
                 .unicast_data(
                     &self.nlme,
                     ShortAddress(src),
-                    rsp_dst_ep,
-                    rsp_cluster,
-                    rsp_profile,
-                    rsp_src_ep,
-                    &out[..len],
+                    reply.dst_endpoint,
+                    reply.cluster_id,
+                    reply.profile_id,
+                    reply.src_endpoint,
+                    &out[..reply.len],
                 )
                 .await?;
         } else {

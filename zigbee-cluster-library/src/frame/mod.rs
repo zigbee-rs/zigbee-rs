@@ -1,5 +1,13 @@
-//! General ZCL Frame
+//! The ZCL frame.
+//!
+//! See Section 2.4.1
+//!
+//! A frame is a [`ZclHeader`] followed by a [`ZclFramePayload`], which is
+//! either a global command over attributes or a cluster-specific command.
 #![allow(missing_docs)]
+
+pub mod header;
+pub mod payload;
 
 use byte::BytesExt;
 use byte::TryRead;
@@ -8,9 +16,9 @@ use byte::ctx;
 use heapless::Vec;
 use zigbee_macros::impl_byte;
 
-use crate::common::data_types::ZclDataType;
-use crate::header::ZclHeader;
-use crate::payload::ZclFramePayload;
+use crate::frame::header::ZclHeader;
+use crate::frame::payload::ZclFramePayload;
+use crate::types::data_types::ZclDataType;
 
 impl_byte! {
     /// ZCL Frame
@@ -174,62 +182,45 @@ pub enum Status {
 }
 
 impl Status {
-    fn from_byte(b: u8) -> byte::Result<Self> {
-        match b {
-            0x00 => Ok(Self::Success),
-            0x01 => Ok(Self::Failure),
-            0x7e => Ok(Self::NotAuthorized),
-            0x7f => Ok(Self::Reserved),
-            0x80 => Ok(Self::MalformedCommand),
-            0x81 => Ok(Self::UnsupCommand),
-            0x85 => Ok(Self::InvalidField),
-            0x86 => Ok(Self::UnsupportedAttribute),
-            0x87 => Ok(Self::InvalidValue),
-            0x88 => Ok(Self::ReadOnly),
-            0x89 => Ok(Self::InsufficientSpace),
-            0x8b => Ok(Self::NotFound),
-            0x8c => Ok(Self::UnreportableAttribute),
-            0x8d => Ok(Self::InvalidDataType),
-            0x8e => Ok(Self::InvalidSelector),
-            0x92 => Ok(Self::ReservedInconsistent),
-            0x94 => Ok(Self::Timeout),
-            0x95 => Ok(Self::Abort),
-            0x96 => Ok(Self::InvalidImage),
-            0x97 => Ok(Self::WaitForData),
-            0x98 => Ok(Self::NoImageAvailable),
-            0x99 => Ok(Self::RequireMoreImage),
-            0x9a => Ok(Self::NotificationPending),
-            0xc2 => Ok(Self::ReservedCalibration),
-            0xc3 => Ok(Self::UnsupportedCluster),
-            _ => Err(bad_input!("unknown ZCL status byte")),
-        }
+    /// Decode a status byte, substituting each deprecated value with its
+    /// replacement (2.6.3).
+    pub const fn from_u8(raw: u8) -> Option<Self> {
+        Some(match raw {
+            0x00 | 0x8a | 0xc4 => Self::Success,
+            0x01 | 0x90 | 0x91 | 0x93 | 0xc0 | 0xc1 => Self::Failure,
+            0x7e | 0x8f => Self::NotAuthorized,
+            0x7f => Self::Reserved,
+            0x80 => Self::MalformedCommand,
+            0x81..=0x84 => Self::UnsupCommand,
+            0x85 => Self::InvalidField,
+            0x86 => Self::UnsupportedAttribute,
+            0x87 => Self::InvalidValue,
+            0x88 => Self::ReadOnly,
+            0x89 => Self::InsufficientSpace,
+            0x8b => Self::NotFound,
+            0x8c => Self::UnreportableAttribute,
+            0x8d => Self::InvalidDataType,
+            0x8e => Self::InvalidSelector,
+            0x92 => Self::ReservedInconsistent,
+            0x94 => Self::Timeout,
+            0x95 => Self::Abort,
+            0x96 => Self::InvalidImage,
+            0x97 => Self::WaitForData,
+            0x98 => Self::NoImageAvailable,
+            0x99 => Self::RequireMoreImage,
+            0x9a => Self::NotificationPending,
+            0xc2 => Self::ReservedCalibration,
+            0xc3 => Self::UnsupportedCluster,
+            _ => return None,
+        })
     }
-}
 
-impl<'a> TryRead<'a, ()> for Status {
-    fn try_read(bytes: &'a [u8], _: ()) -> byte::Result<(Self, usize)> {
-        let offset = &mut 0;
-        let raw: u8 = bytes.read_with(offset, ctx::LE)?;
-        // errata: deprecated wire bytes are substituted for their replacements
-        let status = match raw {
-            0x82..=0x84 => Self::UnsupCommand,
-            0x8a | 0xc4 => Self::Success,
-            0x8f => Self::NotAuthorized,
-            0x90 | 0x91 | 0x93 | 0xc0 | 0xc1 => Self::Failure,
-            other => Self::from_byte(other)?,
-        };
-        Ok((status, *offset))
-    }
-}
-
-#[allow(deprecated)]
-impl TryWrite<()> for Status {
-    fn try_write(self, bytes: &mut [u8], _: ()) -> byte::Result<usize> {
-        let offset = &mut 0;
-        // errata: deprecated variants are substituted for their replacements on
-        // the wire
-        let raw: u8 = match self {
-            Self::Unknown => return Err(bad_input!("unknown ZCL status")),
+    /// Encode a status byte, substituting each deprecated variant with its
+    /// replacement (2.6.3).
+    #[allow(deprecated)]
+    pub const fn to_u8(self) -> Option<u8> {
+        Some(match self {
+            Self::Unknown => return None,
             Self::UnsupGeneralCommand
             | Self::UnsupManufClusterCommand
             | Self::UnsupManufGeneralCommand => Self::UnsupCommand as u8,
@@ -241,7 +232,23 @@ impl TryWrite<()> for Status {
             | Self::HardwareFailure
             | Self::SoftwareFailure => Self::Failure as u8,
             other => other as u8,
-        };
+        })
+    }
+}
+
+impl<'a> TryRead<'a, ()> for Status {
+    fn try_read(bytes: &'a [u8], _: ()) -> byte::Result<(Self, usize)> {
+        let offset = &mut 0;
+        let raw: u8 = bytes.read_with(offset, ctx::LE)?;
+        let status = Self::from_u8(raw).ok_or(bad_input!("unknown ZCL status byte"))?;
+        Ok((status, *offset))
+    }
+}
+
+impl TryWrite<()> for Status {
+    fn try_write(self, bytes: &mut [u8], _: ()) -> byte::Result<usize> {
+        let offset = &mut 0;
+        let raw = self.to_u8().ok_or(bad_input!("unknown ZCL status"))?;
         bytes.write_with(offset, raw, ctx::LE)?;
         Ok(*offset)
     }
@@ -466,10 +473,10 @@ mod tests {
     use byte::TryWrite;
 
     use super::*;
-    use crate::common::data_types::EnumN;
-    use crate::common::data_types::SignedN;
-    use crate::common::data_types::UnsignedN;
-    use crate::common::data_types::ZclString;
+    use crate::types::data_types::EnumN;
+    use crate::types::data_types::SignedN;
+    use crate::types::data_types::UnsignedN;
+    use crate::types::data_types::ZclString;
 
     #[test]
     fn parse_attribute_report_payload() {
@@ -658,11 +665,11 @@ mod tests {
 
         let frame = ZclFrame {
             header: ZclHeader {
-                frame_control: crate::header::frame_control::FrameControl(0x18),
+                frame_control: crate::frame::header::frame_control::FrameControl(0x18),
                 manufacturer_code: None,
                 sequence_number: 0x22,
                 command_identifier:
-                    crate::header::command_identifier::CommandIdentifier::ReadAttributesResponse,
+                    crate::frame::header::command_identifier::CommandIdentifier::ReadAttributesResponse,
             },
             payload: ZclFramePayload::GeneralCommand(GeneralCommand::ReadAttributesResponse(
                 records,
@@ -797,11 +804,11 @@ mod tests {
 
         let frame = ZclFrame {
             header: ZclHeader {
-                frame_control: crate::header::frame_control::FrameControl(0x18),
+                frame_control: crate::frame::header::frame_control::FrameControl(0x18),
                 manufacturer_code: None,
                 sequence_number: 0x20,
                 command_identifier:
-                    crate::header::command_identifier::CommandIdentifier::WriteAttributesResponse,
+                    crate::frame::header::command_identifier::CommandIdentifier::WriteAttributesResponse,
             },
             payload: ZclFramePayload::GeneralCommand(GeneralCommand::WriteAttributesResponse(
                 records,
@@ -838,11 +845,11 @@ mod tests {
 
         let frame = ZclFrame {
             header: ZclHeader {
-                frame_control: crate::header::frame_control::FrameControl(0x18),
+                frame_control: crate::frame::header::frame_control::FrameControl(0x18),
                 manufacturer_code: None,
                 sequence_number: 0x20,
                 command_identifier:
-                    crate::header::command_identifier::CommandIdentifier::WriteAttributesResponse,
+                    crate::frame::header::command_identifier::CommandIdentifier::WriteAttributesResponse,
             },
             payload: ZclFramePayload::GeneralCommand(GeneralCommand::WriteAttributesResponse(
                 records,

@@ -1,4 +1,4 @@
-pub use crate::header::manufacturer_code::ManufacturerCode;
+pub use crate::frame::header::manufacturer_code::ManufacturerCode;
 
 /// ZCL wire data type identifier (ZCL spec rev8 2.6.2).
 #[repr(u8)]
@@ -175,9 +175,9 @@ impl TypeId {
     /// length-only fast path for unrestricted fixed-width element types while
     /// still validating null sentinels and restricted bit patterns.
     ///
-    /// Must agree with `ZclSchema::ALL_PATTERNS_VALID` for every schema impl
-    /// whose `TYPE_ID` maps to this variant. There is no compile-time
-    /// enforcement; keep them in sync when adding new schema impls.
+    /// Must agree with `ZclKind::ALL_PATTERNS_VALID` for every kind whose
+    /// `TYPE_ID` maps to this variant. There is no compile-time enforcement;
+    /// keep them in sync when adding new kinds.
     pub const fn all_patterns_valid(self) -> bool {
         matches!(
             self,
@@ -207,6 +207,47 @@ impl TypeId {
                 | Self::IeeeAddress
                 | Self::SecurityKey
         )
+    }
+
+    /// Whether this type is 'analog' (2.6.2): integers, floating point and
+    /// time types.
+    ///
+    /// Reporting treats the two classes differently — an analog attribute is
+    /// reported on a configured reportable change (2.5.11.2.3), a discrete one
+    /// on any change (2.5.11.2.2) — and only an analog attribute's reporting
+    /// configuration carries a reportable change field (2.5.7.1.7).
+    pub const fn is_analog(self) -> bool {
+        matches!(
+            self,
+            Self::Uint8
+                | Self::Uint16
+                | Self::Uint24
+                | Self::Uint32
+                | Self::Uint40
+                | Self::Uint48
+                | Self::Uint56
+                | Self::Uint64
+                | Self::Int8
+                | Self::Int16
+                | Self::Int24
+                | Self::Int32
+                | Self::Int40
+                | Self::Int48
+                | Self::Int56
+                | Self::Int64
+                | Self::SemiPrecision
+                | Self::SinglePrecision
+                | Self::DoublePrecision
+                | Self::TimeOfDay
+                | Self::Date
+                | Self::UtcTime
+        )
+    }
+
+    /// Whether this type can be reported at all (2.5.7.3): array, structure,
+    /// set and bag cannot.
+    pub const fn is_reportable_type(self) -> bool {
+        !matches!(self, Self::Array | Self::Structure | Self::Set | Self::Bag)
     }
 }
 

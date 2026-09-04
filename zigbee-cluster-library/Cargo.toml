@@ -18,6 +18,7 @@ edition = "2024"
 byte.workspace = true
 embedded-hal-async.workspace = true
 heapless.workspace = true
+spin.workspace = true
 
 zigbee-core.workspace = true
 zigbee-mac.workspace = true

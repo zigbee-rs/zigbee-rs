@@ -1,12 +1,11 @@
 use core::marker::PhantomData;
 
-use super::error::AttrError;
+use super::codec::ZclKind;
 use super::ids::AttributeId;
 use super::ids::ClusterId;
 use super::ids::CommandId;
 use super::ids::ManufacturerCode;
 use super::ids::TypeId;
-use super::schema::ZclSchema;
 
 pub struct ReadOnly;
 pub struct WriteOnly;
@@ -128,16 +127,16 @@ impl Cluster {
         self.name
     }
 
-    pub const fn attribute<S, Access, Report>(
+    pub const fn attribute<T, Access, Report>(
         self,
         id: AttributeId,
         name: &'static str,
-    ) -> Attribute<S, Access, Report> {
+    ) -> Attribute<T, Access, Report> {
         Attribute {
             cluster: self,
             id,
             name,
-            _schema: PhantomData,
+            _kind: PhantomData,
             _access: PhantomData,
             _report: PhantomData,
         }
@@ -158,16 +157,16 @@ impl Cluster {
     }
 }
 
-pub struct Attribute<S, Access = ReadOnly, Report = NotReportable> {
+pub struct Attribute<T, Access = ReadOnly, Report = NotReportable> {
     cluster: Cluster,
     id: AttributeId,
     name: &'static str,
-    _schema: PhantomData<S>,
+    _kind: PhantomData<T>,
     _access: PhantomData<Access>,
     _report: PhantomData<Report>,
 }
 
-impl<S: ZclSchema, A: AccessTypestate, R: ReportTypestate> Attribute<S, A, R> {
+impl<T: ZclKind, A: AccessTypestate, R: ReportTypestate> Attribute<T, A, R> {
     pub const fn id(&self) -> AttributeId {
         self.id
     }
@@ -181,7 +180,32 @@ impl<S: ZclSchema, A: AccessTypestate, R: ReportTypestate> Attribute<S, A, R> {
     }
 
     pub const fn type_id(&self) -> TypeId {
-        S::TYPE_ID
+        T::TYPE_ID
+    }
+
+    /// Append this attribute's `type | value` pair to `bytes`, for a
+    /// `Read Attributes Response` record (2.5.2).
+    ///
+    /// The type identifier comes from the descriptor, so a value can only be
+    /// written with the type the specification gives the attribute.
+    pub fn encode(
+        &self,
+        value: T::Value<'_>,
+        bytes: &mut [u8],
+        offset: &mut usize,
+    ) -> byte::Result<()> {
+        T::write_typed(value, bytes, offset)
+    }
+
+    /// Decode this attribute's value from a record body, rejecting a type
+    /// identifier that is not the one the descriptor declares.
+    pub fn decode<'f>(
+        &self,
+        type_id: TypeId,
+        bytes: &'f [u8],
+        offset: &mut usize,
+    ) -> byte::Result<T::Value<'f>> {
+        T::read_typed(type_id, bytes, offset)
     }
 
     pub const fn access_flags(&self) -> AccessFlags {
@@ -191,13 +215,43 @@ impl<S: ZclSchema, A: AccessTypestate, R: ReportTypestate> Attribute<S, A, R> {
     pub const fn attr_info(&self) -> AttrInfo {
         AttrInfo {
             id: self.id,
-            type_id: S::TYPE_ID,
+            type_id: T::TYPE_ID,
             access: A::FLAGS.union(R::FLAG),
         }
     }
 }
 
-impl<S, A, R> core::fmt::Debug for Attribute<S, A, R> {
+/// Writing a `Report Attributes` record is available only for the attributes
+/// the specification marks reportable (2.5.11).
+impl<T: ZclKind, A: AccessTypestate> Attribute<T, A, Reportable> {
+    /// Append this attribute's `Report Attributes` record to `bytes`.
+    pub fn report(
+        &self,
+        value: T::Value<'_>,
+        bytes: &mut [u8],
+        offset: &mut usize,
+    ) -> byte::Result<()> {
+        byte::BytesExt::write_with(bytes, offset, self.id.0, byte::ctx::LE)?;
+        self.encode(value, bytes, offset)
+    }
+}
+
+/// Writing a `Write Attributes` record is available only for writable
+/// attributes (2.5.3).
+impl<T: ZclKind, A: AccessTypestate + Writable, R: ReportTypestate> Attribute<T, A, R> {
+    /// Append this attribute's `Write Attributes` record to `bytes`.
+    pub fn write(
+        &self,
+        value: T::Value<'_>,
+        bytes: &mut [u8],
+        offset: &mut usize,
+    ) -> byte::Result<()> {
+        byte::BytesExt::write_with(bytes, offset, self.id.0, byte::ctx::LE)?;
+        self.encode(value, bytes, offset)
+    }
+}
+
+impl<T, A, R> core::fmt::Debug for Attribute<T, A, R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Attribute")
             .field("cluster", &self.cluster)
@@ -245,12 +299,20 @@ impl<P, D> core::fmt::Debug for Command<P, D> {
     }
 }
 
-/// Attribute metadata returned by `ClusterServer::attribute_list()` for
-/// `DiscoverAttributes`.
+/// What a descriptor knows about an attribute once its Rust type is erased.
+///
+/// This is the form
+/// [`ClusterServer::attributes`](crate::server::ClusterServer::attributes)
+/// hands out, so `Discover Attributes` and the validation passes of
+/// `Write Attributes Undivided` and `Configure Reporting` all work from the
+/// descriptors rather than from a second, hand-written list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttrInfo {
+    /// Identifier the attribute is addressed by (2.4.1.4).
     pub id: AttributeId,
+    /// Wire type its value carries (2.6.2).
     pub type_id: TypeId,
+    /// Whether it can be read, written and reported.
     pub access: AccessFlags,
 }
 
@@ -279,27 +341,4 @@ pub(crate) struct AttributeDescriptor {
     pub type_id: TypeId,
     pub access: AccessFlags,
     pub name: &'static str,
-}
-
-/// Encode a typed attribute value into `buf`. Returns `(TypeId,
-/// bytes_written)`.
-pub fn encode_attr<S: ZclSchema>(
-    value: S::Value<'_>,
-    buf: &mut [u8],
-) -> Result<(TypeId, usize), super::error::ZclError> {
-    let n = S::encode(value, buf)?;
-    Ok((S::TYPE_ID, n))
-}
-
-/// Decode a typed attribute value from `data`. Rejects `TypeId` mismatches and
-/// trailing bytes.
-pub fn decode_attr<S: ZclSchema>(type_id: TypeId, data: &[u8]) -> Result<S::Value<'_>, AttrError> {
-    if type_id != S::TYPE_ID {
-        return Err(AttrError::InvalidDataType);
-    }
-    let (value, used) = S::decode(data).map_err(AttrError::Codec)?;
-    if used != data.len() {
-        return Err(AttrError::Codec(super::error::ZclError::InvalidLength));
-    }
-    Ok(value)
 }

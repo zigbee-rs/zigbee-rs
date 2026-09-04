@@ -883,15 +883,15 @@ mod tests {
     use byte::TryWrite;
 
     use super::ZclDataType;
-    use crate::common::data_types::DataN;
-    use crate::common::data_types::EnumN;
-    use crate::common::data_types::FloatN;
-    use crate::common::data_types::IdentifierType;
-    use crate::common::data_types::MiscType;
-    use crate::common::data_types::SignedN;
-    use crate::common::data_types::TimeType;
-    use crate::common::data_types::UnsignedN;
-    use crate::common::data_types::ZclString;
+    use crate::types::data_types::DataN;
+    use crate::types::data_types::EnumN;
+    use crate::types::data_types::FloatN;
+    use crate::types::data_types::IdentifierType;
+    use crate::types::data_types::MiscType;
+    use crate::types::data_types::SignedN;
+    use crate::types::data_types::TimeType;
+    use crate::types::data_types::UnsignedN;
+    use crate::types::data_types::ZclString;
 
     #[test]
     fn parse_nodata() {

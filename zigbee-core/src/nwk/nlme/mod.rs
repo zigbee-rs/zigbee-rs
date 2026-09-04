@@ -1387,6 +1387,10 @@ where
             let neighbor = &table[candidate_idx];
             let channel = neighbor.logical_channel;
             let pan_id = PanId(neighbor.pan_id);
+            // the network's own EPID, learned from this candidate's beacon: a
+            // join request may name the wildcard 0, and the NIB has to end up
+            // with the network actually joined (3.6.1.4.1.1)
+            let joined_epid = neighbor.extended_pan_id;
             let dest = Address::Short(pan_id, MacShortAddress(neighbor.network_address.0));
             drop(table);
 
@@ -1400,7 +1404,7 @@ where
                             self.nib()
                                 .update_ieee_address(|value| *value = response.device_address);
                             self.nib()
-                                .update_extended_panid(|value| *value = request.extended_pan_id.0);
+                                .update_extended_panid(|value| *value = joined_epid.0);
                             self.nib().update_panid(|value| *value = pan_id.0);
 
                             // read parent fields before the clearing loop
@@ -1619,9 +1623,13 @@ where
         self.mac
             .configure(MacConfig::short_address(response.network_address))
             .await;
-        // 3.2.2.13.3: nwkExtendedPANId names the network we are on again
-        self.nib()
-            .update_extended_panid(|value| *value = request.extended_pan_id.0);
+        // 3.2.2.13.3: nwkExtendedPANId names the network we are on again. a
+        // rejoin request may carry the wildcard 0, which must not erase the
+        // EPID the join stored
+        if request.extended_pan_id.0 != 0 {
+            self.nib()
+                .update_extended_panid(|value| *value = request.extended_pan_id.0);
+        }
 
         NlmeJoinConfirm {
             status: NlmeJoinStatus::Success,
