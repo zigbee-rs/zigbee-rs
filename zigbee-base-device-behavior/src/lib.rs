@@ -179,10 +179,13 @@ impl BaseDeviceBehavior {
             return Ok(None);
         }
 
-        // BDB 7.1 step 4: rejoin on the current channel, so no scan channels
+        // BDB 7.1 step 4: rejoin on the current channel, so no scan channels.
+        // Read the guard's value out before the `.await` — held across it,
+        // it'd deadlock against rejoin_confirm's write of the same NIB field.
         log::debug!("[BDB] step 4: attempt NWK rejoin");
+        let extended_panid = *nib.extended_panid();
         let confirm = device
-            .rejoin(IeeeAddress(*nib.extended_panid()), 0..0, 0)
+            .rejoin(IeeeAddress(extended_panid), 0..0, 0)
             .await?;
 
         // BDB 7.1 step 5
