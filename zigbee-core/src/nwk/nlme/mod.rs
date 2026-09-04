@@ -688,18 +688,14 @@ where
         // 3.6.1.4.1.1: the update id wraps back to zero, so it is treated as
         // a modular counter - an id `b` is newer than `a` when the signed
         // difference `(b - a) as i8` is positive
-        let mut matching = table.iter().filter(|n| {
-            n.extended_pan_id == extended_pan_id && permits(n) && n.potential_parent == 1
-        });
-
-        let Some(first) = matching.next() else {
-            return heapless::Vec::new();
-        };
-
-        let best_update_id = matching
+        let best_update_id = table
+            .iter()
+            .filter(|n| {
+                n.extended_pan_id == extended_pan_id && permits(n) && n.potential_parent == 1
+            })
             .map(|n| n.update_id)
-            .fold(first.update_id, |best, id| {
-                // positive signed difference means id is newer
+            // positive signed difference means id is newer
+            .reduce(|best, id| {
                 if id.wrapping_sub(best).cast_signed() > 0 {
                     id
                 } else {
@@ -707,26 +703,61 @@ where
                 }
             });
 
-        let mut candidates: heapless::Vec<usize, 16> = table
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| {
-                // correct network, accepting joins of the right type, low
-                // enough link cost, a potential parent, and on the most
-                // recent update id
-                n.extended_pan_id == extended_pan_id
-                    && permits(n)
-                    && if join_as_router {
-                        n.router_capacity
-                    } else {
-                        n.end_device_capacity
-                    }
-                    && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
-                    && n.potential_parent == 1
-                    && n.update_id == best_update_id
+        let mut candidates: heapless::Vec<usize, 16> = best_update_id
+            .into_iter()
+            .flat_map(|best_update_id| {
+                table.iter().enumerate().filter(move |(_, n)| {
+                    // correct network, accepting joins of the right type, low
+                    // enough link cost, a potential parent, and on the most
+                    // recent update id
+                    n.extended_pan_id == extended_pan_id
+                        && permits(n)
+                        && if join_as_router {
+                            n.router_capacity
+                        } else {
+                            n.end_device_capacity
+                        }
+                        && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
+                        && n.potential_parent == 1
+                        && n.update_id == best_update_id
+                })
             })
             .map(|(i, _)| i)
             .collect();
+
+        // finding no parent is otherwise indistinguishable from a dead radio:
+        // report what the scan saw next to what was asked for. a mismatched
+        // extended PAN id is by far the most common cause
+        if candidates.is_empty() {
+            if table.is_empty() {
+                log::warn!("[NWK-JOIN] no suitable parent: the scan found no networks at all");
+            } else {
+                log::warn!(
+                    "[NWK-JOIN] no suitable parent for EPID {:#018x} (joining as {}); the scan saw {} network(s):",
+                    extended_pan_id.0,
+                    if join_as_router {
+                        "router"
+                    } else {
+                        "end device"
+                    },
+                    table.len()
+                );
+                for n in table.iter() {
+                    log::warn!(
+                        "[NWK-JOIN]   EPID {:#018x} ch {} permit_joining={} router_capacity={} end_device_capacity={} lqi={} link_cost={} potential_parent={} update_id={}",
+                        n.extended_pan_id.0,
+                        n.logical_channel,
+                        n.permit_joining,
+                        n.router_capacity,
+                        n.end_device_capacity,
+                        n.lqi,
+                        link_cost_from_lqi(n.lqi),
+                        n.potential_parent,
+                        n.update_id
+                    );
+                }
+            }
+        }
 
         // nwkStackProfile == 1 prefers minimum depth (3.6.1.4.1.1)
         if *stack_profile == 1 {
@@ -1333,7 +1364,7 @@ where
         let candidates = self.select_parent_candidates(request.extended_pan_id, join_as_router);
 
         if candidates.is_empty() {
-            log::warn!("[NWK-JOIN] no suitable neighbors");
+            // select_parent_candidates already logged why
             return fail(NlmeJoinStatus::NotPermitted);
         }
 

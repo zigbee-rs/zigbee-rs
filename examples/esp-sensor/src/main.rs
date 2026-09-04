@@ -59,7 +59,10 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 
 /// Extended PAN ID of the network to join.
-const EXTENDED_PAN_ID: u64 = 0x0000000000000000;
+///
+/// This is a placeholder and will not match any real network!
+/// replace it with the Extended PAN ID of your own coordinator.
+const EXTENDED_PAN_ID: u64 = 0xabcdef0123456789;
 
 /// Channel to scan on (must match the coordinator's channel).
 const CHANNEL: u8 = 11;
