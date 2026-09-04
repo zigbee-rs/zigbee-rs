@@ -35,22 +35,41 @@ zigbee-types = { version = "0.1.0-alpha.5", path = "../zigbee-types" }
 [features]
 default = []
 alloc = []
-esp32c6 = [
+
+# shared plumbing for the `esp-radio` backed IEEE 802.15.4 backend.
+esp = [
     "alloc",
     "dep:esp-radio",
     "dep:esp-hal",
     "dep:esp-alloc",
     "dep:esp-sync",
-    "esp-radio/esp32c6",
-    "esp-hal/esp32c6",
-    "esp-alloc/esp32c6",
-    "esp-sync/esp32c6",
     "dep:embassy-sync",
     "dep:embassy-time",
     "dep:embassy-futures",
 ]
+esp32c6 = [
+    "esp",
+    "esp-radio/esp32c6",
+    "esp-hal/esp32c6",
+    "esp-alloc/esp32c6",
+    "esp-sync/esp32c6",
+]
+esp32c5 = [
+    "esp",
+    "esp-radio/esp32c5",
+    "esp-hal/esp32c5",
+    "esp-alloc/esp32c5",
+    "esp-sync/esp32c5",
+]
+esp32h2 = [
+    "esp",
+    "esp-radio/esp32h2",
+    "esp-hal/esp32h2",
+    "esp-alloc/esp32h2",
+    "esp-sync/esp32h2",
+]
 
 [package.metadata.docs.rs]
-# the esp32c6 backend pulls in esp-hal, which only builds for the chip's target
+# the esp backend pulls in esp-hal, which only builds for the chip's target
 features = ["esp32c6"]
 targets = ["riscv32imac-unknown-none-elf"]

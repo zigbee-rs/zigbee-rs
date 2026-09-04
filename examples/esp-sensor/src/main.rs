@@ -52,8 +52,10 @@ esp_bootloader_esp_idf::esp_app_desc!();
 ///
 /// MUST be adjusted to your partition table: it must not overlap the
 /// bootloader, the firmware image, or the esp-idf partition table. it must be
-/// erase-sector aligned (4 KiB on esp32-c6) and span at least two sectors so
-/// sequential-storage has a spare sector for garbage collection.
+/// erase-sector aligned (4 KiB on both the esp32-c6 and the esp32-h2) and span
+/// at least two sectors so sequential-storage has a spare sector for garbage
+/// collection. the address below assumes a 4 MiB flash, which both the
+/// ESP32-C6-DevKitC-1 and the ESP32-H2-DevKitM-1 have.
 const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 
 /// Extended PAN ID of the network to join.
