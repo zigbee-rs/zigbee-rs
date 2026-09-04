@@ -49,9 +49,6 @@ const ASSOCIATE_POLL_RETRIES: u8 = 5;
 // number of poll rounds per steady-state MLME-POLL before reporting no data
 const POLL_DATA_RETRIES: u8 = 5;
 
-// bounds acquiring the radio mutex — nothing that unexpectedly held it can
-// wedge a caller forever. Well above any legitimate single operation
-// (scan_network is the longest, ~2.7s worst case).
 const RADIO_LOCK_TIMEOUT_MS: u64 = 5_000;
 
 /// `esp-radio` [`Mlme`] implementation
@@ -85,12 +82,15 @@ impl<'a> EspMlme<'a> {
         self.ieee_address
     }
 
-    /// All `Mlme` methods but [`Self::configure`] use this instead of
-    /// `self.inner.lock().await` directly, to get [`RADIO_LOCK_TIMEOUT_MS`].
-    /// `configure` returns `()` and can't propagate the error, so it locks
-    /// unbounded (see its call site).
-    async fn lock(&self) -> Result<FairMutexGuard<'_, CriticalSectionRawMutex, EspMlmeInner<'a>>, MacError> {
-        match select(Timer::after_millis(RADIO_LOCK_TIMEOUT_MS), self.inner.lock()).await {
+    async fn lock(
+        &self,
+    ) -> Result<FairMutexGuard<'_, CriticalSectionRawMutex, EspMlmeInner<'a>>, MacError> {
+        match select(
+            Timer::after_millis(RADIO_LOCK_TIMEOUT_MS),
+            self.inner.lock(),
+        )
+        .await
+        {
             Either::First(_) => Err(MacError::RadioLockTimeout),
             Either::Second(Ok(guard)) => Ok(guard),
             Either::Second(Err(_)) => {
@@ -713,7 +713,10 @@ impl Mlme for EspMlme<'_> {
         channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError> {
-        self.lock().await?.scan_network(ty, channels, duration).await
+        self.lock()
+            .await?
+            .scan_network(ty, channels, duration)
+            .await
     }
 
     async fn associate(
@@ -722,7 +725,10 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        self.lock().await?.associate(channel, dest, capabilities).await
+        self.lock()
+            .await?
+            .associate(channel, dest, capabilities)
+            .await
     }
 
     async fn poll_data(

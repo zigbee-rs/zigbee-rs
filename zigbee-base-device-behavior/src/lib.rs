@@ -184,9 +184,7 @@ impl BaseDeviceBehavior {
         // it'd deadlock against rejoin_confirm's write of the same NIB field.
         log::debug!("[BDB] step 4: attempt NWK rejoin");
         let extended_panid = *nib.extended_panid();
-        let confirm = device
-            .rejoin(IeeeAddress(extended_panid), 0..0, 0)
-            .await?;
+        let confirm = device.rejoin(IeeeAddress(extended_panid), 0..0, 0).await?;
 
         // BDB 7.1 step 5
         if confirm.status == NlmeJoinStatus::Success {

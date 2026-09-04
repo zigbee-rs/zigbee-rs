@@ -17,8 +17,6 @@ use embassy_sync::semaphore::Semaphore;
 use embassy_sync::semaphore::SemaphoreReleaser;
 pub use embassy_sync::semaphore::WaitQueueFull;
 
-/// Covers this crate's actual callers: application-level sends, `rx_loop`,
-/// `link_maintenance`, one commissioning task.
 const MAX_WAITERS: usize = 4;
 
 type Permits<M> = FairSemaphore<M, MAX_WAITERS>;
