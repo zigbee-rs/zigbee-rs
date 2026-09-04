@@ -169,6 +169,33 @@ where
     }
 }
 
+/// Chains four handlers, left to right.
+impl<A, B, C, D> ClusterRequestHandler for (A, B, C, D)
+where
+    A: ClusterRequestHandler,
+    B: ClusterRequestHandler,
+    C: ClusterRequestHandler,
+    D: ClusterRequestHandler,
+{
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
+        (&self.0, (&self.1, &self.2, &self.3)).handle(request, out)
+    }
+}
+
+/// Chains five handlers, left to right.
+impl<A, B, C, D, E> ClusterRequestHandler for (A, B, C, D, E)
+where
+    A: ClusterRequestHandler,
+    B: ClusterRequestHandler,
+    C: ClusterRequestHandler,
+    D: ClusterRequestHandler,
+    E: ClusterRequestHandler,
+{
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
+        (&self.0, (&self.1, &self.2, &self.3, &self.4)).handle(request, out)
+    }
+}
+
 /// A ZDP response, which always travels between the two ZDO endpoints on the
 /// Device Profile (2.4).
 const fn zdp_reply(cluster_id: u16, len: usize) -> ClusterReply {
@@ -498,8 +525,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
     async fn finish_rejoin(&self) -> Result<(), NetworkError> {
         self.mark_rejoined();
         // 3.6.10.2: renegotiated after every rejoin, even with the same parent
+        log::debug!("[ZDO] rejoined, negotiating end-device timeout");
         let _ = self.nlme.negotiate_end_device_timeout().await;
-        self.announce_self().await
+        log::debug!("[ZDO] announcing self");
+        let result = self.announce_self().await;
+        log::debug!("[ZDO] rejoin complete: {result:?}");
+        result
     }
 
     /// Security Manager: poll for a Transport-Key command and install the
@@ -595,10 +626,6 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// Wait until the network key is installed and the device is joined.
-    ///
-    /// Gates the receive loop: spawn the RX task before commissioning and
-    /// await this first, so the parent is not polled while the join is still
-    /// in progress.
     pub async fn wait_until_joined(&self) {
         self.joined.wait_set().await;
     }
@@ -760,8 +787,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let indication = match self.apsme.poll_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
             // ambient traffic we cannot decode (foreign or pre-key frames caught
-            // in the receive window) — normal, not a fault.
-            Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
+            // in the receive window) — normal, not a fault. Traced because a
+            // frame that was meant for us and failed to decrypt looks exactly
+            // like never having received one.
+            Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
+                log::debug!("[ZDO] dropped undecodable frame on poll: {e:?}");
+                return Ok(());
+            }
             Err(e) => return Err(e),
         };
         self.dispatch(indication, cfg, handler).await
@@ -778,8 +810,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let mut rx = [0u8; 256];
         let indication = match self.apsme.receive_aps_frame(&self.nlme, &mut rx).await {
             Ok(indication) => indication,
-            // ambient traffic we cannot decode — normal, not a fault
-            Err(NetworkError::ParseError | NetworkError::SecurityError(_)) => return Ok(()),
+            // ambient traffic we cannot decode — normal, not a fault, but
+            // traced: see `poll_and_dispatch`
+            Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
+                log::debug!("[ZDO] dropped undecodable frame on receive: {e:?}");
+                return Ok(());
+            }
             Err(e) => return Err(e),
         };
         self.dispatch(indication, cfg, handler).await

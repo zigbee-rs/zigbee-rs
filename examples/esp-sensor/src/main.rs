@@ -16,30 +16,33 @@ use esp_storage::FlashStorage;
 use static_cell::StaticCell;
 use zigbee::CurrentPowerMode;
 use zigbee::CurrentPowerSourceLevel;
+use zigbee::DeviceConfig;
 use zigbee::LogicalType;
+use zigbee::NetworkConfig;
 use zigbee::PowerSource;
+use zigbee::TimingConfig;
 use zigbee::aps::aib;
 use zigbee::aps::apsde::ApsdeSapConfirmStatus;
+use zigbee::config::StackConfig;
 use zigbee::nwk::nib::CapabilityInformation;
 use zigbee::zdo::config::DiscoveryType;
 use zigbee::zdo::descriptor::DeviceDescriptorConfig;
 use zigbee::zdo::descriptor::EndpointDescriptor;
 use zigbee::zdo::descriptor::NodeDescriptorConfig;
 use zigbee::zdo::descriptor::PowerDescriptorConfig;
-use zigbee::DeviceConfig;
-use zigbee::NetworkConfig;
-use zigbee::TimingConfig;
-use zigbee::config::StackConfig;
 use zigbee_cluster_library::clusters::general::basic;
 use zigbee_cluster_library::clusters::general::basic::BasicServer;
 use zigbee_cluster_library::clusters::general::identify;
 use zigbee_cluster_library::clusters::general::identify::IdentifyServer;
 use zigbee_cluster_library::clusters::measurement::temperature;
+use zigbee_cluster_library::clusters::measurement::temperature::TemperatureMeasurementServer;
 use zigbee_cluster_library::profile;
 use zigbee_cluster_library::reporting::AttributeReportBuilder;
-use zigbee_cluster_library::reporting::ConfigureReportingServer;
-use zigbee_cluster_library::sender::ZclSender;
+use zigbee_cluster_library::reporting::AttributeReporting;
+use zigbee_cluster_library::reporting::ReportingTable;
 use zigbee_cluster_library::sender::ZclReportTarget;
+use zigbee_cluster_library::sender::ZclSender;
+use zigbee_cluster_library::server::UnsupportedClusterResponder;
 use zigbee_cluster_library::types::integers::Int16;
 use zigbee_mac::esp::EspMlme;
 use zigbee_types::IeeeAddress;
@@ -116,10 +119,15 @@ static BASIC: BasicServer = BasicServer {
 type ZigbeeFlash = zigbee::storage::FlashStorage<BlockingAsync<FlashStorage<'static>>>;
 
 /// Cluster servers answering inbound requests, in the order they are tried.
+///
+/// The responder comes last: it answers only what no server above it claimed,
+/// so a cluster this endpoint does not serve draws UNSUPPORTED_CLUSTER rather
+/// than silence (ZCL 2.5.12.2).
 type Handler = (
     BasicServer<'static>,
-    ConfigureReportingServer,
     &'static IdentifyServer,
+    &'static TemperatureMeasurementServer<'static>,
+    UnsupportedClusterResponder<'static>,
 );
 
 /// The running stack this application's tasks share.
@@ -179,6 +187,28 @@ const POLL_INTERVAL_MS: u32 = 500;
 /// Identify state, shared between the receive task and the application.
 static IDENTIFY: IdentifyServer = IdentifyServer::new();
 
+/// Reporting configurations the coordinator sets up with Configure Reporting.
+///
+/// Filled by the receive task and read by the reporting loop below, so the
+/// intervals Zigbee2MQTT asks for during interview are the ones this device
+/// actually reports on.
+static REPORTING: ReportingTable<4> = ReportingTable::new();
+
+/// Temperature Measurement server, shared between the receive task (which
+/// answers reads and reporting configuration) and the application (which feeds
+/// it samples).
+static TEMPERATURE: TemperatureMeasurementServer =
+    TemperatureMeasurementServer::new(MIN_TEMPERATURE, MAX_TEMPERATURE).with_reporting(&REPORTING);
+
+/// Measurement range of the sensor, in hundredths of a degree Celsius
+/// (ZCL 4.4.2.2.1).
+const MIN_TEMPERATURE: i16 = -4000;
+const MAX_TEMPERATURE: i16 = 12_500;
+
+/// Cadence used for an attribute the coordinator never configured; a
+/// configuration that arrives later takes over (ZCL 2.5.7.1.6).
+const DEFAULT_REPORT_INTERVAL_SECS: u32 = 30;
+
 /// Drives the stack: receives and answers ZDP discovery, Basic-cluster and
 /// Identify reads, Identify commands, Configure Reporting requests and APS
 /// commands, keeps the parent link alive, and persists NIB/AIB changes.
@@ -229,7 +259,12 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let mac = EspMlme::new(ieee802154, esp_radio::ieee802154::Config::default());
     println!("Device IEEE address: {:#018x}", mac.ieee_address());
 
-    let handler = (BASIC, ConfigureReportingServer, &IDENTIFY);
+    let handler = (
+        BASIC,
+        &IDENTIFY,
+        &TEMPERATURE,
+        UnsupportedClusterResponder::new(&INPUT_CLUSTERS),
+    );
     let stack: &'static Stack = STACK.init(Stack::new(mac, config, handler, storage));
 
     // the stack task is all it takes: it commissions the device, answers the
@@ -240,9 +275,18 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     stack.wait_until_joined().await;
 
     let nib = zigbee::nwk::nib::get_ref();
+    // the parent is who we poll for downstream traffic; a coordinator routing
+    // to us via a different device means our mail is queued somewhere we never
+    // ask (3.6.6)
+    let parent = nib
+        .neighbor_table()
+        .iter()
+        .find(|n| n.relationship == zigbee::nwk::nib::relationship::PARENT)
+        .map_or(0xffff, |n| n.network_address.0);
     println!(
-        "On network: addr={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
+        "On network: addr={:#06x} parent={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
         *nib.network_address(),
+        parent,
         *nib.panid(),
         *nib.extended_panid(),
         stack.config().channel(),
@@ -255,14 +299,38 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         println!("Link key installed: key={:02x?}", pair.link_key);
     }
 
+    let cluster = temperature::CLUSTER.id();
+    let attribute = temperature::MEASURED_VALUE.id();
+
     let mut zcl_seq: u8 = 0;
     let mut sample: i16 = 2300; // 23.00 °C in hundredths
+    let mut now_secs: u32 = 0;
+    let mut last_unconfigured_report: u32 = 0;
     loop {
+        Timer::after_secs(1).await;
+        now_secs += 1;
+
+        sample = sample.saturating_add(1);
+        TEMPERATURE.set_measured_value(sample);
+        let value = TEMPERATURE.measured_value();
+
+        // a configured attribute reports on the intervals and reportable
+        // change the coordinator asked for; an unconfigured one on our own
+        // cadence
+        let due = if REPORTING.configuration(cluster, attribute).is_some() {
+            REPORTING.should_report(cluster, attribute, now_secs, i64::from(value))
+        } else {
+            now_secs.saturating_sub(last_unconfigured_report) >= DEFAULT_REPORT_INTERVAL_SECS
+        };
+        if !due {
+            continue;
+        }
+
         zcl_seq = zcl_seq.wrapping_add(1);
 
         let mut buf = [0u8; 64];
         let report = AttributeReportBuilder::new(&mut buf, zcl_seq)
-            .and_then(|frame| frame.push(&temperature::MEASURED_VALUE, Int16(sample)))
+            .and_then(|frame| frame.push(&temperature::MEASURED_VALUE, Int16(value)))
             .and_then(AttributeReportBuilder::finish)
             .expect("encode temperature report");
 
@@ -282,15 +350,14 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
 
         match result {
             Ok(confirm) if confirm.status == ApsdeSapConfirmStatus::Success => {
-                println!("Reported temperature: {} (seq={})", sample, zcl_seq);
+                println!("Reported temperature: {} (seq={})", value, zcl_seq);
+                REPORTING.reported(cluster, attribute, now_secs, i64::from(value));
+                last_unconfigured_report = now_secs;
             }
             // a lost parent link is detected by the stack and handled by the
             // link task; anything reported here is local or transient
             Ok(confirm) => println!("Report failed: {:?}", confirm.status),
             Err(e) => println!("Encode error: {:?}", e),
         }
-
-        sample = sample.wrapping_add(10);
-        Timer::after_secs(30).await;
     }
 }

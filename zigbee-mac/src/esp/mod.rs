@@ -99,6 +99,21 @@ impl<'a> EspMlme<'a> {
             }
         }
     }
+
+    async fn receive_data(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
+        loop {
+            // drain under a brief lock, then idle-wait lock-free so a
+            // concurrent transmit can acquire the radio while we
+            // wait for the next frame
+            {
+                let mut inner = self.lock().await?;
+                if let Some(received) = inner.try_drain(buf)? {
+                    return Ok(received);
+                }
+            }
+            driver::wait_rx_signal().await;
+        }
+    }
 }
 
 struct EspMlmeInner<'a> {
@@ -577,7 +592,7 @@ impl EspMlmeInner<'_> {
         // a response elicited by an earlier poll may have landed after its
         // listen window closed; deliver it instead of flushing it away
         if let Some((len, lqi)) = self.take_unicast_data(buf)? {
-            log::debug!("[MLME-POLL] rx buffered data len={len}");
+            log::trace!("[MLME-POLL] rx buffered data len={len}");
             return Ok((len, lqi));
         }
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
@@ -596,7 +611,7 @@ impl EspMlmeInner<'_> {
             // start_receive is a no-op if already receiving
             self.driver.start_receive();
             if let Some((len, lqi)) = self.recv_data_response(timeout_us, buf).await? {
-                log::debug!("[MLME-POLL] rx data len={len}");
+                log::trace!("[MLME-POLL] rx data len={len}");
                 return Ok((len, lqi));
             }
         }
@@ -604,8 +619,10 @@ impl EspMlmeInner<'_> {
         // itself is unreachable, which the NWK layer treats as a missed
         // keepalive (3.6.10.3)
         if acked {
+            log::trace!("[MLME-POLL] no data");
             Err(MacError::NoData)
         } else {
+            log::trace!("[MLME-POLL] no ack");
             Err(MacError::NoAck)
         }
     }
@@ -664,7 +681,7 @@ impl EspMlmeInner<'_> {
         } else {
             self.transmit_acked(&frame_buf[..total_len]).await?;
         }
-        log::debug!("[MLME] tx data, len={total_len}");
+        log::trace!("[MLME] tx data, len={total_len}");
 
         Ok(())
     }
@@ -740,17 +757,12 @@ impl Mlme for EspMlme<'_> {
     }
 
     async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
-        loop {
-            // drain under a brief lock, then idle-wait lock-free so a
-            // concurrent transmit can acquire the radio while we
-            // wait for the next frame
-            {
-                let mut inner = self.lock().await?;
-                if let Some(received) = inner.try_drain(buf)? {
-                    return Ok(received);
-                }
+        match self.receive_data(buf).await {
+            Ok((len, lqi)) => {
+                log::trace!("[MLME] rx data, len={len}");
+                Ok((len, lqi))
             }
-            driver::wait_rx_signal().await;
+            Err(e) => Err(e),
         }
     }
 

@@ -122,6 +122,19 @@ where
     }
 }
 
+/// A configured extended PAN id of zero steers onto any network (BDB 8.2).
+const ANY_EXTENDED_PAN_ID: u64 = 0;
+
+/// Whether a remembered network satisfies the configured extended PAN id.
+///
+/// A configured wildcard accepts whatever network the device is on. Otherwise
+/// the identifiers have to agree — including the case where the remembered
+/// network carries no identifier at all, which cannot be shown to be the
+/// configured one and so does not match.
+const fn epid_matches(configured: u64, remembered: u64) -> bool {
+    configured == ANY_EXTENDED_PAN_ID || configured == remembered
+}
+
 // polls `main` to completion while the background futures keep running
 async fn drive<T>(
     main: impl Future<Output = T>,
@@ -201,15 +214,34 @@ where
     /// Runs the BDB initialization procedure first (7.1): a device that is
     /// still on a network rejoins it, keeping its keys. If that fails, the
     /// remembered network is forgotten and network steering commissions the
-    /// device from scratch (BDB 8.2). [`Self::run`] does this for you; call it
+    /// device from scratch (BDB 8.2).
+    ///
+    /// A remembered network whose extended PAN id is not the configured one is
+    /// forgotten before the rejoin, so changing the configured network takes
+    /// effect on the next boot rather than being masked by the persisted
+    /// information base. [`Self::run`] does this for you; call it
     /// directly only when driving the stack's loops as separate tasks, and make
     /// sure [`Self::rx_loop`] is already running — it delivers the Trust
     /// Center's replies.
     pub async fn commission(&self, delay: &mut impl DelayNs) -> Result<Commissioned, NetworkError> {
-        self.resume().await;
+        let on_a_network = self.resume().await;
         let device = &self.device;
         let config = &self.config;
         let bdb = &self.bdb;
+
+        // the information base outlives a firmware update, so a device that
+        // joined under an earlier configuration would keep rejoining that
+        // network and silently ignore the new one
+        let configured_epid = config.network().extended_pan_id.0;
+        let remembered_epid = *nib::get_ref().extended_panid();
+        if on_a_network && !epid_matches(configured_epid, remembered_epid) {
+            log::warn!(
+                "[APP] joined network epid={remembered_epid:#018x} is not the configured \
+                 {configured_epid:#018x}, forgetting it and commissioning again"
+            );
+            device.forget_network();
+        }
+
         match bdb.start_initialization_procedure(device, delay).await? {
             Some(confirm) if confirm.status == NlmeJoinStatus::Success => {
                 return Ok(Commissioned::Rejoined(confirm));
@@ -271,6 +303,7 @@ where
             .capability_information()
             .receiver_on_when_idle()
         {
+            log::trace!("[app]: start rx loop (rx on)");
             loop {
                 // dispatching a leave closes the gate again, parking the loop
                 // until the device has been rejoined or re-commissioned
@@ -281,6 +314,7 @@ where
             }
         }
 
+        log::trace!("[app]: start rx loop (rx off, polling)");
         loop {
             device.wait_until_joined().await;
             match device.poll_and_dispatch(cfg, handler).await {
@@ -390,5 +424,32 @@ where
             return Err(NetworkError::ParentLinkFailure);
         }
         Err(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NETWORK: u64 = 0x00124b002a9a7166;
+
+    // BDB 8.2: a wildcard takes whatever network the device is on
+    #[test]
+    fn a_wildcard_configuration_accepts_any_remembered_network() {
+        assert!(epid_matches(ANY_EXTENDED_PAN_ID, NETWORK));
+        assert!(epid_matches(ANY_EXTENDED_PAN_ID, ANY_EXTENDED_PAN_ID));
+    }
+
+    #[test]
+    fn a_configured_network_accepts_only_itself() {
+        assert!(epid_matches(NETWORK, NETWORK));
+        assert!(!epid_matches(NETWORK, 0x00124b002a9a7167));
+    }
+
+    // a device joined before the identifier was recorded cannot be shown to be
+    // on the configured network, so it is re-commissioned rather than resumed
+    #[test]
+    fn a_remembered_network_without_an_identifier_does_not_match() {
+        assert!(!epid_matches(NETWORK, ANY_EXTENDED_PAN_ID));
     }
 }

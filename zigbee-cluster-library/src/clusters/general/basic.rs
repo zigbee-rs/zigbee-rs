@@ -14,6 +14,7 @@ use zigbee_core::zdo::ClusterRequestHandler;
 use crate::frame::Status;
 use crate::server::ClusterServer;
 use crate::types::codec::zcl_type;
+use crate::types::descriptors::AttrInfo;
 use crate::types::descriptors::Attribute;
 use crate::types::descriptors::Cluster;
 use crate::types::descriptors::ReadOnly;
@@ -77,6 +78,18 @@ pub mod attribute {
     pub const POWER_SOURCE: u16 = super::POWER_SOURCE.id().0;
 }
 
+/// Every attribute this cluster implements, in ascending identifier order
+/// (2.5.13.3).
+const ATTRIBUTES: &[AttrInfo] = &[
+    ZCL_VERSION.attr_info(),
+    APPLICATION_VERSION.attr_info(),
+    STACK_VERSION.attr_info(),
+    HW_VERSION.attr_info(),
+    MANUFACTURER_NAME.attr_info(),
+    MODEL_IDENTIFIER.attr_info(),
+    POWER_SOURCE.attr_info(),
+];
+
 /// Basic cluster server holding the device identity attribute values.
 #[derive(Debug, Clone, Copy)]
 pub struct BasicServer<'a> {
@@ -94,6 +107,10 @@ pub struct BasicServer<'a> {
 impl ClusterServer for BasicServer<'_> {
     fn cluster(&self) -> Cluster {
         CLUSTER
+    }
+
+    fn attributes(&self) -> &'static [AttrInfo] {
+        ATTRIBUTES
     }
 
     fn encode_value(&self, id: AttributeId, out: &mut [u8], offset: &mut usize) -> Status {

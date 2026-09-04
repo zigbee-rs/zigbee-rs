@@ -24,6 +24,7 @@ use crate::frame::payload::ZclFramePayload;
 use crate::server::ClusterCommand;
 use crate::server::ClusterServer;
 use crate::server::CommandOutcome;
+use crate::types::descriptors::AttrInfo;
 use crate::types::descriptors::Attribute;
 use crate::types::descriptors::Cluster;
 use crate::types::descriptors::ReadWrite;
@@ -64,6 +65,10 @@ pub mod command {
     /// Generated: answer to [`IDENTIFY_QUERY`], carrying the time remaining.
     pub const IDENTIFY_QUERY_RESPONSE: u8 = 0x00;
 }
+
+/// Every attribute this cluster implements, in ascending identifier order
+/// (2.5.13.3).
+const ATTRIBUTES: &[AttrInfo] = &[IDENTIFY_TIME.attr_info()];
 
 // cluster-specific, server->client, default response disabled
 const CLUSTER_RESPONSE_FRAME_CONTROL: u8 = 0x19;
@@ -112,6 +117,10 @@ impl IdentifyServer {
 impl ClusterServer for IdentifyServer {
     fn cluster(&self) -> Cluster {
         CLUSTER
+    }
+
+    fn attributes(&self) -> &'static [AttrInfo] {
+        ATTRIBUTES
     }
 
     fn encode_value(&self, id: AttributeId, out: &mut [u8], offset: &mut usize) -> Status {

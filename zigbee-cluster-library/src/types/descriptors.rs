@@ -299,12 +299,20 @@ impl<P, D> core::fmt::Debug for Command<P, D> {
     }
 }
 
-/// Attribute metadata returned by `ClusterServer::attribute_list()` for
-/// `DiscoverAttributes`.
+/// What a descriptor knows about an attribute once its Rust type is erased.
+///
+/// This is the form
+/// [`ClusterServer::attributes`](crate::server::ClusterServer::attributes)
+/// hands out, so `Discover Attributes` and the validation passes of
+/// `Write Attributes Undivided` and `Configure Reporting` all work from the
+/// descriptors rather than from a second, hand-written list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttrInfo {
+    /// Identifier the attribute is addressed by (2.4.1.4).
     pub id: AttributeId,
+    /// Wire type its value carries (2.6.2).
     pub type_id: TypeId,
+    /// Whether it can be read, written and reported.
     pub access: AccessFlags,
 }
 

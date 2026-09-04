@@ -5,6 +5,17 @@
 //! Provides an interface to temperature measurement functionality, including
 //! configuration and provision of notifications of temperature measurements.
 
+use core::sync::atomic::AtomicI16;
+use core::sync::atomic::Ordering;
+
+use zigbee_core::zdo::ClusterReply;
+use zigbee_core::zdo::ClusterRequest;
+use zigbee_core::zdo::ClusterRequestHandler;
+
+use crate::frame::Status;
+use crate::reporting::AttributeReporting;
+use crate::server::ClusterServer;
+use crate::types::descriptors::AttrInfo;
 use crate::types::descriptors::Attribute;
 use crate::types::descriptors::Cluster;
 use crate::types::descriptors::ReadOnly;
@@ -36,6 +47,137 @@ pub const MAX_MEASURED_VALUE: Attribute<Int16> =
 
 /// `Tolerance`, the magnitude of the measurement error (ZCL 4.4.2.2.1.4).
 pub const TOLERANCE: Attribute<Uint16> = CLUSTER.attribute(AttributeId(0x0003), "Tolerance");
+
+/// Every attribute this cluster implements, in ascending identifier order
+/// (2.5.13.3).
+const ATTRIBUTES: &[AttrInfo] = &[
+    MEASURED_VALUE.attr_info(),
+    MIN_MEASURED_VALUE.attr_info(),
+    MAX_MEASURED_VALUE.attr_info(),
+    TOLERANCE.attr_info(),
+];
+
+/// Temperature Measurement cluster server (ZCL 4.4).
+///
+/// Holds the mandatory attributes and answers reads and discovery for them.
+/// The application owns the sensor: it pushes each sample in with
+/// [`set_measured_value`](Self::set_measured_value) and emits the reports
+/// itself.
+///
+/// Whether a coordinator may configure those reports is
+/// [`with_reporting`](Self::with_reporting): given a store, `Configure
+/// Reporting` is accepted and the application follows the intervals it
+/// accepted; without one, the reporting configuration commands are refused and
+/// the device alone decides when to report.
+pub struct TemperatureMeasurementServer<'a> {
+    measured_value: AtomicI16,
+    min_measured_value: i16,
+    max_measured_value: i16,
+    tolerance: Option<u16>,
+    reporting: Option<&'a dyn AttributeReporting>,
+}
+
+impl<'a> TemperatureMeasurementServer<'a> {
+    /// A server measuring within `min..=max`, in hundredths of a degree
+    /// Celsius (ZCL 4.4.2.2.1).
+    ///
+    /// `MeasuredValue` starts at `min` until the application reports its first
+    /// sample. Reporting stays on the device's own terms until
+    /// [`with_reporting`](Self::with_reporting) hands over a store.
+    pub const fn new(min: i16, max: i16) -> Self {
+        Self {
+            measured_value: AtomicI16::new(min),
+            min_measured_value: min,
+            max_measured_value: max,
+            tolerance: None,
+            reporting: None,
+        }
+    }
+
+    /// Let a coordinator configure reporting, keeping what it asks for in
+    /// `store` (ZCL 2.5.7).
+    ///
+    /// Reporting is mandatory for `MeasuredValue` (ZCL 4.4.2.2.1.1), so a
+    /// server that leaves this unset refuses `Configure Reporting` with
+    /// `UNREPORTABLE_ATTRIBUTE` and a strict coordinator will call that a
+    /// failed interview step.
+    #[must_use]
+    pub const fn with_reporting(mut self, store: &'a dyn AttributeReporting) -> Self {
+        self.reporting = Some(store);
+        self
+    }
+
+    /// Declare the measurement error `Tolerance` describes (ZCL 4.4.2.2.1.4).
+    #[must_use]
+    pub const fn with_tolerance(mut self, tolerance: u16) -> Self {
+        self.tolerance = Some(tolerance);
+        self
+    }
+
+    /// Latest sample, in hundredths of a degree Celsius.
+    pub fn measured_value(&self) -> i16 {
+        self.measured_value.load(Ordering::Relaxed)
+    }
+
+    /// Record a new sample, clamped to the range this server was built with
+    /// (ZCL 4.4.2.2.1.1).
+    pub fn set_measured_value(&self, value: i16) {
+        let clamped = value.clamp(self.min_measured_value, self.max_measured_value);
+        self.measured_value.store(clamped, Ordering::Relaxed);
+    }
+}
+
+impl ClusterServer for TemperatureMeasurementServer<'_> {
+    fn cluster(&self) -> Cluster {
+        CLUSTER
+    }
+
+    fn attributes(&self) -> &'static [AttrInfo] {
+        if self.tolerance.is_some() {
+            ATTRIBUTES
+        } else {
+            // Tolerance is optional (ZCL 4.4.2.2.1.4); do not advertise what
+            // this server cannot answer
+            &ATTRIBUTES[..3]
+        }
+    }
+
+    fn encode_value(&self, id: AttributeId, out: &mut [u8], offset: &mut usize) -> Status {
+        let encoded = match id.0 {
+            attribute::MEASURED_VALUE => {
+                MEASURED_VALUE.encode(Int16(self.measured_value()), out, offset)
+            }
+            attribute::MIN_MEASURED_VALUE => {
+                MIN_MEASURED_VALUE.encode(Int16(self.min_measured_value), out, offset)
+            }
+            attribute::MAX_MEASURED_VALUE => {
+                MAX_MEASURED_VALUE.encode(Int16(self.max_measured_value), out, offset)
+            }
+            attribute::TOLERANCE => {
+                let Some(tolerance) = self.tolerance else {
+                    return Status::UnsupportedAttribute;
+                };
+                TOLERANCE.encode(Uint16(tolerance), out, offset)
+            }
+            _ => return Status::UnsupportedAttribute,
+        };
+
+        match encoded {
+            Ok(()) => Status::Success,
+            Err(_) => Status::InsufficientSpace,
+        }
+    }
+
+    fn reporting(&self) -> Option<&dyn AttributeReporting> {
+        self.reporting
+    }
+}
+
+impl ClusterRequestHandler for TemperatureMeasurementServer<'_> {
+    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
+        self.handle_request(request, out)
+    }
+}
 
 /// Bare attribute identifiers, for matching against a received record.
 ///
@@ -86,6 +228,59 @@ mod tests {
             .decode(TypeId::Int16, &out[..*offset], read)
             .expect("value decoded");
         assert_eq!(value, Int16(2300));
+    }
+
+    // 4.4.2.2.1: the mandatory attributes are all readable, which is what an
+    // interview asks for first
+    #[test]
+    fn the_mandatory_attributes_are_readable() {
+        let server = TemperatureMeasurementServer::new(-4000, 12500);
+        server.set_measured_value(2300);
+
+        // Read Attributes for MeasuredValue, MinMeasuredValue, MaxMeasuredValue
+        let asdu = [0x00, 0x2a, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00];
+        let request = ClusterRequest {
+            profile_id: 0x0104,
+            cluster_id: CLUSTER_ID,
+            src_endpoint: 1,
+            dst_endpoint: 1,
+            unicast: true,
+            asdu: &asdu,
+        };
+
+        let mut out = [0u8; 64];
+        let reply = server.handle(&request, &mut out).expect("handled");
+        assert_eq!(
+            &out[..reply.len],
+            &[
+                0x18, 0x2a, 0x01, // frame control, sequence, ReadAttributesResponse
+                0x00, 0x00, 0x00, 0x29, 0xfc, 0x08, // MeasuredValue, int16, 2300
+                0x01, 0x00, 0x00, 0x29, 0x60, 0xf0, // MinMeasuredValue, int16, -4000
+                0x02, 0x00, 0x00, 0x29, 0xd4, 0x30, // MaxMeasuredValue, int16, 12500
+            ]
+        );
+    }
+
+    // Tolerance is optional, so a server without one neither answers nor
+    // advertises it (ZCL 4.4.2.2.1.4)
+    #[test]
+    fn tolerance_is_advertised_only_when_it_is_known() {
+        let without = TemperatureMeasurementServer::new(-4000, 12500);
+        assert_eq!(without.attributes().len(), 3);
+
+        let with = TemperatureMeasurementServer::new(-4000, 12500).with_tolerance(100);
+        assert_eq!(with.attributes().len(), 4);
+    }
+
+    // 4.4.2.2.1.1: a sample outside the declared range cannot be stored
+    #[test]
+    fn samples_are_clamped_to_the_declared_range() {
+        let server = TemperatureMeasurementServer::new(-4000, 12500);
+
+        server.set_measured_value(20000);
+        assert_eq!(server.measured_value(), 12500);
+        server.set_measured_value(-20000);
+        assert_eq!(server.measured_value(), -4000);
     }
 
     #[test]

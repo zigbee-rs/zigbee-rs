@@ -1,21 +1,23 @@
 //! Attribute reporting.
 //!
-//! See ZCL Section 2.5.7 / 2.5.8 / 2.5.11.
+//! See ZCL Section 2.5.7 through 2.5.11.
 //!
 //! [`AttributeReportBuilder`] assembles a `Report Attributes` frame from
 //! attribute descriptors, so a record carries the identifier and type the
 //! descriptor declares and the caller supplies only the value.
-//! [`ConfigureReportingServer`] answers `Configure Reporting` (global command
-//! 0x06) requests, which a coordinator issues after binding to set up attribute
-//! reporting during the post-interview configuration step.
+//!
+//! [`ReportingTable`] holds what a coordinator asked for with
+//! `Configure Reporting` (2.5.7). A cluster server hands it to
+//! [`ClusterServer::reporting`](crate::server::ClusterServer::reporting) so
+//! requests are answered from it, and the application asks the same table
+//! [`should_report`](AttributeReporting::should_report) before emitting a
+//! report — so the configuration that was accepted is the one that drives the
+//! reports.
 
 use byte::BytesExt;
-use byte::TryRead;
-use zigbee_core::zdo::ClusterReply;
-use zigbee_core::zdo::ClusterRequest;
-use zigbee_core::zdo::ClusterRequestHandler;
+use heapless::Vec;
+use spin::Mutex;
 
-use crate::frame::Status;
 use crate::frame::header::ZclHeader;
 use crate::frame::header::command_identifier::CommandIdentifier;
 use crate::frame::header::frame_control::FrameControl;
@@ -24,6 +26,7 @@ use crate::types::codec::ZclKind;
 use crate::types::descriptors::AccessTypestate;
 use crate::types::descriptors::Attribute;
 use crate::types::descriptors::Reportable;
+use crate::types::ids::AttributeId;
 use crate::types::ids::ClusterId;
 
 /// A serialized `Report Attributes` frame and the cluster it reports on.
@@ -132,81 +135,216 @@ impl<'a> AttributeReportBuilder<'a> {
     }
 }
 
-/// Answers ZCL `Configure Reporting` requests with a blanket success.
+/// Terminates a reporting configuration when used as the maximum reporting
+/// interval (2.5.7.1.6).
+pub const MAX_INTERVAL_DISABLED: u16 = 0xffff;
+
+/// Asks for the default reporting configuration when used as the minimum
+/// reporting interval together with a zero maximum (2.5.7.1.6).
+pub const MIN_INTERVAL_DEFAULT: u16 = 0xffff;
+
+/// The reporting configuration of one attribute (2.5.7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportingConfig {
+    /// Shortest interval between two reports, in seconds; `0` imposes no
+    /// minimum (2.5.7.1.5).
+    pub min_interval: u16,
+    /// Longest interval between two reports, in seconds; `0` turns periodic
+    /// reporting off and leaves change-based reporting on (2.5.7.1.6).
+    pub max_interval: u16,
+    /// Smallest change that triggers a report, as a magnitude — the sign of
+    /// the field on the wire is ignored (2.5.7.1.7).
+    ///
+    /// `0` reports every change, which is also how a discrete attribute
+    /// behaves; the field is absent from a discrete attribute's record.
+    pub reportable_change: u64,
+}
+
+/// Where the reporting configurations a coordinator sets up are kept.
 ///
-/// This device emits attribute reports on its own schedule rather than from
-/// coordinator-configured intervals, so every reporting configuration is
-/// accepted with status SUCCESS regardless of cluster. The responder is generic
-/// across clusters; pair it with the cluster servers that own the attributes.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ConfigureReportingServer;
+/// Split from [`ReportingTable`] so a cluster server can name a store without
+/// naming its capacity, and so an application with its own persistence can
+/// substitute one. `Sync`, because the receive path fills it and the
+/// application reads it.
+pub trait AttributeReporting: Sync {
+    /// Store `config` for an attribute, replacing any configuration already
+    /// held for it. `false` when there is no room left, which the requester
+    /// is owed as `INSUFFICIENT_SPACE`.
+    fn configure(
+        &self,
+        cluster: ClusterId,
+        attribute: AttributeId,
+        config: ReportingConfig,
+    ) -> bool;
 
-impl ClusterRequestHandler for ConfigureReportingServer {
-    fn handle(&self, request: &ClusterRequest<'_>, out: &mut [u8]) -> Option<ClusterReply> {
-        // only the header is needed to ack; the configuration records carry
-        // variable-length reportable-change fields we do not act on
-        let (header, _) = ZclHeader::try_read(request.asdu, ()).ok()?;
-        if header.command_identifier != CommandIdentifier::ConfigureReporting {
-            return None;
+    /// Forget an attribute's configuration, which is what a maximum reporting
+    /// interval of `0xffff` asks for (2.5.7.1.6).
+    fn clear(&self, cluster: ClusterId, attribute: AttributeId);
+
+    /// Configuration in force for an attribute, if one was accepted.
+    fn configuration(&self, cluster: ClusterId, attribute: AttributeId) -> Option<ReportingConfig>;
+
+    /// Whether `value` is due to be reported at `now_secs` (2.5.11.2).
+    ///
+    /// `false` for an attribute with no configuration: an unconfigured
+    /// attribute reports on whatever default policy the application has, not
+    /// on this table's.
+    fn should_report(
+        &self,
+        cluster: ClusterId,
+        attribute: AttributeId,
+        now_secs: u32,
+        value: i64,
+    ) -> bool;
+
+    /// Record that `value` was reported at `now_secs`, which is what the next
+    /// [`should_report`](Self::should_report) measures against.
+    fn reported(&self, cluster: ClusterId, attribute: AttributeId, now_secs: u32, value: i64);
+}
+
+#[derive(Clone, Copy)]
+struct Entry {
+    cluster: ClusterId,
+    attribute: AttributeId,
+    config: ReportingConfig,
+    /// When and at what value this attribute was last reported; `None` until
+    /// the first report, whose timing the specification leaves open (2.5.11.2.1).
+    last: Option<(u32, i64)>,
+}
+
+impl Entry {
+    fn matches(&self, cluster: ClusterId, attribute: AttributeId) -> bool {
+        self.cluster == cluster && self.attribute == attribute
+    }
+
+    fn due(&self, now_secs: u32, value: i64) -> bool {
+        if self.config.max_interval == MAX_INTERVAL_DISABLED {
+            return false;
         }
-
-        let response = ZclHeader {
-            frame_control: FrameControl(RESPONSE_FRAME_CONTROL),
-            manufacturer_code: None,
-            sequence_number: header.sequence_number,
-            command_identifier: CommandIdentifier::ConfigureReportingResponse,
+        let Some((reported_at, reported_value)) = self.last else {
+            return true;
         };
 
-        let offset = &mut 0;
-        out.write_with(offset, response, ()).ok()?;
-        // single SUCCESS status record covers all attributes (ZCL 2.5.8.1.3)
-        out.write_with(offset, Status::Success, ()).ok()?;
-        Some(ClusterReply::matching(request, *offset))
+        let elapsed = now_secs.saturating_sub(reported_at);
+        // no further report during the minimum interval, whichever rule below
+        // would otherwise fire (2.5.11.2.2, 2.5.11.2.3)
+        if elapsed < u32::from(self.config.min_interval) {
+            return false;
+        }
+        if self.config.max_interval != 0 && elapsed >= u32::from(self.config.max_interval) {
+            return true;
+        }
+
+        let change = value.abs_diff(reported_value);
+        change != 0 && change >= self.config.reportable_change
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// A fixed-capacity table of reporting configurations, holding up to `N`
+/// attributes.
+///
+/// Shared by reference between the receive path, which fills it from
+/// `Configure Reporting` requests, and the application, which asks it when to
+/// report — so it takes `&self` throughout.
+pub struct ReportingTable<const N: usize> {
+    entries: Mutex<Vec<Entry, N>>,
+}
 
-    fn request(cluster_id: u16, asdu: &[u8]) -> ClusterRequest<'_> {
-        ClusterRequest {
-            profile_id: 0x0104,
-            cluster_id,
-            src_endpoint: 1,
-            dst_endpoint: 1,
-            unicast: true,
-            asdu,
+impl<const N: usize> ReportingTable<N> {
+    /// An empty table.
+    pub const fn new() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
         }
     }
 
-    #[test]
-    fn acks_configure_reporting_with_success() {
-        // Configure Reporting (global cmd 0x06) for temperature MeasuredValue;
-        // the trailing configuration record is intentionally ignored
-        let asdu = [
-            0x00, 0x2b, 0x06, // frame control (global, c->s), seq, ConfigureReporting
-            0x00, 0x00, 0x00, // direction, attribute id 0x0000
-            0x29, 0x1e, 0x00, 0x58, 0x02, 0x64, 0x00, // type int16, intervals, change
-        ];
-        let mut out = [0u8; 16];
-        let reply = ConfigureReportingServer
-            .handle(&request(0x0402, &asdu), &mut out)
-            .expect("configure reporting handled");
-        // header (0x18, seq 0x2b, ConfigureReportingResponse 0x07) + status
-        // SUCCESS
-        assert_eq!(&out[..reply.len], &[0x18, 0x2b, 0x07, 0x00]);
+    /// Number of attributes currently configured.
+    pub fn len(&self) -> usize {
+        self.entries.lock().len()
     }
 
-    #[test]
-    fn ignores_other_commands() {
-        // Read Attributes (0x00) is not ours
-        let asdu = [0x00, 0x01, 0x00, 0x04, 0x00];
-        let mut out = [0u8; 16];
-        assert_eq!(
-            ConfigureReportingServer.handle(&request(0x0000, &asdu), &mut out),
-            None
-        );
+    /// Whether no attribute is configured for reporting.
+    pub fn is_empty(&self) -> bool {
+        self.entries.lock().is_empty()
+    }
+}
+
+impl<const N: usize> Default for ReportingTable<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> AttributeReporting for ReportingTable<N> {
+    fn configure(
+        &self,
+        cluster: ClusterId,
+        attribute: AttributeId,
+        config: ReportingConfig,
+    ) -> bool {
+        let mut entries = self.entries.lock();
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry.matches(cluster, attribute))
+        {
+            entry.config = config;
+            // a fresh configuration measures its change from the value at the
+            // time it was set (2.5.11.2.3)
+            entry.last = None;
+            return true;
+        }
+
+        entries
+            .push(Entry {
+                cluster,
+                attribute,
+                config,
+                last: None,
+            })
+            .is_ok()
+    }
+
+    fn clear(&self, cluster: ClusterId, attribute: AttributeId) {
+        let mut entries = self.entries.lock();
+        if let Some(index) = entries
+            .iter()
+            .position(|entry| entry.matches(cluster, attribute))
+        {
+            entries.swap_remove(index);
+        }
+    }
+
+    fn configuration(&self, cluster: ClusterId, attribute: AttributeId) -> Option<ReportingConfig> {
+        self.entries
+            .lock()
+            .iter()
+            .find(|entry| entry.matches(cluster, attribute))
+            .map(|entry| entry.config)
+    }
+
+    fn should_report(
+        &self,
+        cluster: ClusterId,
+        attribute: AttributeId,
+        now_secs: u32,
+        value: i64,
+    ) -> bool {
+        self.entries
+            .lock()
+            .iter()
+            .find(|entry| entry.matches(cluster, attribute))
+            .is_some_and(|entry| entry.due(now_secs, value))
+    }
+
+    fn reported(&self, cluster: ClusterId, attribute: AttributeId, now_secs: u32, value: i64) {
+        if let Some(entry) = self
+            .entries
+            .lock()
+            .iter_mut()
+            .find(|entry| entry.matches(cluster, attribute))
+        {
+            entry.last = Some((now_secs, value));
+        }
     }
 }
 
@@ -215,6 +353,7 @@ mod builder_tests {
     use super::*;
     use crate::clusters::measurement::temperature;
     use crate::types::descriptors::Cluster;
+    use crate::types::descriptors::ReadOnly;
     use crate::types::integers::Int16;
 
     // 2.5.11: header followed by one attribute record per reported attribute
@@ -254,10 +393,7 @@ mod builder_tests {
     fn mixing_clusters_in_one_report_is_rejected() {
         let mut buf = [0u8; 32];
         let other = Cluster::new(ClusterId(0x0403), "PressureMeasurement")
-            .attribute::<Int16, crate::types::descriptors::ReadOnly, Reportable>(
-            crate::types::ids::AttributeId(0x0000),
-            "MeasuredValue",
-        );
+            .attribute::<Int16, ReadOnly, Reportable>(AttributeId(0x0000), "MeasuredValue");
 
         let result = AttributeReportBuilder::new(&mut buf, 0x01)
             .expect("header written")
@@ -279,5 +415,100 @@ mod builder_tests {
             .push(&temperature::MEASURED_VALUE, Int16(2400));
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    const CLUSTER: ClusterId = ClusterId(0x0402);
+    const MEASURED_VALUE: AttributeId = AttributeId(0x0000);
+
+    fn table() -> ReportingTable<2> {
+        ReportingTable::new()
+    }
+
+    // 2.5.11.2.1: a report is due once the maximum reporting interval elapsed
+    // 2.5.11.2.3: and once the value moved by the reportable change
+    #[test]
+    fn the_stored_intervals_decide_when_a_report_is_due() {
+        let table = table();
+        assert!(table.configure(
+            CLUSTER,
+            MEASURED_VALUE,
+            ReportingConfig {
+                min_interval: 10,
+                max_interval: 60,
+                reportable_change: 100,
+            }
+        ));
+
+        // the first report has no configured time (2.5.11.2.1)
+        assert!(table.should_report(CLUSTER, MEASURED_VALUE, 0, 2300));
+        table.reported(CLUSTER, MEASURED_VALUE, 0, 2300);
+
+        // inside the minimum interval nothing is reported, however big the
+        // change
+        assert!(!table.should_report(CLUSTER, MEASURED_VALUE, 5, 9999));
+        // past the minimum, but neither the change nor the maximum reached
+        assert!(!table.should_report(CLUSTER, MEASURED_VALUE, 20, 2350));
+        // a big enough change
+        assert!(table.should_report(CLUSTER, MEASURED_VALUE, 20, 2400));
+        // or the maximum interval, with no change at all
+        assert!(table.should_report(CLUSTER, MEASURED_VALUE, 60, 2300));
+    }
+
+    // 2.5.7.1.6: reporting is off while the maximum interval is 0xffff
+    #[test]
+    fn a_disabled_configuration_never_reports() {
+        let table = table();
+        table.configure(
+            CLUSTER,
+            MEASURED_VALUE,
+            ReportingConfig {
+                min_interval: 0,
+                max_interval: MAX_INTERVAL_DISABLED,
+                reportable_change: 0,
+            },
+        );
+        assert!(!table.should_report(CLUSTER, MEASURED_VALUE, 1_000, 9999));
+    }
+
+    // an attribute nobody configured is left to the application's own policy
+    #[test]
+    fn an_unconfigured_attribute_is_never_due() {
+        let table = table();
+        assert!(!table.should_report(CLUSTER, MEASURED_VALUE, 1_000, 2300));
+        assert_eq!(table.configuration(CLUSTER, MEASURED_VALUE), None);
+    }
+
+    #[test]
+    fn reconfiguring_replaces_rather_than_fills_the_table() {
+        let table = table();
+        let config = ReportingConfig {
+            min_interval: 1,
+            max_interval: 2,
+            reportable_change: 0,
+        };
+        assert!(table.configure(CLUSTER, MEASURED_VALUE, config));
+        assert!(table.configure(CLUSTER, MEASURED_VALUE, config));
+        assert_eq!(table.len(), 1);
+
+        table.clear(CLUSTER, MEASURED_VALUE);
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn a_full_table_rejects_further_configurations() {
+        let table = table();
+        let config = ReportingConfig {
+            min_interval: 0,
+            max_interval: 60,
+            reportable_change: 0,
+        };
+        assert!(table.configure(CLUSTER, AttributeId(0), config));
+        assert!(table.configure(CLUSTER, AttributeId(1), config));
+        assert!(!table.configure(CLUSTER, AttributeId(2), config));
     }
 }
