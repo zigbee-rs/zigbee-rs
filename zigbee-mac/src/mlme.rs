@@ -191,6 +191,12 @@ pub enum MacError {
     #[cfg(feature = "esp")]
     #[error("radio error")]
     RadioError(#[from] esp_radio::ieee802154::Error),
+    #[cfg(feature = "esp")]
+    #[error("timed out waiting for the radio (held by another MAC operation)")]
+    RadioLockTimeout,
+    #[cfg(feature = "esp")]
+    #[error("radio lock wait queue full (too many concurrent MAC operations)")]
+    RadioLockQueueFull,
 }
 
 impl From<byte::Error> for MacError {

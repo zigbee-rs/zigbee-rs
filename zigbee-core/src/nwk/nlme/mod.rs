@@ -1133,12 +1133,12 @@ where
                 true,
                 &mut buf,
             )?;
+            // read out before the `.await` below — held across it, this
+            // guard would deadlock against a concurrent write of this field
+            let pan_id = *self.nib().panid();
             self.mac
                 .transmit_data(
-                    Address::Short(
-                        PanId(*self.nib().panid()),
-                        MacShortAddress(NWK_BROADCAST_ALL),
-                    ),
+                    Address::Short(PanId(pan_id), MacShortAddress(NWK_BROADCAST_ALL)),
                     &buf[..len],
                 )
                 .await?;

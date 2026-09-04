@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 
 use byte::BytesExt;
 use embassy_futures::select::Either;
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Frame;
@@ -20,6 +20,8 @@ use ieee802154::mac::command::Command;
 use ieee802154::mac::security::SecurityContext;
 
 use crate::esp::driver::Ieee802154Driver;
+use crate::esp::fair_mutex::FairMutex;
+use crate::esp::fair_mutex::FairMutexGuard;
 use crate::mlme::A_BASE_SUPER_FRAME_DURATION;
 use crate::mlme::A_MAX_FRAME_RETRIES;
 use crate::mlme::A_RESPONSE_WAIT_TIME;
@@ -34,6 +36,7 @@ use crate::mlme::ScanResult;
 use crate::mlme::ScanType;
 
 mod driver;
+mod fair_mutex;
 
 // higher-layer retries of the whole association handshake; aMaxFrameRetries
 // ack-retransmission already covers a lost request or poll, this is a safety
@@ -46,6 +49,8 @@ const ASSOCIATE_POLL_RETRIES: u8 = 5;
 // number of poll rounds per steady-state MLME-POLL before reporting no data
 const POLL_DATA_RETRIES: u8 = 5;
 
+const RADIO_LOCK_TIMEOUT_MS: u64 = 5_000;
+
 /// `esp-radio` [`Mlme`] implementation
 ///
 /// The radio is a single shared resource: the inner state is held behind an
@@ -53,7 +58,7 @@ const POLL_DATA_RETRIES: u8 = 5;
 /// receive task and a transmit path. The extended address is cached so it can
 /// be read without locking.
 pub struct EspMlme<'a> {
-    inner: Mutex<CriticalSectionRawMutex, EspMlmeInner<'a>>,
+    inner: FairMutex<CriticalSectionRawMutex, EspMlmeInner<'a>>,
     ieee_address: u64,
 }
 
@@ -67,7 +72,7 @@ impl<'a> EspMlme<'a> {
         };
         let ieee_address = inner.driver.ieee_address().0;
         Self {
-            inner: Mutex::new(inner),
+            inner: FairMutex::new(inner),
             ieee_address,
         }
     }
@@ -75,6 +80,24 @@ impl<'a> EspMlme<'a> {
     /// The device's IEEE 802.15.4 extended (EUI-64) address.
     pub fn ieee_address(&self) -> u64 {
         self.ieee_address
+    }
+
+    async fn lock(
+        &self,
+    ) -> Result<FairMutexGuard<'_, CriticalSectionRawMutex, EspMlmeInner<'a>>, MacError> {
+        match select(
+            Timer::after_millis(RADIO_LOCK_TIMEOUT_MS),
+            self.inner.lock(),
+        )
+        .await
+        {
+            Either::First(_) => Err(MacError::RadioLockTimeout),
+            Either::Second(Ok(guard)) => Ok(guard),
+            Either::Second(Err(_)) => {
+                log::warn!("[MAC] radio lock queue full");
+                Err(MacError::RadioLockQueueFull)
+            }
+        }
     }
 }
 
@@ -653,7 +676,12 @@ impl Mlme for EspMlme<'_> {
     }
 
     async fn configure(&self, config: MacConfig) {
-        let mut inner = self.inner.lock().await;
+        // returns `()`, so `Self::lock`'s error has nowhere to go — locks
+        // unbounded and skips on queue-full instead.
+        let Ok(mut inner) = self.inner.lock().await else {
+            log::error!("[MAC] radio lock queue full, skipping configure");
+            return;
+        };
         inner.driver.update_driver_config(|driver| {
             if let Some(channel) = config.channel {
                 driver.channel = channel;
@@ -685,9 +713,8 @@ impl Mlme for EspMlme<'_> {
         channels: core::ops::Range<u8>,
         duration: u8,
     ) -> Result<ScanResult, MacError> {
-        self.inner
-            .lock()
-            .await
+        self.lock()
+            .await?
             .scan_network(ty, channels, duration)
             .await
     }
@@ -698,9 +725,8 @@ impl Mlme for EspMlme<'_> {
         dest: Address,
         capabilities: CapabilityInformation,
     ) -> Result<AssociationResponse, MacError> {
-        self.inner
-            .lock()
-            .await
+        self.lock()
+            .await?
             .associate(channel, dest, capabilities)
             .await
     }
@@ -710,7 +736,7 @@ impl Mlme for EspMlme<'_> {
         coord_address: Address,
         buf: &mut [u8],
     ) -> Result<(usize, u8), MacError> {
-        self.inner.lock().await.poll_data(coord_address, buf).await
+        self.lock().await?.poll_data(coord_address, buf).await
     }
 
     async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
@@ -719,7 +745,7 @@ impl Mlme for EspMlme<'_> {
             // concurrent transmit can acquire the radio while we
             // wait for the next frame
             {
-                let mut inner = self.inner.lock().await;
+                let mut inner = self.lock().await?;
                 if let Some(received) = inner.try_drain(buf)? {
                     return Ok(received);
                 }
@@ -729,6 +755,6 @@ impl Mlme for EspMlme<'_> {
     }
 
     async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
-        self.inner.lock().await.transmit_data(dest, payload).await
+        self.lock().await?.transmit_data(dest, payload).await
     }
 }
