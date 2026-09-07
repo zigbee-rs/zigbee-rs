@@ -98,6 +98,7 @@ pub trait Mlme {
     async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
 
     /// Returns a 32-bit random value from the MAC-layer RNG.
+    /// This value is not guaranteed cryptographic
     fn random_u32(&self) -> u32;
 
     fn random_u8(&self) -> u8 {
