@@ -543,6 +543,7 @@ mod tests {
                 dest: Address,
                 payload: &[u8],
             ) -> Result<(), MacError>;
+            fn random_u32(&self) -> u32;
         }
     }
 
@@ -557,6 +558,7 @@ mod tests {
         let mut mac = MockMlme::new();
         mac.expect_ieee_address()
             .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        mac.expect_random_u32().return_const(0u32);
         let nlme = Nlme::new(mac);
         let config = Config {
             device_type,

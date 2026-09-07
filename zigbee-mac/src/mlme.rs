@@ -96,6 +96,13 @@ pub trait Mlme {
     /// sequence number, addressing) and appends `payload` as the MAC
     /// service data unit.
     async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError>;
+
+    /// Returns a 32-bit random value from the MAC-layer RNG.
+    fn random_u32(&self) -> u32;
+
+    fn random_u8(&self) -> u8 {
+        (self.random_u32() & 0xff) as u8
+    }
 }
 
 /// MAC attributes the network layer programs (see [`Mlme::configure`]).
