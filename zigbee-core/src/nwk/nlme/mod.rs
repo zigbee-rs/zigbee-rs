@@ -189,9 +189,10 @@ where
     /// first.
     pub fn new(mac: M) -> Self {
         nib::get_ref().update_ieee_address(|value| *value = mac.ieee_address());
+        let nwk_seq = AtomicU8::new(mac.random_u8());
         Self {
             mac,
-            nwk_seq: AtomicU8::new(0),
+            nwk_seq,
             pending_timeout_request: AtomicU8::new(NO_PENDING_TIMEOUT),
             parent_timeout_remaining_ms: AtomicU32::new(PARENT_TIMEOUT_INACTIVE),
             rejoin_response: Signal::new(),
@@ -199,6 +200,12 @@ where
             leave_indication: Signal::new(),
             nwk_status_indication: Signal::new(),
         }
+    }
+
+    /// Returns a random byte from the MAC layer, used for seeding sequence
+    /// counters without pulling chip-specific RNG into the core crate.
+    pub fn random_u8(&self) -> u8 {
+        self.mac.random_u8()
     }
 
     /// 3.2.2.19 - take a pending NLME-LEAVE.indication, if any.
@@ -1854,6 +1861,7 @@ mod tests {
                 dest: Address,
                 payload: &[u8],
             ) -> Result<(), MacError>;
+            fn random_u32(&self) -> u32;
         }
     }
 
@@ -1900,6 +1908,7 @@ mod tests {
         nib::get_ref().update_neighbor_table(|value| *value = StorageVec::new());
         mac.expect_ieee_address()
             .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        mac.expect_random_u32().return_const(0u32);
         (guard, Nlme::new(mac))
     }
 

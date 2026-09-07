@@ -769,4 +769,8 @@ impl Mlme for EspMlme<'_> {
     async fn transmit_data(&self, dest: Address, payload: &[u8]) -> Result<(), MacError> {
         self.lock().await?.transmit_data(dest, payload).await
     }
+
+    fn random_u32(&self) -> u32 {
+        esp_hal::rng::Rng::new().random()
+    }
 }

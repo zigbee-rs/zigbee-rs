@@ -211,11 +211,13 @@ const fn zdp_reply(cluster_id: u16, len: usize) -> ClusterReply {
 impl<M: Mlme> ZigbeeDevice<M> {
     /// Creates a new instance owning the given NWK management entity.
     pub fn new(config: Config, nlme: Nlme<M>) -> Self {
+        let aps_counter_init = nlme.random_u8();
+        let zdp_seq_init = nlme.random_u8();
         Self {
             config,
             nlme,
-            apsme: Apsme::new(),
-            zdp_seq: AtomicU8::new(0),
+            apsme: Apsme::new(aps_counter_init),
+            zdp_seq: AtomicU8::new(zdp_seq_init),
             joined: Event::new(),
             node_desc_rsp: Signal::new(),
             rejoin_requested: Event::new(),
@@ -1303,6 +1305,7 @@ mod tests {
                 dest: Address,
                 payload: &[u8],
             ) -> Result<(), MacError>;
+            fn random_u32(&self) -> u32;
         }
     }
 
@@ -1352,6 +1355,7 @@ mod tests {
         let mut mac = MockMlme::new();
         mac.expect_ieee_address()
             .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        mac.expect_random_u32().return_const(0u32);
         let nlme = Nlme::new(mac);
         let config = Config {
             device_type: logical_type,

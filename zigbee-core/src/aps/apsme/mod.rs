@@ -170,13 +170,13 @@ pub(crate) struct Apsme {
 }
 
 impl Apsme {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(initial_counter: u8) -> Self {
         Self {
             supports_binding_table: true,
             joined: AtomicBool::new(false),
             pending_acks: Default::default(),
             duplicates: Mutex::new(DuplicateTable::default()),
-            aps_counter: AtomicU8::new(0),
+            aps_counter: AtomicU8::new(initial_counter),
             tc_exchange_active: AtomicBool::new(false),
             tc_key_received: Signal::new(),
             tc_key_verified: Signal::new(),
@@ -908,7 +908,7 @@ mod tests {
         aib::try_init();
         aib::get_ref().update_binding_table(|table| table.clear());
 
-        let mut apsme = Apsme::new();
+        let mut apsme = Apsme::new(0xAB);
 
         // a device without binding support rejects the request
         apsme.supports_binding_table = false;
@@ -965,7 +965,7 @@ mod tests {
     // equal to the destination endpoint the frame was sent to
     #[test]
     fn ack_matching_releases_only_the_waiting_sender() {
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let key = AckKey {
             destination: 0x0000,
             dst_endpoint: 1,
@@ -1055,7 +1055,7 @@ mod tests {
         use core::task::Context;
         use core::task::Waker;
 
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
         apsme.begin_tc_key_exchange();
@@ -1085,7 +1085,7 @@ mod tests {
         use core::task::Poll;
         use core::task::Waker;
 
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
         apsme.begin_tc_key_exchange();
@@ -1109,7 +1109,7 @@ mod tests {
         use core::task::Poll;
         use core::task::Waker;
 
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
         apsme.begin_tc_key_exchange();
@@ -1144,7 +1144,7 @@ mod tests {
         use core::task::Context;
         use core::task::Waker;
 
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let mut cx = Context::from_waker(Waker::noop());
 
@@ -1209,7 +1209,7 @@ mod tests {
 
     #[test]
     fn network_key_update_replaces_the_alternate_key_and_switches_on_command() {
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let nib = nib_with_active_key();
 
@@ -1243,7 +1243,7 @@ mod tests {
 
     #[test]
     fn network_key_and_switch_key_from_a_foreign_device_are_ignored() {
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
         let aib = setup_aib();
         let nib = nib_with_active_key();
 
@@ -1340,6 +1340,7 @@ mod receive_path_tests {
                 dest: Address,
                 payload: &[u8],
             ) -> Result<(), MacError>;
+            fn random_u32(&self) -> u32;
         }
     }
 
@@ -1383,6 +1384,7 @@ mod receive_path_tests {
         let mut mac = MockMlme::new();
         mac.expect_ieee_address()
             .return_const(IeeeAddress(0xa4c1_0000_0000_0001));
+        mac.expect_random_u32().return_const(0u32);
         Nlme::new(mac)
     }
 
@@ -1442,7 +1444,7 @@ mod receive_path_tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let nlme = setup();
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
 
         // names the real Trust Center as the source
         let payload = transport_network_key_payload(ATTACKER_KEY, 4, TC_IEEE);
@@ -1474,7 +1476,7 @@ mod receive_path_tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let nlme = setup();
-        let apsme = Apsme::new();
+        let apsme = Apsme::new(0xAB);
 
         // give the device an alternate key to switch to
         nib::get_ref().update_security_material_set(|set| {
