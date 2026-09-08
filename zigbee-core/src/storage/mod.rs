@@ -6,12 +6,21 @@
 //! [`init_with_flash`] plus a spawned task running [`FlashStorage::run`] that
 //! persists changes as they happen.
 //!
-//! Frame counters are persisted with headroom so a reboot can never reuse an
-//! outgoing counter value: outgoing counters are stored rounded up two
-//! `HEADROOM` boundaries ahead, incoming counters rounded down to a `WINDOW`
-//! boundary. After a reboot up to `WINDOW` already-seen incoming counter
-//! values may be accepted again — the cost of not writing flash on every
-//! received frame.
+//! Frame counters are persisted so that a reboot can never reuse an outgoing
+//! counter value (4.3.4). Outgoing counters are stored `HEADROOM` ahead of the
+//! live value because flushing is asynchronous; they are rewritten on every
+//! flush, so a transmitted frame costs a flash write. Incoming counters are
+//! stored exactly, so a received frame costs one too — in exchange there is no
+//! replay window to re-accept after a reboot. They live in a flat NIB table
+//! keyed by (key sequence number, sender) rather than nested in each security
+//! material descriptor, so one sender advancing rewrites one row.
+//!
+//! Table fields are stored one map item per row plus a length record, and only
+//! the rows a caller actually touched are rewritten. Mutating a table through
+//! `update_<field>` conservatively marks every row; the `<field>_mut` handle
+//! marks just the rows it changes. A shrunk table leaves its surplus rows in
+//! flash — the length record bounds what is read back, which avoids needing
+//! erasable items.
 //!
 //! How a field is encoded is IB-specific and lives with the respective
 //! information base (`nwk::nib::storage`, `aps::aib::storage`) as a
@@ -56,10 +65,8 @@ pub(crate) mod flash;
 #[cfg(feature = "storage")]
 pub use flash::FlashStorage;
 #[cfg(feature = "storage")]
+pub(crate) use flash::HEADROOM;
+#[cfg(feature = "storage")]
 pub(crate) use flash::PersistentIb;
 #[cfg(feature = "storage")]
 pub use flash::init_with_flash;
-#[cfg(feature = "storage")]
-pub(crate) use flash::round_down;
-#[cfg(feature = "storage")]
-pub(crate) use flash::round_up;

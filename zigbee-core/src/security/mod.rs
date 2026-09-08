@@ -128,19 +128,21 @@ impl<'a> SecurityContext<'a> {
         let _mic_len = sec_level.mic_length();
 
         let key_sequence_number = self.nib.active_key_seq_number();
-        // read the key + counter and increment the counter (4.3.1.1) in one
-        // atomic update
-        let mut security_material = None;
-        self.nib.update_security_material_set(|set| {
-            if let Some(material) = set
-                .iter_mut()
-                .find(|k| k.key_seq_number == key_sequence_number)
-            {
-                security_material = Some((material.outgoing_frame_counter, material.key));
-                material.outgoing_frame_counter += 1;
-            }
+        let key = self
+            .nib
+            .security_material_set()
+            .iter()
+            .find(|k| k.key_seq_number == key_sequence_number)
+            .map(|material| material.key)
+            .ok_or(SecurityError::Unspecified)?;
+
+        // take the counter and increment it (4.3.1.1); one instance is shared
+        // by all security material sets (4.3.4)
+        let mut frame_counter = 0;
+        self.nib.update_outgoing_frame_counter(|counter| {
+            frame_counter = *counter;
+            *counter = counter.wrapping_add(1);
         });
-        let (frame_counter, key) = security_material.ok_or(SecurityError::Unspecified)?;
         let local_addr = *self.nib.ieee_address();
 
         let mut security_control = SecurityControl::default();
@@ -216,33 +218,32 @@ impl<'a> SecurityContext<'a> {
             return Err(SecurityError::InvalidData);
         };
 
+        let Some(key_sequence_number) = aux_hdr.key_sequence_number else {
+            return Err(SecurityError::InvalidData);
+        };
+
         // select the key from NIB; guard scoped so the write lock below cannot
         // deadlock
         let key = {
             let sec_material_set = self.nib.security_material_set();
-            let sec_material = sec_material_set
+            sec_material_set
                 .iter()
-                .find(|k| {
-                    aux_hdr
-                        .key_sequence_number
-                        .is_some_and(|ksn| ksn == k.key_seq_number)
-                })
-                .ok_or(SecurityError::Unspecified)?;
-
-            // anti-replay: `<=` rejects both older counters and a replay of the
-            // most-recently-accepted one
-            if sec_material
-                .incoming_frame_counter_set
-                .iter()
-                .find(|i| source_address == i.sender_address)
-                .is_some_and(|inc_frame_counter| {
-                    aux_hdr.frame_counter <= inc_frame_counter.incoming_frame_counter
-                })
-            {
-                return Err(SecurityError::InvalidData);
-            }
-            sec_material.key
+                .find(|k| k.key_seq_number == key_sequence_number)
+                .ok_or(SecurityError::Unspecified)?
+                .key
         };
+
+        // anti-replay: `<=` rejects both older counters and a replay of the
+        // most-recently-accepted one
+        if self
+            .nib
+            .incoming_frame_counters()
+            .iter()
+            .find(|i| i.key_seq_number == key_sequence_number && i.sender_address == source_address)
+            .is_some_and(|seen| aux_hdr.frame_counter <= seen.incoming_frame_counter)
+        {
+            return Err(SecurityError::InvalidData);
+        }
         let key = key.as_slice();
 
         // write back the NIB security level into the aux header; required as
@@ -279,21 +280,12 @@ impl<'a> SecurityContext<'a> {
 
         // anti-replay tracking: record the now-authenticated counter as the
         // most recent accepted value for this sender
-        let mut record_result = Ok(());
-        self.nib.update_security_material_set(|set| {
-            if let Some(material) = set.iter_mut().find(|k| {
-                aux_hdr
-                    .key_sequence_number
-                    .is_some_and(|ksn| ksn == k.key_seq_number)
-            }) {
-                record_result = record_nwk_incoming_frame_counter(
-                    material,
-                    source_address,
-                    aux_hdr.frame_counter,
-                );
-            }
-        });
-        record_result?;
+        record_nwk_incoming_frame_counter(
+            self.nib,
+            key_sequence_number,
+            source_address,
+            aux_hdr.frame_counter,
+        )?;
 
         Ok(NwkFrame::from_payload(nwk_hdr, enc_data)?)
     }
@@ -565,28 +557,29 @@ impl<'a> SecurityContext<'a> {
 }
 
 // records frame_counter as the most recently accepted incoming counter for
-// sender_address, inserting a new entry for a first-time sender
+// (key_seq_number, sender_address), inserting a row for a first-time sender.
+// Only the touched row is persisted.
 fn record_nwk_incoming_frame_counter(
-    material: &mut NetworkSecurityMaterialDescriptor,
+    nib: &Nib,
+    key_seq_number: u8,
     sender_address: IeeeAddress,
     frame_counter: u32,
 ) -> Result<(), SecurityError> {
-    if let Some(entry) = material
-        .incoming_frame_counter_set
-        .iter_mut()
-        .find(|i| i.sender_address == sender_address)
+    let mut counters = nib.incoming_frame_counters_mut();
+    if let Some(index) = counters
+        .position(|i| i.key_seq_number == key_seq_number && i.sender_address == sender_address)
     {
-        entry.incoming_frame_counter = frame_counter;
-        Ok(())
-    } else {
-        material
-            .incoming_frame_counter_set
-            .push(IncomingFrameCounterDescriptor {
-                sender_address,
-                incoming_frame_counter: frame_counter,
-            })
-            .map_err(|_| SecurityError::Unspecified)
+        counters.update(index, |entry| entry.incoming_frame_counter = frame_counter);
+        return Ok(());
     }
+    counters
+        .push(IncomingFrameCounterDescriptor {
+            key_seq_number,
+            sender_address,
+            incoming_frame_counter: frame_counter,
+        })
+        .map(|_| ())
+        .map_err(|_| SecurityError::Unspecified)
 }
 
 // Figure 4-20
@@ -636,13 +629,13 @@ mod tests {
         let mut set = Vec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 1,
-            incoming_frame_counter_set: StorageVec(Vec::new()),
+
             key: ByteArray(NETWORK_KEY),
             network_key_type: 0,
         })
         .unwrap();
         nib.update_security_material_set(|value| *value = StorageVec(set));
+        nib.update_outgoing_frame_counter(|value| *value = 1);
         nib.update_ieee_address(|value| *value = IeeeAddress(0x1234_5678_90ab_cdef));
         nib.update_security_level(|value| *value = SecurityLevel::EncMic32);
 
@@ -937,9 +930,8 @@ mod tests {
             .decrypt_nwk_frame_in_place(&mut frame_buffer)
             .unwrap();
 
-        let material = nib.security_material_set();
-        let recorded = material[0]
-            .incoming_frame_counter_set
+        let recorded = nib
+            .incoming_frame_counters()
             .iter()
             .find(|i| i.sender_address == IeeeAddress(0xa4c1_389c_3830_01e5))
             .map(|i| i.incoming_frame_counter);
@@ -956,24 +948,22 @@ mod tests {
     fn nib_with_incoming_counter(accepted: u32) -> Nib {
         let nib = Nib::new();
 
-        let mut incoming = Vec::new();
-        incoming
-            .push(IncomingFrameCounterDescriptor {
-                sender_address: IeeeAddress(0xa4c1_389c_3830_01e5),
-                incoming_frame_counter: accepted,
-            })
-            .unwrap();
-
         let mut set = Vec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 1,
-            incoming_frame_counter_set: StorageVec(incoming),
             key: ByteArray(NETWORK_KEY),
             network_key_type: 0,
         })
         .unwrap();
         nib.update_security_material_set(|value| *value = StorageVec(set));
+        nib.update_incoming_frame_counters(|counters| {
+            let _ = counters.push(IncomingFrameCounterDescriptor {
+                key_seq_number: 0,
+                sender_address: IeeeAddress(0xa4c1_389c_3830_01e5),
+                incoming_frame_counter: accepted,
+            });
+        });
+        nib.update_outgoing_frame_counter(|value| *value = 1);
         nib.update_ieee_address(|value| *value = IeeeAddress(0x1234_5678_90ab_cdef));
         nib.update_security_level(|value| *value = SecurityLevel::EncMic32);
         nib
@@ -1037,7 +1027,7 @@ mod tests {
         let aib = setup_aib();
         let security_context = SecurityContext::new(&nib, &aib);
 
-        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 1);
+        assert_eq!(nib.outgoing_frame_counter(), 1);
 
         let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
         let frame = security_context
@@ -1050,13 +1040,11 @@ mod tests {
             .encrypt_nwk_frame_in_place(frame, &mut buf)
             .unwrap();
 
-        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 2);
+        assert_eq!(nib.outgoing_frame_counter(), 2);
 
         // clear the incoming replay window so the captured fixture frame can be
         // decrypted again for a second encrypt
-        nib.update_security_material_set(|material| {
-            material[0].incoming_frame_counter_set = StorageVec(Vec::new());
-        });
+        nib.update_incoming_frame_counters(|counters| counters.clear());
 
         let mut frame_buffer = NWK_FRAME_CMD_BUFFER;
         let frame = security_context
@@ -1067,7 +1055,7 @@ mod tests {
             .encrypt_nwk_frame_in_place(frame, &mut buf)
             .unwrap();
 
-        assert_eq!(nib.security_material_set()[0].outgoing_frame_counter, 3);
+        assert_eq!(nib.outgoing_frame_counter(), 3);
     }
 
     #[test]

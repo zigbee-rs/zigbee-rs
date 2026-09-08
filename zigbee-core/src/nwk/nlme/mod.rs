@@ -1228,6 +1228,8 @@ where
         nib.update_is_concentrator(|value| *value = false);
         nib.update_concentrator_radius(|value| *value = 0);
         nib.update_security_material_set(|value| value.clear());
+        // the counters are keyed by key sequence number, so they die with the keys
+        nib.update_incoming_frame_counters(|value| value.clear());
         nib.update_active_key_seq_number(|value| *value = 0x00);
         nib.update_address_map(|value| value.clear());
         nib.update_panid(|value| *value = 0xffff);
@@ -2495,8 +2497,7 @@ mod tests {
         let mut set = StorageVec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 1,
-            incoming_frame_counter_set: StorageVec::new(),
+
             key: ByteArray([0x42; 16]),
             network_key_type: 0,
         })

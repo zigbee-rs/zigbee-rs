@@ -92,6 +92,8 @@ const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
 // active plus alternate network key (4.6.3.4.2)
 const MAX_SECURITY_KEYS: usize = 2;
+// 4.3.1.2 step 6 bounds the incoming counters by security keys x neighbors
+const MAX_INCOMING_FRAME_COUNTERS: usize = MAX_SECURITY_KEYS * MAX_NEIGBOUR_TABLE;
 
 /// Maximum acceptable link cost for parent selection (3.6.1.4.1.1).
 pub const MAX_PARENT_LINK_COST: u8 = 3;
@@ -149,6 +151,7 @@ construct_ib! {
         #[storage_key = 13]
         #[setter = update_max_routers]
         max_routers: u8, // stack profile
+        #[table = neighbor_table_mut]
         #[storage_key = 8]
         #[setter = update_neighbor_table]
         neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
@@ -207,6 +210,7 @@ construct_ib! {
         stack_profile: u8, // <= 0x0f
         #[setter = update_broadcast_transaction_table]
         broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
+        #[table = group_idtable_mut]
         #[storage_key = 23]
         #[setter = update_group_idtable]
         group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
@@ -239,13 +243,27 @@ construct_ib! {
         #[storage_key = 28]
         #[setter = update_security_level]
         security_level: SecurityLevel = SecurityLevel::EncMic32,
+        #[table = security_material_set_mut]
         #[storage_key = 6]
         #[setter = update_security_material_set]
         security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
+        /// Most recently accepted incoming frame counter per (key, sender),
+        /// bounded by 4.3.1.2 step 6.
+        #[table = incoming_frame_counters_mut]
+        #[storage_key = 41]
+        #[setter = update_incoming_frame_counters]
+        incoming_frame_counters:
+            StorageVec<IncomingFrameCounterDescriptor, MAX_INCOMING_FRAME_COUNTERS>,
         #[cell = atomic]
         #[storage_key = 5]
         #[setter = update_active_key_seq_number]
         active_key_seq_number: u8 = 0x00,
+        /// Outgoing NWK frame counter, shared by every security material set
+        /// (4.3.4).
+        #[cell = atomic]
+        #[storage_key = 40]
+        #[setter = update_outgoing_frame_counter]
+        outgoing_frame_counter: u32 = 0,
         #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
@@ -267,6 +285,7 @@ construct_ib! {
         #[storage_key = 32]
         #[setter = update_unique_addr]
         unique_addr: bool = true,
+        #[table = address_map_mut]
         #[storage_key = 33]
         #[setter = update_address_map]
         address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
@@ -492,8 +511,6 @@ impl_byte! {
     #[derive(Debug, Clone)]
     pub struct NetworkSecurityMaterialDescriptor {
         pub key_seq_number: u8,
-        pub outgoing_frame_counter: u32,
-        pub incoming_frame_counter_set: StorageVec<IncomingFrameCounterDescriptor, MAX_NEIGBOUR_TABLE>,
         pub key: ByteArray<16>,
         pub network_key_type: u8,
     }
@@ -501,8 +518,13 @@ impl_byte! {
 
 impl_byte! {
     /// See Table 4-4.
+    ///
+    /// Carries the key sequence number the counter belongs to: the set is
+    /// stored flat rather than nested in each security material descriptor,
+    /// so a single counter can be persisted on its own.
     #[derive(Debug, Clone)]
     pub struct IncomingFrameCounterDescriptor {
+        pub key_seq_number: u8,
         pub sender_address: IeeeAddress,
         pub incoming_frame_counter: u32,
     }
@@ -523,8 +545,6 @@ mod tests {
         let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 0,
-            incoming_frame_counter_set: StorageVec(Vec::new()),
             key: ByteArray([0u8; 16]),
             network_key_type: 0,
         })

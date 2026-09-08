@@ -234,6 +234,8 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let nib = nib::get_ref();
         nib.update_network_address(|value| *value = 0xffff);
         nib.update_security_material_set(|set| set.clear());
+        // the counters are keyed by key sequence number, so they die with the keys
+        nib.update_incoming_frame_counters(|set| set.clear());
         self.reset_trust_center_link_keys();
     }
 
@@ -591,12 +593,14 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     sec_material.clear();
                     let _ = sec_material.push(NetworkSecurityMaterialDescriptor {
                         key_seq_number: nwk_key.sequence_number,
-                        outgoing_frame_counter: 0,
-                        incoming_frame_counter_set: StorageVec::new(),
+
                         key: nwk_key.key,
                         network_key_type: 0x01,
                     });
                 });
+                // the counters are keyed by key sequence number, so they die
+                // with the keys they belonged to
+                nib.update_incoming_frame_counters(|counters| counters.clear());
                 nib.update_active_key_seq_number(|value| *value = nwk_key.sequence_number);
                 self.mark_joined(true);
             }

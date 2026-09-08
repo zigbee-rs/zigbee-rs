@@ -742,8 +742,7 @@ fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescr
     let active = nib.active_key_seq_number();
     let material = NetworkSecurityMaterialDescriptor {
         key_seq_number: descriptor.sequence_number,
-        outgoing_frame_counter: 0,
-        incoming_frame_counter_set: StorageVec::new(),
+
         key: descriptor.key,
         network_key_type: STANDARD_NETWORK_KEY,
     };
@@ -1197,13 +1196,13 @@ mod tests {
         nib.update_security_material_set(|set| {
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: 3,
-                outgoing_frame_counter: 7,
-                incoming_frame_counter_set: StorageVec::new(),
+
                 key: ByteArray([0xaa; 16]),
                 network_key_type: STANDARD_NETWORK_KEY,
             });
         });
         nib.update_active_key_seq_number(|value| *value = 3);
+        nib.update_outgoing_frame_counter(|value| *value = 7);
         nib
     }
 
@@ -1220,9 +1219,10 @@ mod tests {
         let set = nib.security_material_set();
         assert_eq!(set.len(), 2);
         assert_eq!(set[1].key_seq_number, 4);
-        assert_eq!(set[1].outgoing_frame_counter, 0);
-        assert_eq!(set[0].outgoing_frame_counter, 7);
         drop(set);
+        // one counter is shared by both material sets and a key transport
+        // must not disturb it (4.3.4)
+        assert_eq!(nib.outgoing_frame_counter(), 7);
 
         apsme.handle_aps_command(
             &aib,
@@ -1373,8 +1373,7 @@ mod receive_path_tests {
             *set = StorageVec::new();
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: ACTIVE_KEY_SEQ,
-                outgoing_frame_counter: 7,
-                incoming_frame_counter_set: StorageVec::new(),
+
                 key: ByteArray(ACTIVE_KEY),
                 network_key_type: STANDARD_NETWORK_KEY,
             });
@@ -1482,8 +1481,7 @@ mod receive_path_tests {
         nib::get_ref().update_security_material_set(|set| {
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: 4,
-                outgoing_frame_counter: 0,
-                incoming_frame_counter_set: StorageVec::new(),
+
                 key: ByteArray([0xcc; 16]),
                 network_key_type: STANDARD_NETWORK_KEY,
             });

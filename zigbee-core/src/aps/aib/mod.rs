@@ -17,6 +17,7 @@ construct_ib! {
     #[ids = AibId]
     #[fields = AibFields]
     pub struct Aib {
+        #[table = binding_table_mut]
         #[storage_key = 4]
         #[setter = update_binding_table]
         binding_table: StorageVec<Binding, MAX_APS_BINDING_TABLE>,
@@ -26,12 +27,14 @@ construct_ib! {
         #[storage_key = 6]
         #[setter = update_designated_coordinator]
         designated_coordinator: bool = false,
+        #[table = channel_mask_list_mut]
         #[storage_key = 7]
         #[setter = update_channel_mask_list]
         channel_mask_list: StorageVec<IeeeAddress, MAX_APS_CHANNEL_MASK_LIST>,
         #[storage_key = 3]
         #[setter = update_use_extended_pan_id]
         use_extended_pan_id: IeeeAddress,
+        #[table = group_table_mut]
         #[storage_key = 5]
         #[setter = update_group_table]
         group_table: StorageVec<ApsGroup, MAX_APS_GROUP_TABLE>,
@@ -58,6 +61,7 @@ construct_ib! {
         #[cell = atomic]
         #[setter = update_channel_timer]
         channel_timer: u8 = 0x00,
+        #[table = max_window_size_mut]
         #[storage_key = 11]
         #[setter = update_max_window_size]
         max_window_size: StorageVec<ApsWindowSize, MAX_APS_MAX_WINDOW_SIZE>,
@@ -65,6 +69,7 @@ construct_ib! {
         #[setter = update_parent_announce_timer]
         parent_announce_timer: u8 = 0x00,
         // security attributes
+        #[table = device_key_pair_set_mut]
         #[storage_key = 2]
         #[setter = update_device_key_pair_set]
         device_key_pair_set: StorageVec<DeviceKeyPairDescriptor, MAX_APS_DEVICE_KEY_PAIR_SET>,
