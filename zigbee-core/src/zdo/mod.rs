@@ -455,7 +455,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
     pub async fn announce_self(&self) -> Result<(), NetworkError> {
         let nib = nib::get_ref();
         let annce = device_annce::DeviceAnnce {
-            nwk_addr: ShortAddress(*nib.network_address()),
+            nwk_addr: ShortAddress(nib.network_address()),
             ieee_addr: *nib.ieee_address(),
             capability: *nib.capability_information(),
         };
@@ -865,7 +865,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         // Match_Desc_req (2.4.4.2.7) and Mgmt_Leave_req (3.6.1.10.3 step 1)
         let nwk_dst = match indication.dst_address {
             Address::Network(dst) => dst,
-            _ => *self.nlme.nib().network_address(),
+            _ => self.nlme.nib().network_address(),
         };
 
         let response = if profile == ZDP_PROFILE_ID && cluster == descriptor::MGMT_LEAVE_REQ {
@@ -1105,7 +1105,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         cfg: &descriptor::DeviceDescriptorConfig<'_>,
         out: &mut [u8],
     ) -> Option<(u16, usize)> {
-        let nwk_addr = *self.nlme.nib().network_address();
+        let nwk_addr = self.nlme.nib().network_address();
         let ieee_addr = *self.nlme.nib().ieee_address();
 
         // the error paths echo the requested addresses, leaving the one this
@@ -1173,7 +1173,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         out: &mut [u8],
     ) -> Option<(u16, usize)> {
         let seq = *asdu.first()?;
-        let nwk_addr = *self.nlme.nib().network_address();
+        let nwk_addr = self.nlme.nib().network_address();
 
         // a descriptor request naming another device is not answered with our
         // own descriptors (2.4.4.2.3-2.4.4.2.6)

@@ -285,9 +285,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         .map_or(0xffff, |n| n.network_address.0);
     println!(
         "On network: addr={:#06x} parent={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
-        *nib.network_address(),
+        nib.network_address(),
         parent,
-        *nib.panid(),
+        nib.panid(),
         *nib.extended_panid(),
         stack.config().channel(),
         nib.update_id()

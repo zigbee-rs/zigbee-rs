@@ -6,6 +6,9 @@ use core::future::Future;
 use core::future::poll_fn;
 use core::pin::pin;
 use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::AtomicU16;
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 use core::task::Poll;
 
@@ -177,6 +180,162 @@ impl Event {
         })
         .await;
     }
+}
+
+/// Lock-free set of up to 64 bits, e.g. the modified fields of an
+/// information base.
+///
+/// Split into two 32-bit halves because riscv32 targets (ESP32-C6/H2) have
+/// no 64-bit atomics.
+pub struct BitSet64 {
+    lo: AtomicU32,
+    hi: AtomicU32,
+}
+
+impl BitSet64 {
+    /// Creates an empty set.
+    pub const fn new() -> Self {
+        Self {
+            lo: AtomicU32::new(0),
+            hi: AtomicU32::new(0),
+        }
+    }
+
+    /// Adds a bit; `index` must be below 64.
+    pub fn set(&self, index: u8) {
+        let (half, bit) = if index < 32 {
+            (&self.lo, index)
+        } else {
+            (&self.hi, index - 32)
+        };
+        half.fetch_or(1 << bit, Ordering::Release);
+    }
+
+    /// Returns all bits and empties the set.
+    ///
+    /// Bits added between the two half-swaps stay set and are returned by the
+    /// next call.
+    pub fn take(&self) -> u64 {
+        let lo = self.lo.swap(0, Ordering::Acquire);
+        let hi = self.hi.swap(0, Ordering::Acquire);
+        u64::from(lo) | (u64::from(hi) << 32)
+    }
+}
+
+impl Default for BitSet64 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Interior-mutable storage of a single information-base field.
+///
+/// Implemented by `spin::RwLock` for compound fields and by the plain
+/// atomics for primitives, so an information base reads and writes every
+/// field the same way regardless of how it is stored.
+pub trait IbCell<T> {
+    /// What a read hands back: a guard for locked fields, a copy for atomics.
+    type Ref<'a>
+    where
+        Self: 'a;
+
+    fn new(value: T) -> Self;
+
+    fn get(&self) -> Self::Ref<'_>;
+
+    fn set(&self, value: T);
+
+    /// Applies `f` to the stored value.
+    ///
+    /// Atomic fields load, apply and store rather than doing a real
+    /// read-modify-write; the stack is cooperatively scheduled, so no other
+    /// task can interleave with `f`.
+    fn update(&self, f: impl FnOnce(&mut T));
+
+    /// Returns an owned copy of the stored value.
+    fn get_owned(&self) -> T
+    where
+        T: Clone;
+}
+
+impl<T> IbCell<T> for spin::RwLock<T> {
+    type Ref<'a>
+        = spin::RwLockReadGuard<'a, T>
+    where
+        T: 'a;
+
+    fn new(value: T) -> Self {
+        spin::RwLock::new(value)
+    }
+
+    fn get(&self) -> Self::Ref<'_> {
+        self.read()
+    }
+
+    fn set(&self, value: T) {
+        *self.write() = value;
+    }
+
+    fn update(&self, f: impl FnOnce(&mut T)) {
+        f(&mut *self.write());
+    }
+
+    fn get_owned(&self) -> T
+    where
+        T: Clone,
+    {
+        T::clone(&*self.read())
+    }
+}
+
+/// A primitive that an information base can keep in a plain atomic instead
+/// of behind a lock.
+pub trait AtomicCell: Copy {
+    /// The atomic holding it.
+    type Cell: IbCell<Self>;
+}
+
+macro_rules! atomic_cell {
+    ($($ty:ty => $cell:ty,)+) => {
+        $(
+            impl AtomicCell for $ty {
+                type Cell = $cell;
+            }
+
+            impl IbCell<$ty> for $cell {
+                type Ref<'a> = $ty;
+
+                fn new(value: $ty) -> Self {
+                    <$cell>::new(value)
+                }
+
+                fn get(&self) -> $ty {
+                    self.load(Ordering::Acquire)
+                }
+
+                fn set(&self, value: $ty) {
+                    self.store(value, Ordering::Release);
+                }
+
+                fn update(&self, f: impl FnOnce(&mut $ty)) {
+                    let mut value = self.load(Ordering::Acquire);
+                    f(&mut value);
+                    self.store(value, Ordering::Release);
+                }
+
+                fn get_owned(&self) -> $ty {
+                    self.load(Ordering::Acquire)
+                }
+            }
+        )+
+    };
+}
+
+atomic_cell! {
+    bool => AtomicBool,
+    u8 => AtomicU8,
+    u16 => AtomicU16,
+    u32 => AtomicU32,
 }
 
 #[cfg(test)]

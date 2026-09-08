@@ -13,9 +13,9 @@
 //! values may be accepted again — the cost of not writing flash on every
 //! received frame.
 //!
-//! The per-IB restore/flush logic lives with the respective information base
-//! (`nwk::nib::storage`, `aps::aib::storage`); this module only provides the
-//! flash map plumbing.
+//! How a field is encoded is IB-specific and lives with the respective
+//! information base (`nwk::nib::storage`, `aps::aib::storage`) as a
+//! `PersistentIb` impl; this module only provides the flash map plumbing.
 
 /// Sink dirty information-base state is flushed into.
 pub trait StorageDriver {
@@ -54,11 +54,9 @@ impl StorageDriver for NoStorage {
 pub(crate) mod flash;
 
 #[cfg(feature = "storage")]
-pub(crate) use flash::FlashMap;
-#[cfg(feature = "storage")]
 pub use flash::FlashStorage;
 #[cfg(feature = "storage")]
-pub(crate) use flash::Shadow;
+pub(crate) use flash::PersistentIb;
 #[cfg(feature = "storage")]
 pub use flash::init_with_flash;
 #[cfg(feature = "storage")]

@@ -739,7 +739,7 @@ impl Apsme {
 // leaving the active one in place until a Switch-Key arrives (4.6.3.4.2); all
 // frame counters of the replaced key start over
 fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescriptor) {
-    let active = *nib.active_key_seq_number();
+    let active = nib.active_key_seq_number();
     let material = NetworkSecurityMaterialDescriptor {
         key_seq_number: descriptor.sequence_number,
         outgoing_frame_counter: 0,
@@ -1216,7 +1216,7 @@ mod tests {
         apsme.handle_aps_command(&aib, &nib, &network_key(4, NEW_KEY, TC_IEEE), true);
 
         // the active key is untouched, the new one is stored alongside it
-        assert_eq!(*nib.active_key_seq_number(), 3);
+        assert_eq!(nib.active_key_seq_number(), 3);
         let set = nib.security_material_set();
         assert_eq!(set.len(), 2);
         assert_eq!(set[1].key_seq_number, 4);
@@ -1230,7 +1230,7 @@ mod tests {
             &Command::SwitchKey(SwitchKey { sequence_number: 4 }),
             true,
         );
-        assert_eq!(*nib.active_key_seq_number(), 4);
+        assert_eq!(nib.active_key_seq_number(), 4);
 
         // the next rotation overwrites the now-alternate key, not the active
         // one
@@ -1264,7 +1264,7 @@ mod tests {
             &Command::SwitchKey(SwitchKey { sequence_number: 4 }),
             false,
         );
-        assert_eq!(*nib.active_key_seq_number(), 3);
+        assert_eq!(nib.active_key_seq_number(), 3);
 
         // as is a switch to a key we never received
         apsme.handle_aps_command(
@@ -1273,7 +1273,7 @@ mod tests {
             &Command::SwitchKey(SwitchKey { sequence_number: 9 }),
             true,
         );
-        assert_eq!(*nib.active_key_seq_number(), 3);
+        assert_eq!(nib.active_key_seq_number(), 3);
     }
 }
 
@@ -1494,7 +1494,7 @@ mod receive_path_tests {
             .expect("an APS command frame is consumed, not reported as an error");
 
         assert_eq!(
-            *nib::get_ref().active_key_seq_number(),
+            nib::get_ref().active_key_seq_number(),
             4,
             "a broadcast Switch-Key carries no APS security by design (4.4.6.1.3)"
         );

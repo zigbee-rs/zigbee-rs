@@ -20,6 +20,7 @@ construct_ib! {
         #[storage_key = 4]
         #[setter = update_binding_table]
         binding_table: StorageVec<Binding, MAX_APS_BINDING_TABLE>,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 6]
@@ -34,26 +35,33 @@ construct_ib! {
         #[storage_key = 5]
         #[setter = update_group_table]
         group_table: StorageVec<ApsGroup, MAX_APS_GROUP_TABLE>,
+        #[cell = atomic]
         #[storage_key = 8]
         #[setter = update_non_member_radius]
         non_member_radius: u8 = 0x02,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 9]
         #[setter = update_use_insecure_join]
         use_insecure_join: bool = false,
+        #[cell = atomic]
         #[storage_key = 10]
         #[setter = update_interframe_delay]
         interframe_delay: u8,
+        #[cell = atomic]
         #[setter = update_last_channel_energy]
         last_channel_energy: u8 = 0x00,
+        #[cell = atomic]
         #[setter = update_last_channel_failure_rate]
         last_channel_failure_rate: u8 = 0x00,
+        #[cell = atomic]
         #[setter = update_channel_timer]
         channel_timer: u8 = 0x00,
         #[storage_key = 11]
         #[setter = update_max_window_size]
         max_window_size: StorageVec<ApsWindowSize, MAX_APS_MAX_WINDOW_SIZE>,
+        #[cell = atomic]
         #[setter = update_parent_announce_timer]
         parent_announce_timer: u8 = 0x00,
         // security attributes
@@ -63,6 +71,7 @@ construct_ib! {
         #[storage_key = 1]
         #[setter = update_trust_center_address]
         trust_center_address: IeeeAddress = IeeeAddress(0xffff_ffff_ffff_ffff),
+        #[cell = atomic]
         #[storage_key = 12]
         #[setter = update_security_timeout_period]
         security_timeout_period: u16 = 0x00,

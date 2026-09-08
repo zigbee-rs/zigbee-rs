@@ -127,7 +127,7 @@ impl<'a> SecurityContext<'a> {
         let sec_level = *self.nib.security_level();
         let _mic_len = sec_level.mic_length();
 
-        let key_sequence_number = *self.nib.active_key_seq_number();
+        let key_sequence_number = self.nib.active_key_seq_number();
         // read the key + counter and increment the counter (4.3.1.1) in one
         // atomic update
         let mut security_material = None;
@@ -267,7 +267,7 @@ impl<'a> SecurityContext<'a> {
         // never receive the broadcast Switch-Key. a key update carries the
         // sequence number (N + 1) mod 256 (4.6.3.4.1), which distinguishes the
         // newer key from the previous one still accepted for inbound frames
-        let active = *self.nib.active_key_seq_number();
+        let active = self.nib.active_key_seq_number();
         if aux_hdr
             .key_sequence_number
             .is_some_and(|ksn| ksn == active.wrapping_add(1))

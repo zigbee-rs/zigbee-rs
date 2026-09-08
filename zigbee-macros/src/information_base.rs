@@ -3,6 +3,38 @@
 macro_rules! construct_ib {
     (@default $default:expr) => { $default };
     (@default) => { ::core::default::Default::default() };
+    // how a field is stored: behind a lock by default, in a plain atomic
+    // when declared `#[cell = atomic]`
+    (@cell $ty:path; []) => { ::spin::RwLock<$ty> };
+    (@cell $ty:path; [atomic]) => { <$ty as ::zigbee_types::sync::AtomicCell>::Cell };
+    (@ref $ty:path; []) => { ::spin::RwLockReadGuard<'_, $ty> };
+    (@ref $ty:path; [atomic]) => { $ty };
+    // per-field encode/decode; RAM-only fields (no storage key) expand to
+    // nothing. The optional key and the optional byte context cannot be
+    // nested in one repetition, hence the split into these rules
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [] [$($cx:expr)?]) => {};
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let value: $ty = ::zigbee_types::sync::IbCell::get_owned(&$s.fields.$field);
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            let mut offset = 0;
+            $buf.write_with(&mut offset, value, _cx).ok()?;
+            return Some(offset);
+        }
+    };
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [] [$($cx:expr)?]) => {};
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            let Ok(value) = $data.read_with::<$ty>(&mut 0, _cx) else {
+                return false;
+            };
+            ::zigbee_types::sync::IbCell::set(&$s.fields.$field, value);
+            return true;
+        }
+    };
     (
         $(#[doc = $ib_doc:literal])*
         #[ids = $ib_id:ident]
@@ -10,6 +42,7 @@ macro_rules! construct_ib {
         $ib_vis:vis struct $ib_name:ident {
             $(
                 $(#[doc = $doc:literal])*
+                $(#[cell = $cell:ident])?
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
                 $(#[storage_key = $skey:literal])?
@@ -67,99 +100,70 @@ macro_rules! construct_ib {
             unsafe {
                 if let Some(ref ib) = IB {
                     $(
-                        *ib.fields.$field.write() =
-                            $crate::construct_ib!(@default $($default)?);
+                        ::zigbee_types::sync::IbCell::set(
+                            &ib.fields.$field,
+                            $crate::construct_ib!(@default $($default)?),
+                        );
                     )+
-                    *ib.dirty.lock() = 0;
+                    let _ = ib.dirty.take();
                 }
             }
         }
 
-        #[repr(usize)]
+        // the discriminant is the stable persistence key; RAM-only fields
+        // have no id
+        #[repr(u8)]
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq)]
         $ib_vis enum $ib_id {
-            $($field),+
+            $($($field = $skey,)?)+
         }
 
         impl $ib_id {
-            // upper bound of the `byte`-encoded size per field: encodings are
-            // packed and never larger than the in-memory representation
-            const ENCODED_SIZE_LUT: &[usize] = &[
-                $(
-                    size_of::<$field_ty>()
-                ),+
-            ];
-
-            // stable persistence key per field; None = RAM-only field
-            const STORAGE_KEY_LUT: &[Option<u8>] = &[
-                $(
-                    {
-                        let key: Option<u8> = None;
-                        $(let key = Some($skey);)?
-                        key
-                    }
-                ),+
-            ];
+            /// Highest storage key in use.
+            pub const MAX_KEY: u8 = {
+                let mut max = 0u8;
+                $($(if $skey > max { max = $skey; })?)+
+                max
+            };
 
             /// Upper bound of the encoded size over all persisted fields.
-            pub const MAX_FIELD_SIZE: usize = $ib_id::max_field_size();
+            ///
+            /// `byte` encodings are packed and never larger than the
+            /// in-memory representation.
+            pub const MAX_FIELD_SIZE: usize = {
+                let mut max = 0usize;
+                $($(
+                    let _ = $skey;
+                    if size_of::<$field_ty>() > max {
+                        max = size_of::<$field_ty>();
+                    }
+                )?)+
+                max
+            };
 
-            /// All field ids in declaration order.
-            pub const VARIANTS: &[Self] = &[$(Self::$field),+];
+            /// Stable persistence key of this field.
+            pub const fn storage_key(&self) -> u8 {
+                *self as u8
+            }
 
-            /// Returns the stable persistence key, or `None` for RAM-only fields.
-            pub const fn storage_key(&self) -> Option<u8> {
-                Self::STORAGE_KEY_LUT[*self as usize]
+            /// Bit of this field in the dirty mask.
+            pub const fn bit(&self) -> u64 {
+                1 << (*self as u64)
             }
 
             /// Resolves a stable persistence key back to its field id.
             pub const fn from_storage_key(key: u8) -> Option<Self> {
-                $(
-                    if let Some(k) = Self::STORAGE_KEY_LUT[Self::$field as usize] {
-                        if k == key {
-                            return Some(Self::$field);
-                        }
-                    }
-                )+
-                None
-            }
-
-            const fn max_field_size() -> usize {
-                let mut max = 0usize;
-                let mut i = 0;
-                while i < Self::ENCODED_SIZE_LUT.len() {
-                    if Self::STORAGE_KEY_LUT[i].is_some() && Self::ENCODED_SIZE_LUT[i] > max {
-                        max = Self::ENCODED_SIZE_LUT[i];
-                    }
-                    i += 1;
+                match key {
+                    $($($skey => Some(Self::$field),)?)+
+                    _ => None,
                 }
-                max
-            }
-
-            const fn storage_keys_unique() -> bool {
-                let lut = Self::STORAGE_KEY_LUT;
-                let mut i = 0;
-                while i < lut.len() {
-                    let mut j = i + 1;
-                    while j < lut.len() {
-                        if let (Some(a), Some(b)) = (lut[i], lut[j]) {
-                            if a == b {
-                                return false;
-                            }
-                        }
-                        j += 1;
-                    }
-                    i += 1;
-                }
-                true
             }
         }
 
         const _: () = {
-            // dirty mask is a u64 bitmask indexed by field position
-            assert!($ib_id::STORAGE_KEY_LUT.len() <= 64);
-            assert!($ib_id::storage_keys_unique());
+            // dirty mask is a u64 bitmask indexed by storage key
+            assert!($ib_id::MAX_KEY < 64, "information base cannot have more than 64 keys");
         };
 
         // plain in-memory representation with one lock per field so readers
@@ -167,13 +171,15 @@ macro_rules! construct_ib {
         // field is exported to / imported from persistent storage
         #[allow(non_camel_case_types)]
         struct $ib_fields {
-            $($field: ::spin::RwLock<$field_ty>,)+
+            $($field: $crate::construct_ib!(@cell $field_ty; [$($cell)?]),)+
         }
 
         impl $ib_fields {
             fn defaults() -> Self {
                 Self {
-                    $($field: ::spin::RwLock::new($crate::construct_ib!(@default $($default)?)),)+
+                    $($field: ::zigbee_types::sync::IbCell::new(
+                        $crate::construct_ib!(@default $($default)?)
+                    ),)+
                 }
             }
         }
@@ -181,54 +187,44 @@ macro_rules! construct_ib {
         $(#[doc = $ib_doc])*
         $ib_vis struct $ib_name {
             fields: $ib_fields,
-            // bitmask of persisted fields modified since the last take_dirty
-            dirty: ::spin::Mutex<u64>,
+            // persisted fields modified since the last take_dirty, indexed
+            // by storage key
+            dirty: ::zigbee_types::sync::BitSet64,
         }
 
         impl $ib_name {
             pub fn new() -> Self {
                 Self {
                     fields: $ib_fields::defaults(),
-                    dirty: ::spin::Mutex::new(0),
+                    dirty: ::zigbee_types::sync::BitSet64::new(),
                 }
             }
 
             /// Returns and clears the bitmask of fields modified since the
             /// last call.
             pub fn take_dirty(&self) -> u64 {
-                let mut dirty = self.dirty.lock();
-                core::mem::take(&mut *dirty)
+                self.dirty.take()
             }
 
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
             pub fn mark_dirty(&self, id: $ib_id) {
-                *self.dirty.lock() |= 1 << (id as u64);
+                self.dirty.set(id.storage_key());
                 DIRTY_SIGNAL.signal();
             }
 
             /// Encodes a single field into `buf`, returning the encoded length.
             ///
-            /// Returns `None` for RAM-only fields (no storage key) or if `buf`
-            /// is too small.
+            /// Returns `None` if `buf` is too small.
             pub fn export_field(&self, id: $ib_id, buf: &mut [u8]) -> Option<usize> {
                 use byte::BytesExt;
                 use byte::TryWrite;
-                id.storage_key()?;
-                match id {
-                    $(
-                        $ib_id::$field => {
-                            let value: $field_ty =
-                                ::core::clone::Clone::clone(&*self.fields.$field.read());
-                            let _cx = ::byte::LE;
-                            $(
-                                let _cx = $ctx_write;
-                            )?
-                            let mut offset = 0;
-                            buf.write_with(&mut offset, value, _cx).ok()?;
-                            Some(offset)
-                        }
-                    )+
-                }
+                $(
+                    $crate::construct_ib!(
+                        @export self, id, buf, $field, $field_ty;
+                        [$($skey)?] [$($ctx_write)?]
+                    );
+                )+
+                None
             }
 
             /// Decodes `data` into a single field without marking it dirty.
@@ -238,40 +234,32 @@ macro_rules! construct_ib {
             pub fn import_field(&self, id: $ib_id, data: &[u8]) -> bool {
                 use byte::BytesExt;
                 use byte::TryRead;
-                match id {
-                    $(
-                        $ib_id::$field => {
-                            let _cx = ::byte::LE;
-                            $(
-                                let _cx = $ctx_hdr;
-                            )?
-                            let Ok(value) = data.read_with::<$field_ty>(&mut 0, _cx) else {
-                                return false;
-                            };
-                            *self.fields.$field.write() = value;
-                            true
-                        }
-                    )+
-                }
+                $(
+                    $crate::construct_ib!(
+                        @import self, id, data, $field, $field_ty;
+                        [$($skey)?] [$($ctx_hdr)?]
+                    );
+                )+
+                false
             }
 
             $(
                 $(#[doc = $doc])*
                 ///
-                /// Returns a read guard; do not hold it across an
-                /// `update_*` of the same field.
-                pub fn $field(&self) -> ::spin::RwLockReadGuard<'_, $field_ty> {
-                    self.fields.$field.read()
+                /// Locked fields return a read guard, atomic fields a copy;
+                /// never hold a guard across an `update_*` of the same field.
+                pub fn $field(&self) -> $crate::construct_ib!(@ref $field_ty; [$($cell)?]) {
+                    ::zigbee_types::sync::IbCell::get(&self.fields.$field)
                 }
 
-                /// Updates the field in place under its write lock.
+                /// Updates the field in place.
                 pub fn $update(&self, f: impl FnOnce(&mut $field_ty)) {
-                    f(&mut *self.fields.$field.write());
+                    ::zigbee_types::sync::IbCell::update(&self.fields.$field, f);
 
-                    if $ib_id::$field.storage_key().is_some() {
-                        *self.dirty.lock() |= 1 << ($ib_id::$field as u64);
+                    $(
+                        self.dirty.set($skey);
                         DIRTY_SIGNAL.signal();
-                    }
+                    )?
                 }
             )+
         }
