@@ -69,8 +69,6 @@ pub use zigbee_core::storage::FlashStorage;
 /// RAM-only persistence: pass it to [`Stack::new`] when state need not survive
 /// a reset.
 pub use zigbee_core::storage::NoStorage;
-#[cfg(feature = "storage")]
-pub use zigbee_core::storage::init_with_flash;
 /// Zigbee Device Objects — driven by [`Stack`] and [`bdb`].
 #[doc(hidden)]
 pub use zigbee_core::zdo;

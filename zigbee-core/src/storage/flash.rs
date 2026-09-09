@@ -151,142 +151,145 @@ impl<F: NorFlash> FlashMap<F> {
             .await
             .is_ok()
     }
-}
 
-/// Restores all persisted fields; missing or unparsable items keep their
-/// defaults.
-pub(crate) async fn restore<F: NorFlash, I: PersistentIb>(map: &mut FlashMap<F>, ib: &I) {
-    for field in 0..=I::MAX_KEY {
-        let Some(id) = I::field(field) else {
-            continue;
-        };
-
-        if ib.table_len(id).is_some() {
-            let Some(len) = map.fetch_len(item_key(I::TAG, field, LEN_INDEX)).await else {
+    /// Restores all persisted fields; missing or unparsable items keep their
+    /// defaults.
+    pub(crate) async fn restore<I: PersistentIb>(&mut self, ib: &I) {
+        for field in 0..=I::MAX_KEY {
+            let Some(id) = I::field(field) else {
                 continue;
             };
-            for index in 0..len {
-                let Some(data) = map.fetch(item_key(I::TAG, field, index)).await else {
-                    break;
-                };
-                if !ib.import_entry(id, index as usize, data) {
-                    log::warn!(
-                        "stored {} field {field:#04x} entry {index} did not parse",
-                        I::NAME
-                    );
-                }
-            }
-            ib.truncate_table(id, len as usize);
-        } else if let Some(data) = map.fetch(item_key(I::TAG, field, 0)).await
-            && !ib.import_field(id, data)
-        {
-            log::warn!(
-                "stored {} field {field:#04x} did not parse; using default",
-                I::NAME
-            );
-        }
-    }
 
-    // restore does not count as modification
-    let _ = ib.take_dirty();
-    for field in 0..=I::MAX_KEY {
-        if let Some(id) = I::field(field) {
-            let _ = ib.take_dirty_entries(id);
-        }
-    }
-}
-
-/// Persists everything modified since the last call; table fields write only
-/// the rows that changed.
-pub(crate) async fn flush<F: NorFlash, I: PersistentIb>(map: &mut FlashMap<F>, ib: &I) {
-    let dirty = ib.take_dirty();
-
-    for field in 0..=I::MAX_KEY {
-        let Some(id) = I::field(field) else {
-            continue;
-        };
-        let field_dirty = dirty & I::dirty_bit(id) != 0;
-
-        let stored = match ib.table_len(id) {
-            Some(len) => {
-                // always taken, so the row set is cleared either way
-                let rows = ib.take_dirty_entries(id);
-                // a whole-table update may have moved any row
-                let rows = if field_dirty { u64::MAX } else { rows };
-                if rows == 0 {
+            if ib.table_len(id).is_some() {
+                let Some(len) = self.fetch_len(item_key(I::TAG, field, LEN_INDEX)).await else {
                     continue;
+                };
+                for index in 0..len {
+                    let Some(data) = self.fetch(item_key(I::TAG, field, index)).await else {
+                        break;
+                    };
+                    if !ib.import_entry(id, index as usize, data) {
+                        log::warn!(
+                            "stored {} field {field:#04x} entry {index} did not parse",
+                            I::NAME
+                        );
+                    }
                 }
-                store_table(map, ib, id, field, len, rows).await
+                ib.truncate_table(id, len as usize);
+            } else if let Some(data) = self.fetch(item_key(I::TAG, field, 0)).await
+                && !ib.import_field(id, data)
+            {
+                log::warn!(
+                    "stored {} field {field:#04x} did not parse; using default",
+                    I::NAME
+                );
             }
-            None if field_dirty => {
-                let key = item_key(I::TAG, field, 0);
-                map.store(
-                    key,
-                    &FieldValue {
-                        ib,
-                        id,
-                        index: None,
-                    },
-                )
-                .await
-            }
-            None => continue,
-        };
+        }
 
-        if !stored {
-            // retry at the next flush
-            ib.mark_dirty(id);
-            log::debug!("storing {} field {field:#04x} failed", I::NAME);
+        // restore does not count as modification
+        let _ = ib.take_dirty();
+        for field in 0..=I::MAX_KEY {
+            if let Some(id) = I::field(field) {
+                let _ = ib.take_dirty_entries(id);
+            }
         }
     }
-}
 
-async fn store_table<F: NorFlash, I: PersistentIb>(
-    map: &mut FlashMap<F>,
-    ib: &I,
-    id: I::Id,
-    field: u8,
-    len: usize,
-    rows: u64,
-) -> bool {
-    let Ok(len_record) = u16::try_from(len) else {
-        return false;
-    };
-    if !map
-        .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
-        .await
-    {
-        return false;
+    /// Persists everything modified since the last call; table fields write only
+    /// the rows that changed.
+    pub(crate) async fn flush<I: PersistentIb>(&mut self, ib: &I) {
+        let dirty = ib.take_dirty();
+
+        for field in 0..=I::MAX_KEY {
+            let Some(id) = I::field(field) else {
+                continue;
+            };
+            let field_dirty = dirty & I::dirty_bit(id) != 0;
+
+            let stored = match ib.table_len(id) {
+                Some(len) => {
+                    // always taken, so the row set is cleared either way
+                    // a whole-table update may have moved any row
+                    let rows = if field_dirty {
+                        u64::MAX
+                    } else {
+                        ib.take_dirty_entries(id)
+                    };
+                    if rows == 0 {
+                        continue;
+                    }
+                    self.store_table(ib, id, field, len, rows).await
+                }
+                None if field_dirty => {
+                    let key = item_key(I::TAG, field, 0);
+                    self.store(
+                        key,
+                        &FieldValue {
+                            ib,
+                            id,
+                            index: None,
+                        },
+                    )
+                    .await
+                }
+                None => continue,
+            };
+
+            if !stored {
+                // retry at the next flush
+                ib.mark_dirty(id);
+                log::debug!("storing {} field {field:#04x} failed", I::NAME);
+            }
+        }
     }
 
-    for index in 0..TRACKED_ENTRIES {
-        if rows & (1 << index) == 0 {
-            continue;
-        }
-        // rows past the length record are never read back, so a shrunk table
-        // leaves them in place rather than needing erasable items
-        if index >= len {
-            continue;
-        }
-        let Ok(row) = u16::try_from(index) else {
-            continue;
+    async fn store_table<I: PersistentIb>(
+        &mut self,
+        ib: &I,
+        id: I::Id,
+        field: u8,
+        len: usize,
+        rows: u64,
+    ) -> bool {
+        let Ok(len_record) = u16::try_from(len) else {
+            return false;
         };
-        let key = item_key(I::TAG, field, row);
-        if !map
-            .store(
-                key,
-                &FieldValue {
-                    ib,
-                    id,
-                    index: Some(index),
-                },
-            )
+        if !self
+            .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
             .await
         {
             return false;
         }
+
+        for index in 0..TRACKED_ENTRIES {
+            if rows & (1 << index) == 0 {
+                continue;
+            }
+            // rows past the length record are never read back, so a shrunk table
+            // leaves them in place rather than needing erasable items
+            if index >= len {
+                continue;
+            }
+            let Ok(row) = u16::try_from(index) else {
+                continue;
+            };
+            let key = item_key(I::TAG, field, row);
+            if !self
+                .store(
+                    key,
+                    &FieldValue {
+                        ib,
+                        id,
+                        index: Some(index),
+                    },
+                )
+                .await
+            {
+                return false;
+            }
+        }
+        true
     }
-    true
 }
 
 /// Persistence of the information bases over a NOR flash region.
@@ -303,26 +306,28 @@ struct Inner<F: NorFlash> {
     map: FlashMap<F>,
 }
 
-/// Initializes the NIB and AIB backed by the given flash region.
-///
-/// Restores all persisted fields on boot; fields never stored (or stored
-/// by an incompatible firmware) keep their defaults. Must be called
-/// instead of — not in addition to — the plain `init()` functions.
-/// Spawn a task running [`FlashStorage::run`] to persist changes.
-///
-/// `range` must be erase-sector aligned and span at least two sectors so
-/// `sequential-storage` has a spare sector for garbage collection, and
-/// must not overlap the firmware image or partition table.
-pub async fn init_with_flash<F: NorFlash>(flash: F, range: Range<u32>) -> FlashStorage<F> {
-    nib::init();
-    aib::init();
+impl<F: NorFlash> FlashStorage<F> {
+    /// Initializes the NIB and AIB backed by the given flash region.
+    ///
+    /// Restores all persisted fields on boot; fields never stored (or stored
+    /// by an incompatible firmware) keep their defaults. Must be called
+    /// instead of — not in addition to — the plain `init()` functions.
+    /// Spawn a task running [`FlashStorage::run`] to persist changes.
+    ///
+    /// `range` must be erase-sector aligned and span at least two sectors so
+    /// `sequential-storage` has a spare sector for garbage collection, and
+    /// must not overlap the firmware image or partition table.
+    pub async fn new(flash: F, range: Range<u32>) -> Self {
+        nib::init();
+        aib::init();
 
-    let mut map = FlashMap::new(flash, range);
-    restore(&mut map, nib::get_ref()).await;
-    restore(&mut map, aib::get_ref()).await;
+        let mut map = FlashMap::new(flash, range);
+        map.restore(nib::get_ref()).await;
+        map.restore(aib::get_ref()).await;
 
-    FlashStorage {
-        inner: spin::Mutex::new(Inner { map }),
+        Self {
+            inner: spin::Mutex::new(Inner { map }),
+        }
     }
 }
 
@@ -349,8 +354,8 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
             yield_now().await;
         };
         let Inner { map } = &mut *inner;
-        flush(map, nib::get_ref()).await;
-        flush(map, aib::get_ref()).await;
+        map.flush(nib::get_ref()).await;
+        map.flush(aib::get_ref()).await;
     }
 }
 
@@ -504,8 +509,8 @@ mod tests {
     fn restore_from_empty_flash_keeps_defaults() {
         let (nib, aib) = fresh_ibs();
         let mut map = new_map();
-        block_on(restore(&mut map, &nib));
-        block_on(restore(&mut map, &aib));
+        block_on(map.restore(&nib));
+        block_on(map.restore(&aib));
         assert_eq!(nib.network_address(), 0xffff);
         assert_eq!(
             *aib.trust_center_address(),
@@ -522,12 +527,12 @@ mod tests {
         nib.update_panid(|value| *value = 0xabcd);
         nib.update_extended_panid(|value| *value = 0x1122_3344_5566_7788);
         aib.update_trust_center_address(|value| *value = IeeeAddress(0xdead_beef));
-        block_on(flush(&mut map, &nib));
-        block_on(flush(&mut map, &aib));
+        block_on(map.flush(&nib));
+        block_on(map.flush(&aib));
 
         let (nib2, aib2) = fresh_ibs();
-        block_on(restore(&mut map, &nib2));
-        block_on(restore(&mut map, &aib2));
+        block_on(map.restore(&nib2));
+        block_on(map.restore(&aib2));
         assert_eq!(nib2.network_address(), 0x1234);
         assert_eq!(nib2.panid(), 0xabcd);
         assert_eq!(*nib2.extended_panid(), 0x1122_3344_5566_7788);
@@ -540,10 +545,10 @@ mod tests {
         let mut map = new_map();
 
         nib.update_outgoing_frame_counter(|value| *value = 5);
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         let (nib2, _) = fresh_ibs();
-        block_on(restore(&mut map, &nib2));
+        block_on(map.restore(&nib2));
         assert_eq!(nib2.outgoing_frame_counter(), 5 + HEADROOM);
     }
 
@@ -557,7 +562,7 @@ mod tests {
 
             for counter in 0..=ticks {
                 nib.update_outgoing_frame_counter(|value| *value = counter);
-                block_on(flush(&mut map, &nib));
+                block_on(map.flush(&nib));
             }
 
             let FlashMap { map, .. } = map;
@@ -585,14 +590,14 @@ mod tests {
                     let _ = table.push(group);
                 }
             });
-            block_on(flush(&mut map, &nib));
+            block_on(map.flush(&nib));
 
             if whole_table {
                 nib.update_group_idtable(|table| table[3] = 42);
             } else {
                 nib.group_idtable_mut().update(3, |entry| *entry = 42);
             }
-            block_on(flush(&mut map, &nib));
+            block_on(map.flush(&nib));
 
             let FlashMap { map, .. } = map;
             let (flash, _) = map.destroy();
@@ -621,7 +626,7 @@ mod tests {
                     });
                 }
             });
-            block_on(flush(&mut map, &nib));
+            block_on(map.flush(&nib));
 
             if whole_table {
                 nib.update_incoming_frame_counters(|counters| {
@@ -631,7 +636,7 @@ mod tests {
                 nib.incoming_frame_counters_mut()
                     .update(3, |entry| entry.incoming_frame_counter = 9);
             }
-            block_on(flush(&mut map, &nib));
+            block_on(map.flush(&nib));
 
             let FlashMap { map, .. } = map;
             let (flash, _) = map.destroy();
@@ -652,13 +657,13 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         nib.group_idtable_mut().remove(1);
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         let (nib2, _) = fresh_ibs();
-        block_on(restore(&mut map, &nib2));
+        block_on(map.restore(&nib2));
         assert_eq!(nib2.group_idtable().as_slice(), &[0, 2, 3]);
     }
 
@@ -672,13 +677,13 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         nib.group_idtable_mut().clear();
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         let (nib2, _) = fresh_ibs();
-        block_on(restore(&mut map, &nib2));
+        block_on(map.restore(&nib2));
         assert!(nib2.group_idtable().is_empty());
     }
 
@@ -692,18 +697,18 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         nib.group_idtable_mut().clear();
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
         let mut table = nib.group_idtable_mut();
         let _ = table.push(77);
         let _ = table.push(88);
         drop(table);
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
 
         let (nib2, _) = fresh_ibs();
-        block_on(restore(&mut map, &nib2));
+        block_on(map.restore(&nib2));
         assert_eq!(nib2.group_idtable().as_slice(), &[77, 88]);
     }
 
@@ -715,7 +720,7 @@ mod tests {
         let mut map = FlashMap::new(flash, Flash::FULL_FLASH_RANGE);
 
         nib.update_network_address(|value| *value = 0x1234);
-        block_on(flush(&mut map, &nib));
+        block_on(map.flush(&nib));
         assert_eq!(nib.take_dirty(), NibId::network_address.bit());
     }
 }

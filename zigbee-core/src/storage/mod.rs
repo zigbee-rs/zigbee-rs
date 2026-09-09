@@ -68,5 +68,3 @@ pub use flash::FlashStorage;
 pub(crate) use flash::HEADROOM;
 #[cfg(feature = "storage")]
 pub(crate) use flash::PersistentIb;
-#[cfg(feature = "storage")]
-pub use flash::init_with_flash;

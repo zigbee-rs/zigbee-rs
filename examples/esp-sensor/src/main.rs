@@ -249,7 +249,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // the stack persists dirty state (keys, frame counters, tables) whenever it
     // changes them
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let storage = zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await;
+    let storage = zigbee::storage::FlashStorage::new(flash, ZIGBEE_FLASH_RANGE).await;
 
     let config = stack_config();
 
