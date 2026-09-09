@@ -530,8 +530,7 @@ impl_byte! {
     }
 }
 
-/// Flash persistence of the NIB.
-#[cfg(feature = "storage")]
+/// Persistence of the NIB.
 pub(crate) mod storage;
 
 #[cfg(test)]

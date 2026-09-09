@@ -92,6 +92,13 @@ macro_rules! construct_ib {
             return;
         }
     };
+    (@len_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
+    (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
+    (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            return $s.fields.$field.take_len_dirty();
+        }
+    };
     (@entry_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
     (@entry_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
     (@entry_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] [$t:ident]) => {
@@ -297,6 +304,15 @@ macro_rules! construct_ib {
                 self.dirty.take()
             }
 
+            /// Clears the dirty bit of a field, for a change the stored image
+            /// does not reflect.
+            ///
+            /// Only sound when this field has a single writer, which must
+            /// re-mark it once the stored image would actually change.
+            pub fn unmark_dirty(&self, id: $ib_id) {
+                self.dirty.clear(id.storage_key());
+            }
+
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
             pub fn mark_dirty(&self, id: $ib_id) {
                 self.dirty.set(id.storage_key());
@@ -362,6 +378,17 @@ macro_rules! construct_ib {
                     );
                 )+
                 0
+            }
+
+            /// Returns and clears whether a table field gained or lost
+            /// entries since the last call.
+            pub fn take_len_dirty(&self, id: $ib_id) -> bool {
+                $(
+                    $crate::construct_ib!(
+                        @len_dirty self, id, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+                false
             }
 
             /// Encodes one table entry into `buf`, returning the encoded

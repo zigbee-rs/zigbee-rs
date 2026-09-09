@@ -12,13 +12,11 @@ use sequential_storage::map::Value;
 use zigbee_types::sync::TRACKED_ENTRIES;
 use zigbee_types::sync::yield_now;
 
+use super::HEADROOM;
 use super::StorageDriver;
+use super::round_up;
 use crate::aps::aib;
 use crate::nwk::nib;
-
-// outgoing frame counters are stored this far ahead of the live value, so a
-// power cut can never hand out a counter that was already transmitted
-pub(crate) const HEADROOM: u32 = 1024;
 
 // sequential-storage work buffer: largest item + item overhead. Tables are
 // stored one entry per item, so a table never sizes this buffer as a whole
@@ -84,6 +82,10 @@ pub(crate) trait PersistentIb {
     fn truncate_table(&self, id: Self::Id, len: usize);
 
     fn take_dirty_entries(&self, id: Self::Id) -> u64;
+
+    /// Whether a table gained or lost rows, so its length record needs
+    /// rewriting.
+    fn take_len_dirty(&self, id: Self::Id) -> bool;
 
     fn import_entry(&self, id: Self::Id, index: usize, data: &[u8]) -> bool;
 
@@ -191,6 +193,7 @@ impl<F: NorFlash> FlashMap<F> {
         for field in 0..=I::MAX_KEY {
             if let Some(id) = I::field(field) {
                 let _ = ib.take_dirty_entries(id);
+                let _ = ib.take_len_dirty(id);
             }
         }
     }
@@ -208,17 +211,19 @@ impl<F: NorFlash> FlashMap<F> {
 
             let stored = match ib.table_len(id) {
                 Some(len) => {
-                    // always taken, so the row set is cleared either way
+                    // always taken, so both dirty sets are cleared either way
+                    let rows = ib.take_dirty_entries(id);
+                    let len_changed = ib.take_len_dirty(id);
                     // a whole-table update may have moved any row
-                    let rows = if field_dirty {
-                        u64::MAX
-                    } else {
-                        ib.take_dirty_entries(id)
-                    };
-                    if rows == 0 {
+                    let rows = if field_dirty { u64::MAX } else { rows };
+                    if rows == 0 && !len_changed && !field_dirty {
                         continue;
                     }
-                    self.store_table(ib, id, field, len, rows).await
+                    // a row updated in place leaves the length alone, so the
+                    // record only needs rewriting when it actually moved. The
+                    // retry path re-marks the field, which forces it again
+                    self.store_table(ib, id, field, len, rows, len_changed || field_dirty)
+                        .await
                 }
                 None if field_dirty => {
                     let key = item_key(I::TAG, field, 0);
@@ -250,15 +255,18 @@ impl<F: NorFlash> FlashMap<F> {
         field: u8,
         len: usize,
         rows: u64,
+        store_len: bool,
     ) -> bool {
-        let Ok(len_record) = u16::try_from(len) else {
-            return false;
-        };
-        if !self
-            .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
-            .await
-        {
-            return false;
+        if store_len {
+            let Ok(len_record) = u16::try_from(len) else {
+                return false;
+            };
+            if !self
+                .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
+                .await
+            {
+                return false;
+            }
         }
 
         for index in 0..TRACKED_ENTRIES {
@@ -549,7 +557,9 @@ mod tests {
 
         let (nib2, _) = fresh_ibs();
         block_on(map.restore(&nib2));
-        assert_eq!(nib2.outgoing_frame_counter(), 5 + HEADROOM);
+        let restored = nib2.outgoing_frame_counter();
+        assert_eq!(restored, round_up(5));
+        assert!(restored > 5 + HEADROOM);
     }
 
     #[test]

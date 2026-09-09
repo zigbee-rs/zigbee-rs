@@ -32,6 +32,7 @@ use crate::aps::aib::Aib;
 use crate::aps::aib::DeviceKeyPairDescriptor;
 use crate::aps::aib::KeyAttribute;
 use crate::aps::aib::LinkKeyType;
+use crate::aps::aib::storage as aib_storage;
 use crate::aps::frame::CommandFrame as ApsCommandFrame;
 use crate::aps::frame::Frame as ApsFrame;
 use crate::aps::frame::command::Command as ApsCommand;
@@ -45,6 +46,8 @@ use crate::nwk::nib;
 use crate::nwk::nib::IncomingFrameCounterDescriptor;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nib::Nib;
+use crate::nwk::nib::NibId;
+use crate::nwk::nib::storage as nib_storage;
 use crate::security::frame::KeyIdentifier;
 use crate::security::primitives::Aes128Mmo;
 use crate::security::primitives::HmacAes128Mmo;
@@ -136,13 +139,7 @@ impl<'a> SecurityContext<'a> {
             .map(|material| material.key)
             .ok_or(SecurityError::Unspecified)?;
 
-        // take the counter and increment it (4.3.1.1); one instance is shared
-        // by all security material sets (4.3.4)
-        let mut frame_counter = 0;
-        self.nib.update_outgoing_frame_counter(|counter| {
-            frame_counter = *counter;
-            *counter = counter.wrapping_add(1);
-        });
+        let frame_counter = nib_storage::take_outgoing_frame_counter(self.nib);
         let local_addr = *self.nib.ieee_address();
 
         let mut security_control = SecurityControl::default();
@@ -280,12 +277,14 @@ impl<'a> SecurityContext<'a> {
 
         // anti-replay tracking: record the now-authenticated counter as the
         // most recent accepted value for this sender
-        record_nwk_incoming_frame_counter(
+        if !nib_storage::record_incoming_frame_counter(
             self.nib,
             key_sequence_number,
             source_address,
             aux_hdr.frame_counter,
-        )?;
+        ) {
+            return Err(SecurityError::Unspecified);
+        }
 
         Ok(NwkFrame::from_payload(nwk_hdr, enc_data)?)
     }
@@ -395,11 +394,7 @@ impl<'a> SecurityContext<'a> {
             ApsFrame::Acknowledgement(_) => unreachable!(),
         }?;
 
-        self.aib.update_device_key_pair_set(|key_set| {
-            if let Some(key_config) = key_set.iter_mut().find(|k| k.device_address == dest) {
-                key_config.outgoing_frame_counter += 1;
-            }
-        });
+        aib_storage::advance_outgoing_frame_counter(self.aib, dest);
 
         Ok(offset)
     }
@@ -537,49 +532,15 @@ impl<'a> SecurityContext<'a> {
         // anti-replay tracking: record the now-authenticated counter as the
         // most recent accepted value for this device, inserting the
         // entry if new
-        self.aib.update_device_key_pair_set(|key_set| {
-            let key_config = key_set.find_or_insert_with_mut(
-                |k| k.device_address == source_address,
-                || DeviceKeyPairDescriptor {
-                    device_address: source_address,
-                    key_attributes: KeyAttribute::VerifiedKey,
-                    link_key: ByteArray(TRUST_CENTER_LINK_KEY),
-                    outgoing_frame_counter: 0,
-                    incoming_frame_counter: 0,
-                    link_key_type: LinkKeyType::GlobalLinkKey,
-                },
-            );
-            key_config.incoming_frame_counter = aux_hdr.frame_counter;
-        });
+        aib_storage::record_incoming_frame_counter(
+            self.aib,
+            source_address,
+            aux_hdr.frame_counter,
+            TRUST_CENTER_LINK_KEY,
+        );
 
         Ok(ApsFrame::from_payload(aps_hdr, enc_data)?)
     }
-}
-
-// records frame_counter as the most recently accepted incoming counter for
-// (key_seq_number, sender_address), inserting a row for a first-time sender.
-// Only the touched row is persisted.
-fn record_nwk_incoming_frame_counter(
-    nib: &Nib,
-    key_seq_number: u8,
-    sender_address: IeeeAddress,
-    frame_counter: u32,
-) -> Result<(), SecurityError> {
-    let mut counters = nib.incoming_frame_counters_mut();
-    if let Some(index) = counters
-        .position(|i| i.key_seq_number == key_seq_number && i.sender_address == sender_address)
-    {
-        counters.update(index, |entry| entry.incoming_frame_counter = frame_counter);
-        return Ok(());
-    }
-    counters
-        .push(IncomingFrameCounterDescriptor {
-            key_seq_number,
-            sender_address,
-            incoming_frame_counter: frame_counter,
-        })
-        .map(|_| ())
-        .map_err(|_| SecurityError::Unspecified)
 }
 
 // Figure 4-20

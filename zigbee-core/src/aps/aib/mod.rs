@@ -131,6 +131,5 @@ impl_byte! {
     }
 }
 
-// flash persistence of the AIB
-#[cfg(feature = "storage")]
+// persistence of the AIB
 pub(crate) mod storage;

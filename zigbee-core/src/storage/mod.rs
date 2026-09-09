@@ -7,13 +7,14 @@
 //! persists changes as they happen.
 //!
 //! Frame counters are persisted so that a reboot can never reuse an outgoing
-//! counter value (4.3.4). Outgoing counters are stored `HEADROOM` ahead of the
-//! live value because flushing is asynchronous; they are rewritten on every
-//! flush, so a transmitted frame costs a flash write. Incoming counters are
-//! stored exactly, so a received frame costs one too — in exchange there is no
-//! replay window to re-accept after a reboot. They live in a flat NIB table
-//! keyed by (key sequence number, sender) rather than nested in each security
-//! material descriptor, so one sender advancing rewrites one row.
+//! counter value (4.3.4). What is stored is a quantized bound, not the live
+//! value: outgoing counters are rounded up two `HEADROOM` boundaries ahead,
+//! incoming counters rounded down to a `WINDOW` boundary. A counter moving
+//! inside its current step changes nothing that is stored, so the mutation
+//! sites advance it without marking it dirty and only mark on a crossing —
+//! that is what keeps the flash write rate far below the frame rate. After a
+//! reboot up to `WINDOW` already-seen incoming counter values may be accepted
+//! again, the cost of not writing flash on every received frame.
 //!
 //! Table fields are stored one map item per row plus a length record, and only
 //! the rows a caller actually touched are rewritten. Mutating a table through
@@ -25,6 +26,24 @@
 //! How a field is encoded is IB-specific and lives with the respective
 //! information base (`nwk::nib::storage`, `aps::aib::storage`) as a
 //! `PersistentIb` impl; this module only provides the flash map plumbing.
+
+// outgoing frame counters are stored this far ahead of the live value, so a
+// power cut can never hand out a counter that was already transmitted
+pub(crate) const HEADROOM: u32 = 1024;
+// incoming frame counters are stored rounded down to this granularity
+const WINDOW: u32 = 1024;
+
+// next counter value a rebooted device may use; two boundaries ahead so the
+// stored bound is refreshed a full HEADROOM before it could be reached
+pub(crate) const fn round_up(counter: u32) -> u32 {
+    (counter / HEADROOM)
+        .saturating_add(2)
+        .saturating_mul(HEADROOM)
+}
+
+pub(crate) const fn round_down(counter: u32) -> u32 {
+    (counter / WINDOW) * WINDOW
+}
 
 /// Sink dirty information-base state is flushed into.
 pub trait StorageDriver {
@@ -64,7 +83,5 @@ pub(crate) mod flash;
 
 #[cfg(feature = "storage")]
 pub use flash::FlashStorage;
-#[cfg(feature = "storage")]
-pub(crate) use flash::HEADROOM;
 #[cfg(feature = "storage")]
 pub(crate) use flash::PersistentIb;

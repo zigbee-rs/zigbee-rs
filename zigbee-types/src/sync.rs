@@ -211,6 +211,16 @@ impl BitSet64 {
         half.fetch_or(1 << bit, Ordering::Release);
     }
 
+    /// Removes a bit; `index` must be below 64.
+    pub fn clear(&self, index: u8) {
+        let (half, bit) = if index < 32 {
+            (&self.lo, index)
+        } else {
+            (&self.hi, index - 32)
+        };
+        half.fetch_and(!(1 << bit), Ordering::Release);
+    }
+
     /// Returns all bits and empties the set.
     ///
     /// Bits added between the two half-swaps stay set and are returned by the
@@ -406,18 +416,27 @@ impl<T, const N: usize> Table for crate::StorageVec<T, N> {
 pub struct TableCell<V> {
     entries: spin::RwLock<V>,
     dirty: BitSet64,
+    // the length record only needs rewriting when rows are added or removed,
+    // not when one is updated in place
+    len_dirty: AtomicBool,
 }
 
 impl<V: Table> TableCell<V> {
     /// Borrows the table for entry-level mutation, recording exactly which
     /// rows change.
     pub fn table_mut<'a>(&'a self, signal: &'a Event) -> TableMut<'a, V> {
-        TableMut::new(self.entries.write(), &self.dirty, signal)
+        TableMut::new(self.entries.write(), &self.dirty, &self.len_dirty, signal)
     }
 
     /// Returns and clears the set of entries changed since the last call.
     pub fn take_dirty_entries(&self) -> u64 {
         self.dirty.take()
+    }
+
+    /// Returns and clears whether the number of entries changed since the
+    /// last call.
+    pub fn take_len_dirty(&self) -> bool {
+        self.len_dirty.swap(false, Ordering::Acquire)
     }
 }
 
@@ -431,6 +450,7 @@ impl<V: Table> IbCell<V> for TableCell<V> {
         Self {
             entries: spin::RwLock::new(value),
             dirty: BitSet64::new(),
+            len_dirty: AtomicBool::new(false),
         }
     }
 
@@ -441,6 +461,7 @@ impl<V: Table> IbCell<V> for TableCell<V> {
     // used by restore and reset, which must not look like a change
     fn set(&self, value: V) {
         *self.entries.write() = value;
+        self.len_dirty.store(true, Ordering::Release);
     }
 
     fn update(&self, f: impl FnOnce(&mut V)) {
@@ -450,6 +471,7 @@ impl<V: Table> IbCell<V> for TableCell<V> {
         for index in 0..entries.capacity().min(TRACKED_ENTRIES) {
             self.dirty.set(index as u8);
         }
+        self.len_dirty.store(true, Ordering::Release);
     }
 
     fn get_owned(&self) -> V
@@ -473,6 +495,7 @@ pub const TRACKED_ENTRIES: usize = 64;
 pub struct TableMut<'a, V: Table> {
     entries: spin::RwLockWriteGuard<'a, V>,
     dirty: &'a BitSet64,
+    len_dirty: &'a AtomicBool,
     signal: &'a Event,
 }
 
@@ -481,11 +504,13 @@ impl<'a, V: Table> TableMut<'a, V> {
     pub fn new(
         entries: spin::RwLockWriteGuard<'a, V>,
         dirty: &'a BitSet64,
+        len_dirty: &'a AtomicBool,
         signal: &'a Event,
     ) -> Self {
         Self {
             entries,
             dirty,
+            len_dirty,
             signal,
         }
     }
@@ -518,10 +543,23 @@ impl<'a, V: Table> TableMut<'a, V> {
         self.mark(index);
     }
 
+    /// Applies `f` to one entry without marking it for persistence.
+    ///
+    /// For changes the stored image does not reflect, such as a frame counter
+    /// moving inside the window its stored value is rounded to. The caller is
+    /// responsible for using [`Self::update`] once the stored image would
+    /// actually change.
+    pub fn update_quiet(&mut self, index: usize, f: impl FnOnce(&mut V::Entry)) {
+        if let Some(entry) = self.entries.get_mut(index) {
+            f(entry);
+        }
+    }
+
     /// Appends `entry`, returning its index.
     pub fn push(&mut self, entry: V::Entry) -> Result<usize, V::Entry> {
         let index = self.entries.len();
         self.entries.push(entry)?;
+        self.mark_len();
         self.mark(index);
         Ok(index)
     }
@@ -530,18 +568,25 @@ impl<'a, V: Table> TableMut<'a, V> {
     pub fn remove(&mut self, index: usize) {
         let previous_len = self.entries.len();
         self.entries.remove(index);
+        self.mark_len();
         self.mark_range(index, previous_len);
     }
 
     pub fn clear(&mut self) {
         let previous_len = self.entries.len();
         self.entries.clear();
+        self.mark_len();
         self.mark_range(0, previous_len);
     }
 
     /// Marks every entry, for callers that mutate the table wholesale.
     pub fn mark_all(&mut self) {
+        self.mark_len();
         self.mark_range(0, self.entries.capacity());
+    }
+
+    fn mark_len(&self) {
+        self.len_dirty.store(true, Ordering::Release);
     }
 
     fn mark(&self, index: usize) {
