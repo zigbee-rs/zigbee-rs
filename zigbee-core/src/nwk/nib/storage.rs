@@ -15,19 +15,36 @@ use crate::storage::round_up;
 
 /// Takes the outgoing NWK frame counter and advances it (4.3.1.1).
 ///
-/// One counter is shared by every security material set (4.3.4).
-pub(crate) fn take_outgoing_frame_counter(nib: &Nib) -> u32 {
-    let mut counter = 0;
-    nib.update_outgoing_frame_counter(|value| {
-        counter = *value;
-        *value = value.wrapping_add(1);
-    });
-    // the stored value is a bound, so only a crossing changes it; the encrypt
-    // path is its only writer
-    if round_up(counter.wrapping_add(1)) == round_up(counter) {
-        nib.unmark_dirty(NibId::outgoing_frame_counter);
+/// One counter is shared by every security material set (4.3.4). Returns
+/// `None` once the counter is exhausted, which fails the frame rather than
+/// wrapping into nonces that were already used (4.3.1.1 step 1).
+pub(crate) fn take_outgoing_frame_counter(nib: &Nib) -> Option<u32> {
+    let counter = nib.outgoing_frame_counter();
+    if counter == u32::MAX {
+        return None;
     }
-    counter
+
+    let next = counter + 1;
+    // the stored value is a bound, so advancing inside it changes nothing that
+    // is persisted; marking only on a crossing keeps a pending retry intact
+    if round_up(next) == round_up(counter) {
+        nib.update_outgoing_frame_counter_quietly(|value| *value = next);
+    } else {
+        nib.update_outgoing_frame_counter(|value| *value = next);
+    }
+    Some(counter)
+}
+
+/// Resets the outgoing counter on a Switch-Key, the one point at which the
+/// spec allows it (4.3.4).
+///
+/// Only past the half-way mark, so a device that switches keys often cannot
+/// keep replaying the low counters.
+pub(crate) fn reset_outgoing_frame_counter_on_switch_key(nib: &Nib) {
+    if nib.outgoing_frame_counter() > 0x8000_0000 {
+        log::info!("[NWK] resetting the outgoing frame counter on switch-key");
+        nib.update_outgoing_frame_counter(|value| *value = 0);
+    }
 }
 
 /// Records `counter` as the most recently accepted incoming counter for
@@ -122,6 +139,14 @@ impl PersistentIb for Nib {
 
     fn take_len_dirty(&self, id: NibId) -> bool {
         Self::take_len_dirty(self, id)
+    }
+
+    fn table_capacity(&self, id: NibId) -> usize {
+        Self::table_capacity(self, id)
+    }
+
+    fn arm_counter_bounds(&self) {
+        Self::mark_dirty(self, NibId::outgoing_frame_counter);
     }
 
     fn import_entry(&self, id: NibId, index: usize, data: &[u8]) -> bool {

@@ -14,8 +14,9 @@ macro_rules! construct_ib {
     // per-field encode/decode; RAM-only fields (no storage key) expand to
     // nothing. The optional key and the optional byte context cannot be
     // nested in one repetition, hence the split into these rules
-    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [] [$($cx:expr)?]) => {};
-    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [$($cx:expr)?]) => {
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {};
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {
         if $id as u8 == $skey {
             let value: $ty = ::zigbee_types::sync::IbCell::get_owned(&$s.fields.$field);
             let _cx = ::byte::LE;
@@ -25,8 +26,9 @@ macro_rules! construct_ib {
             return Some(offset);
         }
     };
-    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [] [$($cx:expr)?]) => {};
-    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [$($cx:expr)?]) => {
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {};
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {
         if $id as u8 == $skey {
             let _cx = ::byte::LE;
             $(let _cx = $cx;)?
@@ -67,10 +69,10 @@ macro_rules! construct_ib {
             let mut table = $s.fields.$field.table_mut(&DIRTY_SIGNAL);
             if $i < table.len() {
                 table.update($i, |slot| *slot = entry);
-            } else if $i == table.len() {
-                let _ = table.push(entry);
+                return true;
             }
-            return true;
+            // appending is the only other placement that keeps the rows dense
+            return $i == table.len() && table.push(entry).is_ok();
         }
     };
     (@table_len $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
@@ -91,6 +93,22 @@ macro_rules! construct_ib {
             }
             return;
         }
+    };
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [] [$($t:ident)?]) => {};
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [$skey:literal] []) => {};
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            return <$ty as ::zigbee_types::sync::Table>::CAPACITY;
+        }
+    };
+    (@capacity_bound $ty:path; [] [$($t:ident)?]) => {};
+    (@capacity_bound $ty:path; [$skey:literal] []) => {};
+    (@capacity_bound $ty:path; [$skey:literal] [$t:ident]) => {
+        // every row must be addressable in the dirty bitmask
+        assert!(
+            <$ty as ::zigbee_types::sync::Table>::CAPACITY
+                <= ::zigbee_types::sync::TRACKED_ENTRIES
+        );
     };
     (@len_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
     (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
@@ -128,6 +146,7 @@ macro_rules! construct_ib {
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
                 $(#[storage_key = $skey:literal])?
+                $(#[quiet_setter = $quiet:ident])?
                 #[setter = $update:ident]
                 $field:ident: $field_ty:path $(= $default:expr)?,
             )+
@@ -188,6 +207,11 @@ macro_rules! construct_ib {
                         );
                     )+
                     let _ = ib.dirty.take();
+                    $($(
+                        let _ = stringify!($table);
+                        let _ = ib.fields.$field.take_dirty_entries();
+                        let _ = ib.fields.$field.take_len_dirty();
+                    )?)+
                 }
             }
         }
@@ -304,15 +328,6 @@ macro_rules! construct_ib {
                 self.dirty.take()
             }
 
-            /// Clears the dirty bit of a field, for a change the stored image
-            /// does not reflect.
-            ///
-            /// Only sound when this field has a single writer, which must
-            /// re-mark it once the stored image would actually change.
-            pub fn unmark_dirty(&self, id: $ib_id) {
-                self.dirty.clear(id.storage_key());
-            }
-
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
             pub fn mark_dirty(&self, id: $ib_id) {
                 self.dirty.set(id.storage_key());
@@ -328,7 +343,7 @@ macro_rules! construct_ib {
                 $(
                     $crate::construct_ib!(
                         @export self, id, buf, $field, $field_ty;
-                        [$($skey)?] [$($ctx_write)?]
+                        [$($skey)?] [$($table)?] [$($ctx_write)?]
                     );
                 )+
                 None
@@ -344,7 +359,7 @@ macro_rules! construct_ib {
                 $(
                     $crate::construct_ib!(
                         @import self, id, data, $field, $field_ty;
-                        [$($skey)?] [$($ctx_hdr)?]
+                        [$($skey)?] [$($table)?] [$($ctx_hdr)?]
                     );
                 )+
                 false
@@ -375,6 +390,16 @@ macro_rules! construct_ib {
                 $(
                     $crate::construct_ib!(
                         @entry_dirty self, id, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+                0
+            }
+
+            /// Rows a table field can ever hold, 0 for other fields.
+            pub fn table_capacity(&self, id: $ib_id) -> usize {
+                $(
+                    $crate::construct_ib!(
+                        @capacity self, id, $field, $field_ty; [$($skey)?] [$($table)?]
                     );
                 )+
                 0
@@ -438,6 +463,18 @@ macro_rules! construct_ib {
                     /// entries actually touched are persisted.
                     pub fn $table(&self) -> ::zigbee_types::sync::TableMut<'_, $field_ty> {
                         self.fields.$field.table_mut(&DIRTY_SIGNAL)
+                    }
+                )?
+
+                $(
+                    /// Updates the field without marking it for persistence.
+                    ///
+                    /// For changes the stored image does not reflect, such as
+                    /// a frame counter moving inside the bound already stored
+                    /// for it. The caller must use the marking setter once the
+                    /// stored image would actually change.
+                    pub fn $quiet(&self, f: impl FnOnce(&mut $field_ty)) {
+                        ::zigbee_types::sync::IbCell::update(&self.fields.$field, f);
                     }
                 )?
 

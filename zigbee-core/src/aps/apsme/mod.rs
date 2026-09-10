@@ -72,6 +72,7 @@ use crate::aps::APSC_ACK_WAIT_DURATION_MS;
 use crate::aps::APSC_MAX_FRAME_RETRIES;
 use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
 use crate::nwk::nib::Nib;
+use crate::nwk::nib::storage as nib_storage;
 use crate::nwk::nlme::NetworkError;
 use crate::nwk::nlme::Nlme;
 use crate::security::SecurityContext;
@@ -788,6 +789,7 @@ fn switch_network_key(nib: &Nib, key_seq_number: u8) {
     }
     log::info!("[APS] switching to network key seq {key_seq_number}");
     nib.update_active_key_seq_number(|value| *value = key_seq_number);
+    nib_storage::reset_outgoing_frame_counter_on_switch_key(nib);
 }
 
 impl ApsmeSap for Apsme {

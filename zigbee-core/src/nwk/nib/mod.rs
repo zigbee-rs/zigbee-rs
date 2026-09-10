@@ -262,6 +262,7 @@ construct_ib! {
         /// (4.3.4).
         #[cell = atomic]
         #[storage_key = 40]
+        #[quiet_setter = update_outgoing_frame_counter_quietly]
         #[setter = update_outgoing_frame_counter]
         outgoing_frame_counter: u32 = 0,
         #[cell = atomic]

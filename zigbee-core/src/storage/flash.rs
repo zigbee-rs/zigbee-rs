@@ -43,6 +43,9 @@ const _: () = assert!(SCRATCH <= 4096);
 // entry index reserved for a table's length record
 const LEN_INDEX: u16 = 0xffff;
 
+// written over a row that a shrunk table no longer holds
+const EMPTY_ROW: &[u8] = &[];
+
 // map key: information base, field, then row within the field
 const fn item_key(tag: u8, field: u8, index: u16) -> u32 {
     ((tag as u32) << 24) | ((field as u32) << 16) | index as u32
@@ -86,6 +89,17 @@ pub(crate) trait PersistentIb {
     /// Whether a table gained or lost rows, so its length record needs
     /// rewriting.
     fn take_len_dirty(&self, id: Self::Id) -> bool;
+
+    /// Rows a table field can ever hold, 0 for other fields.
+    fn table_capacity(&self, id: Self::Id) -> usize;
+
+    /// Marks the fields holding outgoing frame counters.
+    ///
+    /// A restore leaves the live counters equal to the bound in flash, so
+    /// until the next boundary a device would hand out counters flash already
+    /// names, and a power loss in between would replay them. Restoring ends
+    /// by storing a fresh bound ahead of them (4.3.4).
+    fn arm_counter_bounds(&self);
 
     fn import_entry(&self, id: Self::Id, index: usize, data: &[u8]) -> bool;
 
@@ -166,6 +180,9 @@ impl<F: NorFlash> FlashMap<F> {
                 let Some(len) = self.fetch_len(item_key(I::TAG, field, LEN_INDEX)).await else {
                     continue;
                 };
+                // a row that is missing or unparsable ends the table there:
+                // later rows cannot be placed without leaving a hole
+                let mut restored = 0;
                 for index in 0..len {
                     let Some(data) = self.fetch(item_key(I::TAG, field, index)).await else {
                         break;
@@ -175,9 +192,11 @@ impl<F: NorFlash> FlashMap<F> {
                             "stored {} field {field:#04x} entry {index} did not parse",
                             I::NAME
                         );
+                        break;
                     }
+                    restored += 1;
                 }
-                ib.truncate_table(id, len as usize);
+                ib.truncate_table(id, restored);
             } else if let Some(data) = self.fetch(item_key(I::TAG, field, 0)).await
                 && !ib.import_field(id, data)
             {
@@ -196,6 +215,10 @@ impl<F: NorFlash> FlashMap<F> {
                 let _ = ib.take_len_dirty(id);
             }
         }
+        // push the outgoing bounds ahead of the values just restored, before
+        // any frame can be sent with them
+        ib.arm_counter_bounds();
+        self.flush(ib).await;
     }
 
     /// Persists everything modified since the last call; table fields write only
@@ -222,8 +245,17 @@ impl<F: NorFlash> FlashMap<F> {
                     // a row updated in place leaves the length alone, so the
                     // record only needs rewriting when it actually moved. The
                     // retry path re-marks the field, which forces it again
-                    self.store_table(ib, id, field, len, rows, len_changed || field_dirty)
-                        .await
+                    let capacity = ib.table_capacity(id);
+                    self.store_table(
+                        ib,
+                        id,
+                        field,
+                        len,
+                        capacity,
+                        rows,
+                        len_changed || field_dirty,
+                    )
+                    .await
                 }
                 None if field_dirty => {
                     let key = item_key(I::TAG, field, 0);
@@ -254,6 +286,7 @@ impl<F: NorFlash> FlashMap<F> {
         id: I::Id,
         field: u8,
         len: usize,
+        capacity: usize,
         rows: u64,
         store_len: bool,
     ) -> bool {
@@ -269,21 +302,17 @@ impl<F: NorFlash> FlashMap<F> {
             }
         }
 
-        for index in 0..TRACKED_ENTRIES {
+        for index in 0..capacity.min(TRACKED_ENTRIES) {
             if rows & (1 << index) == 0 {
-                continue;
-            }
-            // rows past the length record are never read back, so a shrunk table
-            // leaves them in place rather than needing erasable items
-            if index >= len {
                 continue;
             }
             let Ok(row) = u16::try_from(index) else {
                 continue;
             };
             let key = item_key(I::TAG, field, row);
-            if !self
-                .store(
+
+            let stored = if index < len {
+                self.store(
                     key,
                     &FieldValue {
                         ib,
@@ -292,7 +321,14 @@ impl<F: NorFlash> FlashMap<F> {
                     },
                 )
                 .await
-            {
+            } else {
+                // a shrunk table must not leave its old rows readable: keys and
+                // link keys have to go with a leave or factory reset (BDB 9.3).
+                // Overwriting makes the previous item obsolete, which erasable
+                // items would otherwise be needed for
+                self.store(key, &EMPTY_ROW).await
+            };
+            if !stored {
                 return false;
             }
         }
@@ -444,6 +480,37 @@ mod tests {
     }
 
     #[test]
+    fn outgoing_counter_survives_repeated_power_loss() {
+        use crate::nwk::nib::storage as nib_storage;
+
+        // cut the power at several points relative to the headroom boundary,
+        // including inside the first window where nothing has been stored yet
+        for cut in [1u32, 500, 1023, 1024, 1500] {
+            let mut map = new_map();
+            let mut highest = None;
+
+            for _ in 0..4 {
+                let (nib, _) = fresh_ibs();
+                nib.update_security_material_set(|value| *value = security_material());
+                block_on(map.restore(&nib));
+
+                for _ in 0..cut {
+                    let issued = nib_storage::take_outgoing_frame_counter(&nib).unwrap();
+                    if let Some(previous) = highest {
+                        assert!(
+                            issued > previous,
+                            "counter {issued} reused after {previous} (cut at {cut})"
+                        );
+                    }
+                    highest = Some(issued);
+                    block_on(map.flush(&nib));
+                }
+                // power cut: anything not yet flushed is lost
+            }
+        }
+    }
+
+    #[test]
     fn setter_marks_dirty_getter_does_not() {
         let (nib, _) = fresh_ibs();
         let _ = nib.take_dirty();
@@ -563,26 +630,55 @@ mod tests {
     }
 
     #[test]
-    fn every_outgoing_counter_tick_writes_flash() {
-        let outgoing_writes = |ticks: u32| {
+    fn outgoing_counter_writes_flash_once_per_headroom() {
+        use crate::nwk::nib::storage as nib_storage;
+
+        let writes = |ticks: u32| {
             let (nib, _) = fresh_ibs();
             let flash = Flash::new(WriteCountCheck::Twice, None, true);
             let baseline = flash.stats_snapshot();
             let mut map = FlashMap::new(flash, Flash::FULL_FLASH_RANGE);
+            block_on(map.restore(&nib));
 
-            for counter in 0..=ticks {
-                nib.update_outgoing_frame_counter(|value| *value = counter);
+            for _ in 0..ticks {
+                let _ = nib_storage::take_outgoing_frame_counter(&nib).unwrap();
                 block_on(map.flush(&nib));
             }
 
             let FlashMap { map, .. } = map;
             let (flash, _) = map.destroy();
-            baseline.compare_to(flash.stats_snapshot()).bytes_written
+            baseline.compare_to(flash.stats_snapshot()).writes
         };
 
-        // the stored bound tracks the live counter, so there is nothing to
-        // skip: persisting it costs a flash write per transmitted frame
-        assert!(outgoing_writes(8) > outgoing_writes(4));
+        // the stored value is a bound, so ticks inside it cost nothing; only
+        // the boundary crossings and the one write restore makes are paid for
+        let boundary = writes(4 * HEADROOM);
+        assert!(
+            boundary <= 8 * (4 + 1),
+            "{boundary} writes for {} ticks",
+            4 * HEADROOM
+        );
+        assert!(writes(HEADROOM - 1) < boundary);
+    }
+
+    #[test]
+    fn dropped_rows_are_overwritten_in_flash() {
+        let (nib, _) = fresh_ibs();
+        let mut map = new_map();
+
+        nib.update_security_material_set(|value| *value = security_material());
+        block_on(map.flush(&nib));
+        let key = item_key(
+            <Nib as PersistentIb>::TAG,
+            NibId::security_material_set as u8,
+            0,
+        );
+        assert!(block_on(map.fetch(key)).is_some_and(|row| !row.is_empty()));
+
+        // a leave or factory reset must not leave the network key readable
+        nib.update_security_material_set(|set| set.clear());
+        block_on(map.flush(&nib));
+        assert_eq!(block_on(map.fetch(key)), Some(&[][..]));
     }
 
     #[test]

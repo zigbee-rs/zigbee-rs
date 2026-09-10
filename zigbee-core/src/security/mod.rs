@@ -75,6 +75,9 @@ pub enum SecurityError {
     CcmError(ccm::Error),
     #[error("frame security failed")]
     Unspecified,
+    /// The outgoing frame counter reached 2^32-1 (4.3.1.1).
+    #[error("frame counter exhausted")]
+    FrameCounterExhausted,
 }
 
 impl From<byte::Error> for SecurityError {
@@ -95,6 +98,9 @@ impl From<SecurityError> for byte::Error {
             SecurityError::ParseError(e) => e,
             SecurityError::CcmError(_) => Self::BadInput {
                 err: "security: ccm error",
+            },
+            SecurityError::FrameCounterExhausted => Self::BadInput {
+                err: "security: frame counter exhausted",
             },
             SecurityError::Unspecified => Self::BadInput {
                 err: "frame security failed",
@@ -139,7 +145,8 @@ impl<'a> SecurityContext<'a> {
             .map(|material| material.key)
             .ok_or(SecurityError::Unspecified)?;
 
-        let frame_counter = nib_storage::take_outgoing_frame_counter(self.nib);
+        let frame_counter = nib_storage::take_outgoing_frame_counter(self.nib)
+            .ok_or(SecurityError::FrameCounterExhausted)?;
         let local_addr = *self.nib.ieee_address();
 
         let mut security_control = SecurityControl::default();
@@ -532,12 +539,16 @@ impl<'a> SecurityContext<'a> {
         // anti-replay tracking: record the now-authenticated counter as the
         // most recent accepted value for this device, inserting the
         // entry if new
-        aib_storage::record_incoming_frame_counter(
+        if !aib_storage::record_incoming_frame_counter(
             self.aib,
             source_address,
             aux_hdr.frame_counter,
             TRUST_CENTER_LINK_KEY,
-        );
+        ) {
+            // without a row the replay check below cannot run for this device,
+            // so reject rather than accept it unchecked
+            return Err(SecurityError::Unspecified);
+        }
 
         Ok(ApsFrame::from_payload(aps_hdr, enc_data)?)
     }

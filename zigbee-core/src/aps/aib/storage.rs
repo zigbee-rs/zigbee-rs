@@ -37,23 +37,27 @@ pub(crate) fn advance_outgoing_frame_counter(aib: &Aib, device: IeeeAddress) {
 
 /// Records `counter` as the most recently accepted incoming APS counter for
 /// `device`, adding a key pair for a first-time device.
+///
+/// Returns `false` when the table is full, so the caller can reject the frame
+/// instead of accepting one whose counter cannot be tracked.
 pub(crate) fn record_incoming_frame_counter(
     aib: &Aib,
     device: IeeeAddress,
     counter: u32,
     default_link_key: [u8; 16],
-) {
+) -> bool {
     let mut pairs = aib.device_key_pair_set_mut();
     let Some(index) = pairs.position(|pair| pair.device_address == device) else {
-        let _ = pairs.push(DeviceKeyPairDescriptor {
-            device_address: device,
-            key_attributes: KeyAttribute::VerifiedKey,
-            link_key: ByteArray(default_link_key),
-            outgoing_frame_counter: 0,
-            incoming_frame_counter: counter,
-            link_key_type: LinkKeyType::GlobalLinkKey,
-        });
-        return;
+        return pairs
+            .push(DeviceKeyPairDescriptor {
+                device_address: device,
+                key_attributes: KeyAttribute::VerifiedKey,
+                link_key: ByteArray(default_link_key),
+                outgoing_frame_counter: 0,
+                incoming_frame_counter: counter,
+                link_key_type: LinkKeyType::GlobalLinkKey,
+            })
+            .is_ok();
     };
     let previous = pairs
         .get(index)
@@ -63,6 +67,7 @@ pub(crate) fn record_incoming_frame_counter(
     } else {
         pairs.update(index, |pair| pair.incoming_frame_counter = counter);
     }
+    true
 }
 
 #[cfg(feature = "storage")]
@@ -111,6 +116,14 @@ impl PersistentIb for Aib {
 
     fn take_len_dirty(&self, id: AibId) -> bool {
         Self::take_len_dirty(self, id)
+    }
+
+    fn table_capacity(&self, id: AibId) -> usize {
+        Self::table_capacity(self, id)
+    }
+
+    fn arm_counter_bounds(&self) {
+        Self::mark_dirty(self, AibId::device_key_pair_set);
     }
 
     fn import_entry(&self, id: AibId, index: usize, data: &[u8]) -> bool {

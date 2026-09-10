@@ -203,6 +203,7 @@ impl BitSet64 {
 
     /// Adds a bit; `index` must be below 64.
     pub fn set(&self, index: u8) {
+        debug_assert!(index < 64, "bit index out of range");
         let (half, bit) = if index < 32 {
             (&self.lo, index)
         } else {
@@ -213,6 +214,7 @@ impl BitSet64 {
 
     /// Removes a bit; `index` must be below 64.
     pub fn clear(&self, index: u8) {
+        debug_assert!(index < 64, "bit index out of range");
         let (half, bit) = if index < 32 {
             (&self.lo, index)
         } else {
@@ -226,8 +228,8 @@ impl BitSet64 {
     /// Bits added between the two half-swaps stay set and are returned by the
     /// next call.
     pub fn take(&self) -> u64 {
-        let lo = self.lo.swap(0, Ordering::Acquire);
-        let hi = self.hi.swap(0, Ordering::Acquire);
+        let lo = self.lo.swap(0, Ordering::AcqRel);
+        let hi = self.hi.swap(0, Ordering::AcqRel);
         u64::from(lo) | (u64::from(hi) << 32)
     }
 }
@@ -258,8 +260,11 @@ pub trait IbCell<T> {
     /// Applies `f` to the stored value.
     ///
     /// Atomic fields load, apply and store rather than doing a real
-    /// read-modify-write; the stack is cooperatively scheduled, so no other
-    /// task can interleave with `f`.
+    /// read-modify-write. That is sound only because the stack is
+    /// cooperatively scheduled and `f` cannot await: a concurrent writer
+    /// would lose an update, and this path carries the outgoing frame counter,
+    /// where a lost increment means a reused CCM* nonce. Never call it from
+    /// an interrupt.
     fn update(&self, f: impl FnOnce(&mut T));
 
     /// Returns an owned copy of the stored value.
@@ -356,6 +361,9 @@ pub trait Table {
     /// What one row holds.
     type Entry;
 
+    /// Rows the table can ever hold.
+    const CAPACITY: usize;
+
     fn len(&self) -> usize;
 
     fn is_empty(&self) -> bool {
@@ -379,6 +387,8 @@ pub trait Table {
 
 impl<T, const N: usize> Table for crate::StorageVec<T, N> {
     type Entry = T;
+
+    const CAPACITY: usize = N;
 
     fn len(&self) -> usize {
         self.0.len()
@@ -458,7 +468,8 @@ impl<V: Table> IbCell<V> for TableCell<V> {
         self.entries.read()
     }
 
-    // used by restore and reset, which must not look like a change
+    // replaces the whole table: the row count can move, but the rows
+    // themselves are not marked, since restore and reset use this
     fn set(&self, value: V) {
         *self.entries.write() = value;
         self.len_dirty.store(true, Ordering::Release);
@@ -483,6 +494,9 @@ impl<V: Table> IbCell<V> for TableCell<V> {
 }
 
 /// Entries a table tracks individually; the dirty set is one `BitSet64`.
+///
+/// A table may not hold more rows than this; the information bases assert it
+/// at compile time.
 pub const TRACKED_ENTRIES: usize = 64;
 
 /// Write handle to an information-base table that records exactly which
