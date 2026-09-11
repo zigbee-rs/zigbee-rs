@@ -1740,7 +1740,10 @@ where
                 // traffic the pre-key joiner cannot decode (SecurityError/ParseError)
                 // the NWK-unsecured transport-key (4.6.3.7.2) stays buffered for a
                 // later poll
-                Ok(None) | Err(NetworkError::SecurityError(_) | NetworkError::ParseError) => (),
+                Ok(None) => (),
+                Err(e @ (NetworkError::SecurityError(_) | NetworkError::ParseError)) => {
+                    log::debug!("[NWK-POLL] dropped rx frame: {e:?}");
+                }
                 Err(e) => return Err(e),
             }
         }
