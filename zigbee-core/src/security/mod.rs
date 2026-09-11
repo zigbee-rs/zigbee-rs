@@ -249,17 +249,29 @@ impl<'a> SecurityContext<'a> {
 
         // anti-replay: `<=` rejects both older counters and a replay of the
         // most-recently-accepted one
-        if self
+        let seen = self
             .nib
             .incoming_frame_counters()
             .iter()
             .find(|i| i.key_seq_number == key_sequence_number && i.sender_address == source_address)
-            .is_some_and(|seen| aux_hdr.frame_counter <= seen.incoming_frame_counter)
+            .map(|entry| entry.incoming_frame_counter);
+        if let Some(seen) = seen
+            && aux_hdr.frame_counter <= seen
         {
-            log::debug!(
-                "[SEC] nwk replay: counter {} from {source_address:?} seq {key_sequence_number}",
-                aux_hdr.frame_counter
-            );
+            if aux_hdr.frame_counter == seen {
+                // every router rebroadcasts a NWK broadcast unchanged, so the
+                // originator's counter arrives once per relay; only the first
+                // copy is new
+                log::trace!(
+                    "[SEC] nwk duplicate: counter {} from {source_address:?}",
+                    aux_hdr.frame_counter
+                );
+            } else {
+                log::debug!(
+                    "[SEC] nwk replay: counter {} behind {seen} from {source_address:?} seq {key_sequence_number}",
+                    aux_hdr.frame_counter
+                );
+            }
             return Err(SecurityError::InvalidData);
         }
         let key = key.as_slice();
