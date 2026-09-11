@@ -223,6 +223,7 @@ impl<'a> SecurityContext<'a> {
         };
 
         let Some(key_sequence_number) = aux_hdr.key_sequence_number else {
+            log::debug!("[SEC] nwk frame carries no key sequence number");
             return Err(SecurityError::InvalidData);
         };
 
@@ -230,11 +231,20 @@ impl<'a> SecurityContext<'a> {
         // deadlock
         let key = {
             let sec_material_set = self.nib.security_material_set();
-            sec_material_set
+            let Some(material) = sec_material_set
                 .iter()
                 .find(|k| k.key_seq_number == key_sequence_number)
-                .ok_or(SecurityError::Unspecified)?
-                .key
+            else {
+                log::debug!(
+                    "[SEC] no network key for seq {key_sequence_number}, have {:?}",
+                    sec_material_set
+                        .iter()
+                        .map(|k| k.key_seq_number)
+                        .collect::<heapless::Vec<_, 2>>()
+                );
+                return Err(SecurityError::Unspecified);
+            };
+            material.key
         };
 
         // anti-replay: `<=` rejects both older counters and a replay of the
@@ -246,6 +256,10 @@ impl<'a> SecurityContext<'a> {
             .find(|i| i.key_seq_number == key_sequence_number && i.sender_address == source_address)
             .is_some_and(|seen| aux_hdr.frame_counter <= seen.incoming_frame_counter)
         {
+            log::debug!(
+                "[SEC] nwk replay: counter {} from {source_address:?} seq {key_sequence_number}",
+                aux_hdr.frame_counter
+            );
             return Err(SecurityError::InvalidData);
         }
         let key = key.as_slice();

@@ -48,7 +48,7 @@ pub(crate) fn record_incoming_frame_counter(
 ) -> bool {
     let mut pairs = aib.device_key_pair_set_mut();
     let Some(index) = pairs.position(|pair| pair.device_address == device) else {
-        return pairs
+        let stored = pairs
             .push(DeviceKeyPairDescriptor {
                 device_address: device,
                 key_attributes: KeyAttribute::VerifiedKey,
@@ -58,6 +58,10 @@ pub(crate) fn record_incoming_frame_counter(
                 link_key_type: LinkKeyType::GlobalLinkKey,
             })
             .is_ok();
+        if !stored {
+            log::warn!("[APS] key pair table full, rejecting frame from {device:?}");
+        }
+        return stored;
     };
     let previous = pairs
         .get(index)
