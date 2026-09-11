@@ -343,11 +343,7 @@ impl<F: NorFlash> FlashMap<F> {
 pub struct FlashStorage<F: NorFlash> {
     // held across awaits during flush; flush waits via a yielding
     // try_lock loop so a concurrent flush cannot be starved
-    inner: spin::Mutex<Inner<F>>,
-}
-
-struct Inner<F: NorFlash> {
-    map: FlashMap<F>,
+    map: spin::Mutex<FlashMap<F>>,
 }
 
 impl<F: NorFlash> FlashStorage<F> {
@@ -370,7 +366,7 @@ impl<F: NorFlash> FlashStorage<F> {
         map.restore(aib::get_ref()).await;
 
         Self {
-            inner: spin::Mutex::new(Inner { map }),
+            map: spin::Mutex::new(map),
         }
     }
 }
@@ -390,14 +386,13 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     }
 
     async fn flush(&self) {
-        let mut inner = loop {
-            if let Some(inner) = self.inner.try_lock() {
-                break inner;
+        let mut map = loop {
+            if let Some(map) = self.map.try_lock() {
+                break map;
             }
             // another task is mid-flush; let it finish
             yield_now().await;
         };
-        let Inner { map } = &mut *inner;
         map.flush(nib::get_ref()).await;
         map.flush(aib::get_ref()).await;
     }

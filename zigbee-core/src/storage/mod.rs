@@ -3,7 +3,7 @@
 //! The NIB/AIB live in a RAM mirror; every setter marks its field dirty and
 //! signals a change. The application only chooses where the state lives:
 //! RAM-only via the plain `init()` functions, or NOR flash via
-//! [`init_with_flash`] plus a spawned task running [`FlashStorage::run`] that
+//! [`FlashStorage::new`] plus a spawned task running [`FlashStorage::run`] that
 //! persists changes as they happen.
 //!
 //! Frame counters are persisted so that a reboot can never reuse an outgoing

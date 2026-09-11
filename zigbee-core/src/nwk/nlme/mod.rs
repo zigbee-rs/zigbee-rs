@@ -2497,7 +2497,6 @@ mod tests {
         let mut set = StorageVec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-
             key: ByteArray([0x42; 16]),
             network_key_type: 0,
         })

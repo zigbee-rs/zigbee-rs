@@ -593,12 +593,6 @@ impl<'a, V: Table> TableMut<'a, V> {
         self.mark_range(0, previous_len);
     }
 
-    /// Marks every entry, for callers that mutate the table wholesale.
-    pub fn mark_all(&mut self) {
-        self.mark_len();
-        self.mark_range(0, self.entries.capacity());
-    }
-
     fn mark_len(&self) {
         self.len_dirty.store(true, Ordering::Release);
     }

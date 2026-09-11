@@ -593,7 +593,6 @@ impl<M: Mlme> ZigbeeDevice<M> {
                     sec_material.clear();
                     let _ = sec_material.push(NetworkSecurityMaterialDescriptor {
                         key_seq_number: nwk_key.sequence_number,
-
                         key: nwk_key.key,
                         network_key_type: 0x01,
                     });

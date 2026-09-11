@@ -743,7 +743,6 @@ fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescr
     let active = nib.active_key_seq_number();
     let material = NetworkSecurityMaterialDescriptor {
         key_seq_number: descriptor.sequence_number,
-
         key: descriptor.key,
         network_key_type: STANDARD_NETWORK_KEY,
     };
@@ -1198,7 +1197,6 @@ mod tests {
         nib.update_security_material_set(|set| {
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: 3,
-
                 key: ByteArray([0xaa; 16]),
                 network_key_type: STANDARD_NETWORK_KEY,
             });
@@ -1375,7 +1373,6 @@ mod receive_path_tests {
             *set = StorageVec::new();
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: ACTIVE_KEY_SEQ,
-
                 key: ByteArray(ACTIVE_KEY),
                 network_key_type: STANDARD_NETWORK_KEY,
             });
@@ -1483,7 +1480,6 @@ mod receive_path_tests {
         nib::get_ref().update_security_material_set(|set| {
             let _ = set.push(NetworkSecurityMaterialDescriptor {
                 key_seq_number: 4,
-
                 key: ByteArray([0xcc; 16]),
                 network_key_type: STANDARD_NETWORK_KEY,
             });

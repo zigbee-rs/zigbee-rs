@@ -601,7 +601,6 @@ mod tests {
         let mut set = Vec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-
             key: ByteArray(NETWORK_KEY),
             network_key_type: 0,
         })
