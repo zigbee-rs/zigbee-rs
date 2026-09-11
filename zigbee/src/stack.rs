@@ -190,7 +190,7 @@ where
         if resuming {
             log::info!(
                 "[APP] resuming on network: addr={:#06x}",
-                *nib::get_ref().network_address()
+                nib::get_ref().network_address()
             );
         }
         resuming
@@ -294,7 +294,7 @@ where
         let cfg = self.config.descriptors();
         // a restored network address means the device resumed on a network
         // without a fresh key exchange — release the gate immediately
-        if *nib::get_ref().network_address() != ShortAddress::default().0 {
+        if nib::get_ref().network_address() != ShortAddress::default().0 {
             device.mark_rejoined();
         }
         device.wait_until_joined().await;

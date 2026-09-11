@@ -249,7 +249,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // the stack persists dirty state (keys, frame counters, tables) whenever it
     // changes them
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let storage = zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await;
+    let storage = zigbee::storage::FlashStorage::new(flash, ZIGBEE_FLASH_RANGE).await;
 
     let config = stack_config();
 
@@ -285,9 +285,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         .map_or(0xffff, |n| n.network_address.0);
     println!(
         "On network: addr={:#06x} parent={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
-        *nib.network_address(),
+        nib.network_address(),
         parent,
-        *nib.panid(),
+        nib.panid(),
         *nib.extended_panid(),
         stack.config().channel(),
         nib.update_id()

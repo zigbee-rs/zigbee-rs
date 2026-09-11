@@ -3,6 +3,137 @@
 macro_rules! construct_ib {
     (@default $default:expr) => { $default };
     (@default) => { ::core::default::Default::default() };
+    // how a field is stored: behind a lock by default, in a plain atomic
+    // when declared `#[cell = atomic]`
+    (@cell $ty:path; [] []) => { ::spin::RwLock<$ty> };
+    (@cell $ty:path; [atomic] []) => { <$ty as ::zigbee_types::sync::AtomicCell>::Cell };
+    (@cell $ty:path; [] [$table:ident]) => { ::zigbee_types::sync::TableCell<$ty> };
+    (@ref $ty:path; [] []) => { ::spin::RwLockReadGuard<'_, $ty> };
+    (@ref $ty:path; [atomic] []) => { $ty };
+    (@ref $ty:path; [] [$table:ident]) => { ::spin::RwLockReadGuard<'_, $ty> };
+    // per-field encode/decode; RAM-only fields (no storage key) expand to
+    // nothing. The optional key and the optional byte context cannot be
+    // nested in one repetition, hence the split into these rules
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {};
+    (@export $s:ident, $id:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let value: $ty = ::zigbee_types::sync::IbCell::get_owned(&$s.fields.$field);
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            let mut offset = 0;
+            $buf.write_with(&mut offset, value, _cx).ok()?;
+            return Some(offset);
+        }
+    };
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {};
+    (@import $s:ident, $id:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            let Ok(value) = $data.read_with::<$ty>(&mut 0, _cx) else {
+                return false;
+            };
+            ::zigbee_types::sync::IbCell::set(&$s.fields.$field, value);
+            return true;
+        }
+    };
+    // entry-level access for `#[table = ...]` fields; a field must have both a
+    // storage key and the table marker to take part
+    (@entry_export $s:ident, $id:ident, $i:ident, $buf:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@entry_export $s:ident, $id:ident, $i:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {};
+    (@entry_export $s:ident, $id:ident, $i:ident, $buf:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let table = ::zigbee_types::sync::IbCell::get(&$s.fields.$field);
+            let entry = ::core::clone::Clone::clone(
+                ::zigbee_types::sync::Table::get(&*table, $i)?
+            );
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            let mut offset = 0;
+            $buf.write_with(&mut offset, entry, _cx).ok()?;
+            return Some(offset);
+        }
+    };
+    (@entry_import $s:ident, $id:ident, $i:ident, $data:ident, $field:ident, $ty:path; [] [$($t:ident)?] [$($cx:expr)?]) => {};
+    (@entry_import $s:ident, $id:ident, $i:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [] [$($cx:expr)?]) => {};
+    (@entry_import $s:ident, $id:ident, $i:ident, $data:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident] [$($cx:expr)?]) => {
+        if $id as u8 == $skey {
+            let _cx = ::byte::LE;
+            $(let _cx = $cx;)?
+            type Entry = <$ty as ::zigbee_types::sync::Table>::Entry;
+            let Ok(entry) = $data.read_with::<Entry>(&mut 0, _cx) else {
+                return false;
+            };
+            let mut table = $s.fields.$field.table_mut(&DIRTY_SIGNAL);
+            if $i < table.len() {
+                table.update($i, |slot| *slot = entry);
+                return true;
+            }
+            // appending is the only other placement that keeps the rows dense
+            return $i == table.len() && table.push(entry).is_ok();
+        }
+    };
+    (@table_len $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
+    (@table_len $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
+    (@table_len $s:ident, $id:ident, $field:ident; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            let table = ::zigbee_types::sync::IbCell::get(&$s.fields.$field);
+            return Some(::zigbee_types::sync::Table::len(&*table));
+        }
+    };
+    (@table_truncate $s:ident, $id:ident, $len:ident, $field:ident; [] [$($t:ident)?]) => {};
+    (@table_truncate $s:ident, $id:ident, $len:ident, $field:ident; [$skey:literal] []) => {};
+    (@table_truncate $s:ident, $id:ident, $len:ident, $field:ident; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            let mut table = $s.fields.$field.table_mut(&DIRTY_SIGNAL);
+            while table.len() > $len {
+                table.remove(table.len() - 1);
+            }
+            return;
+        }
+    };
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [] [$($t:ident)?]) => {};
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [$skey:literal] []) => {};
+    (@capacity $s:ident, $id:ident, $field:ident, $ty:path; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            return <$ty as ::zigbee_types::sync::Table>::CAPACITY;
+        }
+    };
+    (@capacity_bound $ty:path; [] [$($t:ident)?]) => {};
+    (@capacity_bound $ty:path; [$skey:literal] []) => {};
+    (@capacity_bound $ty:path; [$skey:literal] [$t:ident]) => {
+        // every row must be addressable in the dirty bitmask
+        assert!(
+            <$ty as ::zigbee_types::sync::Table>::CAPACITY
+                <= ::zigbee_types::sync::TRACKED_ENTRIES
+        );
+    };
+    (@len_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
+    (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
+    (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            return $s.fields.$field.take_len_dirty();
+        }
+    };
+    (@entry_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
+    (@entry_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
+    (@entry_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] [$t:ident]) => {
+        if $id as u8 == $skey {
+            return $s.fields.$field.take_dirty_entries();
+        }
+    };
+    // encoded-size bounds: whole-field items and single table entries are
+    // sized separately because they live in different map items
+    (@field_size $ty:path; [] [$($t:ident)?]) => { 0usize };
+    (@field_size $ty:path; [$skey:literal] [$t:ident]) => { 0usize };
+    (@field_size $ty:path; [$skey:literal] []) => { size_of::<$ty>() };
+    (@entry_size $ty:path; [] [$($t:ident)?]) => { 0usize };
+    (@entry_size $ty:path; [$skey:literal] []) => { 0usize };
+    (@entry_size $ty:path; [$skey:literal] [$t:ident]) => {
+        size_of::<<$ty as ::zigbee_types::sync::Table>::Entry>()
+    };
     (
         $(#[doc = $ib_doc:literal])*
         #[ids = $ib_id:ident]
@@ -10,9 +141,12 @@ macro_rules! construct_ib {
         $ib_vis:vis struct $ib_name:ident {
             $(
                 $(#[doc = $doc:literal])*
+                $(#[cell = $cell:ident])?
+                $(#[table = $table:ident])?
                 $(#[ctx = $ctx_hdr:expr])?
                 $(#[ctx_write = $ctx_write:expr])?
                 $(#[storage_key = $skey:literal])?
+                $(#[quiet_setter = $quiet:ident])?
                 #[setter = $update:ident]
                 $field:ident: $field_ty:path $(= $default:expr)?,
             )+
@@ -67,99 +201,91 @@ macro_rules! construct_ib {
             unsafe {
                 if let Some(ref ib) = IB {
                     $(
-                        *ib.fields.$field.write() =
-                            $crate::construct_ib!(@default $($default)?);
+                        ::zigbee_types::sync::IbCell::set(
+                            &ib.fields.$field,
+                            $crate::construct_ib!(@default $($default)?),
+                        );
                     )+
-                    *ib.dirty.lock() = 0;
+                    let _ = ib.dirty.take();
+                    $($(
+                        let _ = stringify!($table);
+                        let _ = ib.fields.$field.take_dirty_entries();
+                        let _ = ib.fields.$field.take_len_dirty();
+                    )?)+
                 }
             }
         }
 
-        #[repr(usize)]
+        // the discriminant is the stable persistence key; RAM-only fields
+        // have no id
+        #[repr(u8)]
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq)]
         $ib_vis enum $ib_id {
-            $($field),+
+            $($($field = $skey,)?)+
         }
 
         impl $ib_id {
-            // upper bound of the `byte`-encoded size per field: encodings are
-            // packed and never larger than the in-memory representation
-            const ENCODED_SIZE_LUT: &[usize] = &[
-                $(
-                    size_of::<$field_ty>()
-                ),+
-            ];
-
-            // stable persistence key per field; None = RAM-only field
-            const STORAGE_KEY_LUT: &[Option<u8>] = &[
-                $(
-                    {
-                        let key: Option<u8> = None;
-                        $(let key = Some($skey);)?
-                        key
-                    }
-                ),+
-            ];
+            /// Highest storage key in use.
+            pub const MAX_KEY: u8 = {
+                let mut max = 0u8;
+                $($(if $skey > max { max = $skey; })?)+
+                max
+            };
 
             /// Upper bound of the encoded size over all persisted fields.
-            pub const MAX_FIELD_SIZE: usize = $ib_id::max_field_size();
+            ///
+            /// `byte` encodings are packed and never larger than the
+            /// in-memory representation.
+            pub const MAX_FIELD_SIZE: usize = {
+                let mut max = 0usize;
+                $(
+                    let size = $crate::construct_ib!(
+                        @field_size $field_ty; [$($skey)?] [$($table)?]
+                    );
+                    if size > max {
+                        max = size;
+                    }
+                )+
+                max
+            };
 
-            /// All field ids in declaration order.
-            pub const VARIANTS: &[Self] = &[$(Self::$field),+];
+            /// Upper bound of the encoded size of a single table entry.
+            pub const MAX_ENTRY_SIZE: usize = {
+                let mut max = 0usize;
+                $(
+                    let size = $crate::construct_ib!(
+                        @entry_size $field_ty; [$($skey)?] [$($table)?]
+                    );
+                    if size > max {
+                        max = size;
+                    }
+                )+
+                max
+            };
 
-            /// Returns the stable persistence key, or `None` for RAM-only fields.
-            pub const fn storage_key(&self) -> Option<u8> {
-                Self::STORAGE_KEY_LUT[*self as usize]
+            /// Stable persistence key of this field.
+            pub const fn storage_key(&self) -> u8 {
+                *self as u8
+            }
+
+            /// Bit of this field in the dirty mask.
+            pub const fn bit(&self) -> u64 {
+                1 << (*self as u64)
             }
 
             /// Resolves a stable persistence key back to its field id.
             pub const fn from_storage_key(key: u8) -> Option<Self> {
-                $(
-                    if let Some(k) = Self::STORAGE_KEY_LUT[Self::$field as usize] {
-                        if k == key {
-                            return Some(Self::$field);
-                        }
-                    }
-                )+
-                None
-            }
-
-            const fn max_field_size() -> usize {
-                let mut max = 0usize;
-                let mut i = 0;
-                while i < Self::ENCODED_SIZE_LUT.len() {
-                    if Self::STORAGE_KEY_LUT[i].is_some() && Self::ENCODED_SIZE_LUT[i] > max {
-                        max = Self::ENCODED_SIZE_LUT[i];
-                    }
-                    i += 1;
+                match key {
+                    $($($skey => Some(Self::$field),)?)+
+                    _ => None,
                 }
-                max
-            }
-
-            const fn storage_keys_unique() -> bool {
-                let lut = Self::STORAGE_KEY_LUT;
-                let mut i = 0;
-                while i < lut.len() {
-                    let mut j = i + 1;
-                    while j < lut.len() {
-                        if let (Some(a), Some(b)) = (lut[i], lut[j]) {
-                            if a == b {
-                                return false;
-                            }
-                        }
-                        j += 1;
-                    }
-                    i += 1;
-                }
-                true
             }
         }
 
         const _: () = {
-            // dirty mask is a u64 bitmask indexed by field position
-            assert!($ib_id::STORAGE_KEY_LUT.len() <= 64);
-            assert!($ib_id::storage_keys_unique());
+            // dirty mask is a u64 bitmask indexed by storage key
+            assert!($ib_id::MAX_KEY < 64, "information base cannot have more than 64 keys");
         };
 
         // plain in-memory representation with one lock per field so readers
@@ -167,13 +293,15 @@ macro_rules! construct_ib {
         // field is exported to / imported from persistent storage
         #[allow(non_camel_case_types)]
         struct $ib_fields {
-            $($field: ::spin::RwLock<$field_ty>,)+
+            $($field: $crate::construct_ib!(@cell $field_ty; [$($cell)?] [$($table)?]),)+
         }
 
         impl $ib_fields {
             fn defaults() -> Self {
                 Self {
-                    $($field: ::spin::RwLock::new($crate::construct_ib!(@default $($default)?)),)+
+                    $($field: ::zigbee_types::sync::IbCell::new(
+                        $crate::construct_ib!(@default $($default)?)
+                    ),)+
                 }
             }
         }
@@ -181,54 +309,44 @@ macro_rules! construct_ib {
         $(#[doc = $ib_doc])*
         $ib_vis struct $ib_name {
             fields: $ib_fields,
-            // bitmask of persisted fields modified since the last take_dirty
-            dirty: ::spin::Mutex<u64>,
+            // persisted fields modified since the last take_dirty, indexed
+            // by storage key
+            dirty: ::zigbee_types::sync::BitSet64,
         }
 
         impl $ib_name {
             pub fn new() -> Self {
                 Self {
                     fields: $ib_fields::defaults(),
-                    dirty: ::spin::Mutex::new(0),
+                    dirty: ::zigbee_types::sync::BitSet64::new(),
                 }
             }
 
             /// Returns and clears the bitmask of fields modified since the
             /// last call.
             pub fn take_dirty(&self) -> u64 {
-                let mut dirty = self.dirty.lock();
-                core::mem::take(&mut *dirty)
+                self.dirty.take()
             }
 
             /// Re-arms the dirty bit of a field, e.g. after a failed store.
             pub fn mark_dirty(&self, id: $ib_id) {
-                *self.dirty.lock() |= 1 << (id as u64);
+                self.dirty.set(id.storage_key());
                 DIRTY_SIGNAL.signal();
             }
 
             /// Encodes a single field into `buf`, returning the encoded length.
             ///
-            /// Returns `None` for RAM-only fields (no storage key) or if `buf`
-            /// is too small.
+            /// Returns `None` if `buf` is too small.
             pub fn export_field(&self, id: $ib_id, buf: &mut [u8]) -> Option<usize> {
                 use byte::BytesExt;
                 use byte::TryWrite;
-                id.storage_key()?;
-                match id {
-                    $(
-                        $ib_id::$field => {
-                            let value: $field_ty =
-                                ::core::clone::Clone::clone(&*self.fields.$field.read());
-                            let _cx = ::byte::LE;
-                            $(
-                                let _cx = $ctx_write;
-                            )?
-                            let mut offset = 0;
-                            buf.write_with(&mut offset, value, _cx).ok()?;
-                            Some(offset)
-                        }
-                    )+
-                }
+                $(
+                    $crate::construct_ib!(
+                        @export self, id, buf, $field, $field_ty;
+                        [$($skey)?] [$($table)?] [$($ctx_write)?]
+                    );
+                )+
+                None
             }
 
             /// Decodes `data` into a single field without marking it dirty.
@@ -238,40 +356,136 @@ macro_rules! construct_ib {
             pub fn import_field(&self, id: $ib_id, data: &[u8]) -> bool {
                 use byte::BytesExt;
                 use byte::TryRead;
-                match id {
-                    $(
-                        $ib_id::$field => {
-                            let _cx = ::byte::LE;
-                            $(
-                                let _cx = $ctx_hdr;
-                            )?
-                            let Ok(value) = data.read_with::<$field_ty>(&mut 0, _cx) else {
-                                return false;
-                            };
-                            *self.fields.$field.write() = value;
-                            true
-                        }
-                    )+
-                }
+                $(
+                    $crate::construct_ib!(
+                        @import self, id, data, $field, $field_ty;
+                        [$($skey)?] [$($table)?] [$($ctx_hdr)?]
+                    );
+                )+
+                false
+            }
+
+            /// Number of entries in a table field, `None` for other fields.
+            pub fn table_len(&self, id: $ib_id) -> Option<usize> {
+                $(
+                    $crate::construct_ib!(
+                        @table_len self, id, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+                None
+            }
+
+            /// Drops table entries beyond `len`.
+            pub fn truncate_table(&self, id: $ib_id, len: usize) {
+                $(
+                    $crate::construct_ib!(
+                        @table_truncate self, id, len, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+            }
+
+            /// Returns and clears the set of table entries changed since the
+            /// last call.
+            pub fn take_dirty_entries(&self, id: $ib_id) -> u64 {
+                $(
+                    $crate::construct_ib!(
+                        @entry_dirty self, id, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+                0
+            }
+
+            /// Rows a table field can ever hold, 0 for other fields.
+            pub fn table_capacity(&self, id: $ib_id) -> usize {
+                $(
+                    $crate::construct_ib!(
+                        @capacity self, id, $field, $field_ty; [$($skey)?] [$($table)?]
+                    );
+                )+
+                0
+            }
+
+            /// Returns and clears whether a table field gained or lost
+            /// entries since the last call.
+            pub fn take_len_dirty(&self, id: $ib_id) -> bool {
+                $(
+                    $crate::construct_ib!(
+                        @len_dirty self, id, $field; [$($skey)?] [$($table)?]
+                    );
+                )+
+                false
+            }
+
+            /// Encodes one table entry into `buf`, returning the encoded
+            /// length.
+            pub fn export_entry(
+                &self,
+                id: $ib_id,
+                index: usize,
+                buf: &mut [u8],
+            ) -> Option<usize> {
+                use byte::BytesExt;
+                use byte::TryWrite;
+                $(
+                    $crate::construct_ib!(
+                        @entry_export self, id, index, buf, $field, $field_ty;
+                        [$($skey)?] [$($table)?] [$($ctx_write)?]
+                    );
+                )+
+                None
+            }
+
+            /// Decodes `data` into the table entry at `index`, appending when
+            /// it is one past the end.
+            pub fn import_entry(&self, id: $ib_id, index: usize, data: &[u8]) -> bool {
+                use byte::BytesExt;
+                use byte::TryRead;
+                $(
+                    $crate::construct_ib!(
+                        @entry_import self, id, index, data, $field, $field_ty;
+                        [$($skey)?] [$($table)?] [$($ctx_hdr)?]
+                    );
+                )+
+                false
             }
 
             $(
                 $(#[doc = $doc])*
                 ///
-                /// Returns a read guard; do not hold it across an
-                /// `update_*` of the same field.
-                pub fn $field(&self) -> ::spin::RwLockReadGuard<'_, $field_ty> {
-                    self.fields.$field.read()
+                /// Locked fields return a read guard, atomic fields a copy;
+                /// never hold a guard across an `update_*` of the same field.
+                pub fn $field(&self) -> $crate::construct_ib!(@ref $field_ty; [$($cell)?] [$($table)?]) {
+                    ::zigbee_types::sync::IbCell::get(&self.fields.$field)
                 }
 
-                /// Updates the field in place under its write lock.
-                pub fn $update(&self, f: impl FnOnce(&mut $field_ty)) {
-                    f(&mut *self.fields.$field.write());
-
-                    if $ib_id::$field.storage_key().is_some() {
-                        *self.dirty.lock() |= 1 << ($ib_id::$field as u64);
-                        DIRTY_SIGNAL.signal();
+                $(
+                    /// Borrows the table for entry-level mutation; only the
+                    /// entries actually touched are persisted.
+                    pub fn $table(&self) -> ::zigbee_types::sync::TableMut<'_, $field_ty> {
+                        self.fields.$field.table_mut(&DIRTY_SIGNAL)
                     }
+                )?
+
+                $(
+                    /// Updates the field without marking it for persistence.
+                    ///
+                    /// For changes the stored image does not reflect, such as
+                    /// a frame counter moving inside the bound already stored
+                    /// for it. The caller must use the marking setter once the
+                    /// stored image would actually change.
+                    pub fn $quiet(&self, f: impl FnOnce(&mut $field_ty)) {
+                        ::zigbee_types::sync::IbCell::update(&self.fields.$field, f);
+                    }
+                )?
+
+                /// Updates the field in place.
+                pub fn $update(&self, f: impl FnOnce(&mut $field_ty)) {
+                    ::zigbee_types::sync::IbCell::update(&self.fields.$field, f);
+
+                    $(
+                        self.dirty.set($skey);
+                        DIRTY_SIGNAL.signal();
+                    )?
                 }
             )+
         }

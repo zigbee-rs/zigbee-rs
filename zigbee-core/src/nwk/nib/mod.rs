@@ -92,6 +92,8 @@ const MAX_NWK_ADDRESS_MAP: usize = 16;
 const MAX_MAC_INTERFACE_TABLE: usize = 1;
 // active plus alternate network key (4.6.3.4.2)
 const MAX_SECURITY_KEYS: usize = 2;
+// 4.3.1.2 step 6 bounds the incoming counters by security keys x neighbors
+const MAX_INCOMING_FRAME_COUNTERS: usize = MAX_SECURITY_KEYS * MAX_NEIGBOUR_TABLE;
 
 /// Maximum acceptable link cost for parent selection (3.6.1.4.1.1).
 pub const MAX_PARENT_LINK_COST: u8 = 3;
@@ -126,34 +128,44 @@ construct_ib! {
     #[fields = NibFields]
     pub struct Nib {
         /// Sequence number
+        #[cell = atomic]
         #[setter = update_sequence_number]
         sequence_number: u8, // random value, read only
+        #[cell = atomic]
         #[storage_key = 9]
         #[setter = update_passive_ack_timeout]
         passive_ack_timeout: u32, // stack profile
+        #[cell = atomic]
         #[storage_key = 10]
         #[setter = update_max_broadcast_retries]
         max_broadcast_retries: u8 = 0x03,
+        #[cell = atomic]
         #[storage_key = 11]
         #[setter = update_max_children]
         max_children: u8, // stack profile
+        #[cell = atomic]
         #[storage_key = 12]
         #[setter = update_max_depth]
         max_depth: u8, // stack profile, read only
+        #[cell = atomic]
         #[storage_key = 13]
         #[setter = update_max_routers]
         max_routers: u8, // stack profile
+        #[table = neighbor_table_mut]
         #[storage_key = 8]
         #[setter = update_neighbor_table]
         neighbor_table: StorageVec<NwkNeighbor, MAX_NEIGBOUR_TABLE>,
+        #[cell = atomic]
         #[storage_key = 14]
         #[setter = update_network_broadcast_delivery_time]
         network_broadcast_delivery_time: u32, // stack profile
+        #[cell = atomic]
         #[storage_key = 15]
         #[setter = update_report_constant_cost]
         report_constant_cost: u8 = 0x00, // 0x00 - 0x01
         #[setter = update_route_table]
         route_table: StorageVec<NwkRoute, MAX_ROUTE_TABLE>,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 16]
@@ -162,40 +174,50 @@ construct_ib! {
         #[storage_key = 7]
         #[setter = update_capability_information]
         capability_information: CapabilityInformation = CapabilityInformation(0x00), // read only
+        #[cell = atomic]
         #[storage_key = 17]
         #[setter = update_addr_alloc]
         addr_alloc: u8 = 0x0, // 0x00 - 0x02
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 18]
         #[setter = update_use_tree_routing]
         use_tree_routing: bool = true,
+        #[cell = atomic]
         #[storage_key = 19]
         #[setter = update_manager_addr]
         manager_addr: u16 = 0x0000, // <= 0xfff7
+        #[cell = atomic]
         #[storage_key = 20]
         #[setter = update_max_source_route]
         max_source_route: u8 = 0x0c,
+        #[cell = atomic]
         #[storage_key = 4]
         #[setter = update_update_id]
         update_id: u8 = 0x00,
+        #[cell = atomic]
         #[storage_key = 21]
         #[setter = update_transaction_persistence_time]
         transaction_persistence_time: u16 = 0x01f4,
+        #[cell = atomic]
         #[storage_key = 1]
         #[setter = update_network_address]
         network_address: u16 = 0xffff, //  <= 0xfff7
+        #[cell = atomic]
         #[storage_key = 22]
         #[setter = update_stack_profile]
         stack_profile: u8, // <= 0x0f
         #[setter = update_broadcast_transaction_table]
         broadcast_transaction_table: StorageVec<TransactionRecord, MAX_BROADCAST_TRANSACTION_TABLE>,
+        #[table = group_idtable_mut]
         #[storage_key = 23]
         #[setter = update_group_idtable]
         group_idtable: StorageVec<u16, MAX_GROUP_ID_TABLE>,
         #[storage_key = 3]
         #[setter = update_extended_panid]
         extended_panid: u64 = 0x0000_0000_0000_0000, // <= 0xffff_ffff_ffff_fffe
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 24]
@@ -203,14 +225,17 @@ construct_ib! {
         use_multicast: bool = true,
         #[setter = update_route_record_table]
         route_record_table: StorageVec<RouteRecord, MAX_ROUTE_RECORD_TABLE>,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 25]
         #[setter = update_is_concentrator]
         is_concentrator: bool = false,
+        #[cell = atomic]
         #[storage_key = 26]
         #[setter = update_concentrator_radius]
         concentrator_radius: u8 = 0x00,
+        #[cell = atomic]
         #[storage_key = 27]
         #[setter = update_concentrator_discovery_time]
         concentrator_discovery_time: u8 = 0x00,
@@ -218,57 +243,86 @@ construct_ib! {
         #[storage_key = 28]
         #[setter = update_security_level]
         security_level: SecurityLevel = SecurityLevel::EncMic32,
+        #[table = security_material_set_mut]
         #[storage_key = 6]
         #[setter = update_security_material_set]
         security_material_set: StorageVec<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>,
+        /// Most recently accepted incoming frame counter per (key, sender),
+        /// bounded by 4.3.1.2 step 6.
+        #[table = incoming_frame_counters_mut]
+        #[storage_key = 41]
+        #[setter = update_incoming_frame_counters]
+        incoming_frame_counters:
+            StorageVec<IncomingFrameCounterDescriptor, MAX_INCOMING_FRAME_COUNTERS>,
+        #[cell = atomic]
         #[storage_key = 5]
         #[setter = update_active_key_seq_number]
         active_key_seq_number: u8 = 0x00,
+        /// Outgoing NWK frame counter, shared by every security material set
+        /// (4.3.4).
+        #[cell = atomic]
+        #[storage_key = 40]
+        #[quiet_setter = update_outgoing_frame_counter_quietly]
+        #[setter = update_outgoing_frame_counter]
+        outgoing_frame_counter: u32 = 0,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 29]
         #[setter = update_all_fresh]
         all_fresh: bool = true,
 
+        #[cell = atomic]
         #[storage_key = 30]
         #[setter = update_link_status_period]
         link_status_period: u8 = 0x0f,
+        #[cell = atomic]
         #[storage_key = 31]
         #[setter = update_router_age_limit]
         router_age_limit: u8 = 0x03,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 32]
         #[setter = update_unique_addr]
         unique_addr: bool = true,
+        #[table = address_map_mut]
         #[storage_key = 33]
         #[setter = update_address_map]
         address_map: StorageVec<AddressMap, MAX_NWK_ADDRESS_MAP>,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 34]
         #[setter = update_time_stamp]
         time_stamp: bool = false,
+        #[cell = atomic]
         #[storage_key = 2]
         #[setter = update_panid]
         panid: u16 = 0xffff,
+        #[cell = atomic]
         #[setter = update_tx_total]
         tx_total: u16 = 0x0000,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 35]
         #[setter = update_leave_request_allowed]
         leave_request_allowed: bool = true,
+        #[cell = atomic]
         #[storage_key = 36]
         #[setter = update_parent_information]
         parent_information: u8 = 0x00,
+        #[cell = atomic]
         #[storage_key = 37]
         #[setter = update_end_device_timeout_default]
         end_device_timeout_default: u8 = 0x08,
         // negotiated timeout enumeration (3.6.10.2); 0xff = not negotiated
+        #[cell = atomic]
         #[storage_key = 39]
         #[setter = update_end_device_timeout]
         end_device_timeout: u8 = 0xff,
+        #[cell = atomic]
         #[ctx = ()]
         #[ctx_write = ()]
         #[storage_key = 38]
@@ -458,8 +512,6 @@ impl_byte! {
     #[derive(Debug, Clone)]
     pub struct NetworkSecurityMaterialDescriptor {
         pub key_seq_number: u8,
-        pub outgoing_frame_counter: u32,
-        pub incoming_frame_counter_set: StorageVec<IncomingFrameCounterDescriptor, MAX_NEIGBOUR_TABLE>,
         pub key: ByteArray<16>,
         pub network_key_type: u8,
     }
@@ -467,15 +519,19 @@ impl_byte! {
 
 impl_byte! {
     /// See Table 4-4.
+    ///
+    /// Carries the key sequence number the counter belongs to: the set is
+    /// stored flat rather than nested in each security material descriptor,
+    /// so a single counter can be persisted on its own.
     #[derive(Debug, Clone)]
     pub struct IncomingFrameCounterDescriptor {
+        pub key_seq_number: u8,
         pub sender_address: IeeeAddress,
         pub incoming_frame_counter: u32,
     }
 }
 
-/// Flash persistence of the NIB.
-#[cfg(feature = "storage")]
+/// Persistence of the NIB.
 pub(crate) mod storage;
 
 #[cfg(test)]
@@ -489,8 +545,6 @@ mod tests {
         let mut set = StorageVec::<NetworkSecurityMaterialDescriptor, MAX_SECURITY_KEYS>::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 0,
-            incoming_frame_counter_set: StorageVec(Vec::new()),
             key: ByteArray([0u8; 16]),
             network_key_type: 0,
         })
@@ -505,32 +559,32 @@ mod tests {
         // by) other tests running in parallel
         let nib = Nib::new();
 
-        assert_eq!(*nib.max_broadcast_retries(), 0x03);
-        assert_eq!(*nib.report_constant_cost(), 0x00);
-        assert!(!*nib.sym_link());
+        assert_eq!(nib.max_broadcast_retries(), 0x03);
+        assert_eq!(nib.report_constant_cost(), 0x00);
+        assert!(!nib.sym_link());
         assert_eq!(*nib.capability_information(), CapabilityInformation(0x00));
-        assert_eq!(*nib.addr_alloc(), 0x0);
-        assert!(*nib.use_tree_routing());
-        assert_eq!(*nib.manager_addr(), 0x0000);
-        assert_eq!(*nib.max_source_route(), 0x0c);
-        assert_eq!(*nib.update_id(), 0x00);
-        assert_eq!(*nib.transaction_persistence_time(), 0x01f4);
-        assert_eq!(*nib.network_address(), 0xffff);
+        assert_eq!(nib.addr_alloc(), 0x0);
+        assert!(nib.use_tree_routing());
+        assert_eq!(nib.manager_addr(), 0x0000);
+        assert_eq!(nib.max_source_route(), 0x0c);
+        assert_eq!(nib.update_id(), 0x00);
+        assert_eq!(nib.transaction_persistence_time(), 0x01f4);
+        assert_eq!(nib.network_address(), 0xffff);
         assert_eq!(*nib.extended_panid(), 0x0000_0000_0000_0000);
-        assert!(*nib.use_multicast());
-        assert!(!*nib.is_concentrator());
-        assert_eq!(*nib.concentrator_radius(), 0x00);
-        assert_eq!(*nib.concentrator_discovery_time(), 0x00);
-        assert_eq!(*nib.link_status_period(), 0x0f);
-        assert_eq!(*nib.router_age_limit(), 0x03);
-        assert!(*nib.unique_addr());
-        assert!(!*nib.time_stamp());
-        assert_eq!(*nib.panid(), 0xffff);
-        assert_eq!(*nib.tx_total(), 0x0000);
-        assert!(*nib.leave_request_allowed());
-        assert_eq!(*nib.parent_information(), 0x00);
-        assert_eq!(*nib.end_device_timeout_default(), 0x08);
-        assert!(*nib.leave_request_without_rejoin_allowed());
+        assert!(nib.use_multicast());
+        assert!(!nib.is_concentrator());
+        assert_eq!(nib.concentrator_radius(), 0x00);
+        assert_eq!(nib.concentrator_discovery_time(), 0x00);
+        assert_eq!(nib.link_status_period(), 0x0f);
+        assert_eq!(nib.router_age_limit(), 0x03);
+        assert!(nib.unique_addr());
+        assert!(!nib.time_stamp());
+        assert_eq!(nib.panid(), 0xffff);
+        assert_eq!(nib.tx_total(), 0x0000);
+        assert!(nib.leave_request_allowed());
+        assert_eq!(nib.parent_information(), 0x00);
+        assert_eq!(nib.end_device_timeout_default(), 0x08);
+        assert!(nib.leave_request_without_rejoin_allowed());
     }
 
     #[test]
