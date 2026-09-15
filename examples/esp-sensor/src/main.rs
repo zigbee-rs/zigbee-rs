@@ -50,6 +50,13 @@ use zigbee_types::ShortAddress;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+#[unsafe(no_mangle)]
+extern "Rust" fn _esp_println_timestamp() -> u64 {
+    esp_hal::time::Instant::now()
+        .duration_since_epoch()
+        .as_millis()
+}
+
 /// flash region reserved for zigbee persistence.
 ///
 /// MUST be adjusted to your partition table: it must not overlap the
@@ -64,7 +71,7 @@ const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 ///
 /// This is a placeholder and will not match any real network!
 /// replace it with the Extended PAN ID of your own coordinator.
-const EXTENDED_PAN_ID: u64 = 0xabcdef0123456789;
+const EXTENDED_PAN_ID: u64 = 0x00124b002a9a7166;
 
 /// Channel to scan on (must match the coordinator's channel).
 const CHANNEL: u8 = 11;
@@ -237,6 +244,7 @@ async fn identify_task() {
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
+    println!("start");
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -248,8 +256,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // the stack owns persistence: the information bases are restored here and
     // the stack persists dirty state (keys, frame counters, tables) whenever it
     // changes them
+    println!("setup flash");
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let storage = zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await;
+    println!("setup flash peripheral done");
+    let storage = zigbee::storage::FlashStorage::new(flash, ZIGBEE_FLASH_RANGE).await;
+    println!("setup flash done");
 
     let config = stack_config();
 
@@ -285,9 +296,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         .map_or(0xffff, |n| n.network_address.0);
     println!(
         "On network: addr={:#06x} parent={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
-        *nib.network_address(),
+        nib.network_address(),
         parent,
-        *nib.panid(),
+        nib.panid(),
         *nib.extended_panid(),
         stack.config().channel(),
         nib.update_id()

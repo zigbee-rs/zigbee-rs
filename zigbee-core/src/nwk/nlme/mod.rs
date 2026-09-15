@@ -73,6 +73,7 @@ use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
+use crate::nwk::nib::MAX_NEIGBOUR_TABLE;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_BROADCAST_ADDRESS_MIN;
 use crate::nwk::nib::NWK_BROADCAST_ALL;
@@ -161,6 +162,10 @@ pub struct Nlme<M> {
     // NLME-NWK-STATUS.indication (3.2.2.32) reporting a network failure to the
     // higher layer
     nwk_status_indication: Signal<NlmeNwkStatusIndication>,
+    // consecutive transmit failures per neighbor with an outgoing link
+    // (3.6.3.7). Volatile link health: a reboot has no failed transmissions
+    // behind it, so this never reaches the flash-backed neighbor table
+    transmit_failures: spin::RwLock<StorageVec<(ShortAddress, u8), MAX_NEIGBOUR_TABLE>>,
 }
 
 /// Keepalive method negotiated with the router parent (3.6.10.3).
@@ -199,6 +204,7 @@ where
             timeout_response: Signal::new(),
             leave_indication: Signal::new(),
             nwk_status_indication: Signal::new(),
+            transmit_failures: spin::RwLock::new(StorageVec::new()),
         }
     }
 
@@ -263,7 +269,7 @@ where
         let header = NwkHeader {
             frame_control,
             destination,
-            source: ShortAddress(*nib.network_address()),
+            source: ShortAddress(nib.network_address()),
             radius: 30,
             sequence_number: seq,
             destination_ieee: None,
@@ -314,7 +320,7 @@ where
         let header = NwkHeader {
             frame_control,
             destination,
-            source: ShortAddress(*nib.network_address()),
+            source: ShortAddress(nib.network_address()),
             radius: 1,
             sequence_number: self.next_nwk_seq(),
             destination_ieee,
@@ -355,7 +361,7 @@ where
     /// `nwkParentInformation` and the negotiated timeout in the NIB; no
     /// response means a legacy parent and leaves the NIB untouched.
     pub async fn send_end_device_timeout_request(&self) -> Result<(), NetworkError> {
-        let requested_timeout = *self.nib().end_device_timeout_default();
+        let requested_timeout = self.nib().end_device_timeout_default();
         let command = Command::EndDeviceTimeoutRequest(EndDeviceTimeoutRequest {
             requested_timeout,
             // all bits reserved, must be 0 (3.4.11.3.2)
@@ -383,11 +389,11 @@ where
     /// the channel it will look for one on, leaving the rest to the join.
     pub async fn resume(&self, channel: u8) -> bool {
         let nib = self.nib();
-        let network_address = *nib.network_address();
+        let network_address = nib.network_address();
         let on_a_network = network_address != NWK_UNASSIGNED_ADDRESS;
 
         let config = if on_a_network {
-            MacConfig::joined(channel, PanId(*nib.panid()), ShortAddress(network_address))
+            MacConfig::joined(channel, PanId(nib.panid()), ShortAddress(network_address))
         } else {
             MacConfig::channel(channel)
         };
@@ -452,10 +458,10 @@ where
     /// negotiated timeout no keepalive is sent.
     pub fn keepalive_method(&self) -> KeepaliveMethod {
         let nib = self.nib();
-        if end_device_timeout_request::timeout_seconds(*nib.end_device_timeout()).is_none() {
+        if end_device_timeout_request::timeout_seconds(nib.end_device_timeout()).is_none() {
             return KeepaliveMethod::None;
         }
-        let parent_information = *nib.parent_information();
+        let parent_information = nib.parent_information();
         if parent_information & EndDeviceTimeoutResponse::MAC_DATA_POLL_KEEPALIVE != 0 {
             KeepaliveMethod::MacDataPoll
         } else if parent_information & EndDeviceTimeoutResponse::TIMEOUT_REQUEST_KEEPALIVE != 0 {
@@ -475,8 +481,7 @@ where
 
     // negotiated Device Timeout period in milliseconds (Table 3.52)
     fn negotiated_timeout_ms(&self) -> Option<u32> {
-        let seconds =
-            end_device_timeout_request::timeout_seconds(*self.nib().end_device_timeout())?;
+        let seconds = end_device_timeout_request::timeout_seconds(self.nib().end_device_timeout())?;
         Some(seconds.saturating_mul(1000))
     }
 
@@ -608,39 +613,54 @@ where
     /// with an NLME-NWK-STATUS.indication of `ParentLinkFailure` (3.6.3.7.1)
     /// and [`NetworkError::ParentLinkFailure`] is returned.
     async fn transmit_via_parent(&self, buf: &[u8]) -> Result<(), NetworkError> {
-        let parent = self.parent_address()?;
-        let Err(e) = self.mac.transmit_data(parent, buf).await else {
+        let parent = self.parent_short_address()?;
+        let Err(e) = self.mac.transmit_data(self.parent_address()?, buf).await else {
             // an acknowledged frame proves the parent still holds this device
             // in its neighbor table (3.6.10.6)
-            self.update_parent_neighbor(|neighbor| neighbor.transmit_failure = 0);
+            self.clear_transmit_failures(parent);
             self.refresh_parent_timeout();
             return Ok(());
         };
 
-        let mut failures = 0;
-        self.update_parent_neighbor(|neighbor| {
-            neighbor.transmit_failure = neighbor.transmit_failure.saturating_add(1);
-            failures = neighbor.transmit_failure;
-        });
+        let failures = self.record_transmit_failure(parent);
         log::debug!("[NWK] transmission via parent failed ({e:?}), failures={failures}");
         if failures < MAX_PARENT_TRANSMIT_FAILURES {
             return Err(e.into());
         }
 
-        self.update_parent_neighbor(|neighbor| neighbor.transmit_failure = 0);
+        self.clear_transmit_failures(parent);
         Err(self.parent_link_failure())
     }
 
-    // apply `update` to the parent's neighbor table entry, if there is one
-    fn update_parent_neighbor(&self, update: impl FnOnce(&mut NwkNeighbor)) {
-        self.nib().update_neighbor_table(|table| {
-            if let Some(parent) = table
-                .iter_mut()
-                .find(|n| n.relationship == relationship::PARENT)
-            {
-                update(parent);
-            }
-        });
+    // count one more failed transmission to `neighbor` and report the total
+    fn record_transmit_failure(&self, neighbor: ShortAddress) -> u8 {
+        let mut failures = self.transmit_failures.write();
+        if let Some((_, count)) = failures.iter_mut().find(|(addr, _)| *addr == neighbor) {
+            *count = count.saturating_add(1);
+            return *count;
+        }
+        // a full map only costs the link its history, so drop the oldest
+        if failures.push((neighbor, 1)).is_err() {
+            failures.remove(0);
+            let _ = failures.push((neighbor, 1));
+        }
+        1
+    }
+
+    fn clear_transmit_failures(&self, neighbor: ShortAddress) {
+        let mut failures = self.transmit_failures.write();
+        if let Some(index) = failures.iter().position(|(addr, _)| *addr == neighbor) {
+            failures.remove(index);
+        }
+    }
+
+    #[cfg(test)]
+    fn transmit_failures(&self, neighbor: ShortAddress) -> u8 {
+        self.transmit_failures
+            .read()
+            .iter()
+            .find(|(addr, _)| *addr == neighbor)
+            .map_or(0, |(_, count)| *count)
     }
 
     // raise NLME-NWK-STATUS.indication 0x09 (3.6.3.7.1, 3.6.10.3, 3.2.2.32)
@@ -767,7 +787,7 @@ where
         }
 
         // nwkStackProfile == 1 prefers minimum depth (3.6.1.4.1.1)
-        if *stack_profile == 1 {
+        if stack_profile == 1 {
             candidates.sort_unstable_by_key(|&i| table[i].depth);
         }
 
@@ -804,7 +824,7 @@ where
     /// Find the parent's MAC address from the neighbor table.
     fn parent_address(&self) -> Result<Address, NetworkError> {
         let addr = Address::Short(
-            PanId(*self.nib().panid()),
+            PanId(self.nib().panid()),
             MacShortAddress(self.parent_short_address()?.0),
         );
         Ok(addr)
@@ -837,14 +857,19 @@ where
         let Some(source_ieee) = header.source_ieee else {
             return;
         };
-        self.nib().update_neighbor_table(|table| {
-            if let Some(neighbor) = table
-                .iter_mut()
-                .find(|n| n.network_address == header.source)
-            {
-                neighbor.extended_address = source_ieee;
-            }
-        });
+        let mut table = self.nib().neighbor_table_mut();
+        let Some(index) = table.position(|n| n.network_address == header.source) else {
+            return;
+        };
+        // every frame from this neighbor reports the same address, so only the
+        // first one is a change worth persisting
+        if table
+            .get(index)
+            .is_some_and(|n| n.extended_address == source_ieee)
+        {
+            return;
+        }
+        table.update(index, |neighbor| neighbor.extended_address = source_ieee);
     }
 
     /// Find the parent's network address from the neighbor table.
@@ -1076,7 +1101,7 @@ where
     pub fn accepts_leave_request(&self, destination: ShortAddress, from_parent: bool) -> bool {
         // step 1: the coordinator never leaves, and a broadcast request is
         // dropped without further processing
-        if *self.nib().network_address() == NWK_COORDINATOR_ADDRESS
+        if self.nib().network_address() == NWK_COORDINATOR_ADDRESS
             || destination.0 >= NWK_BROADCAST_ADDRESS_MIN
         {
             log::trace!("[NWK] leave request dropped (coordinator or broadcast destination)");
@@ -1086,7 +1111,7 @@ where
         // step 2: a router honors any sender while nwkLeaveRequestAllowed is
         // set, ignoring the neighbor relationship
         if self.nib().capability_information().device_type() {
-            let allowed = *self.nib().leave_request_allowed();
+            let allowed = self.nib().leave_request_allowed();
             if !allowed {
                 log::trace!("[NWK] leave request refused (nwkLeaveRequestAllowed is FALSE)");
             }
@@ -1106,7 +1131,7 @@ where
     /// address) is implemented: removing a child requires acting as its
     /// parent, which this stack does not yet support.
     pub async fn leave(&self, request: NlmeLeaveRequest) -> NlmeLeaveConfirm {
-        if *self.nib().network_address() == NWK_UNASSIGNED_ADDRESS {
+        if self.nib().network_address() == NWK_UNASSIGNED_ADDRESS {
             return NlmeLeaveConfirm {
                 status: NlmeLeaveStatus::InvalidRequest,
                 device_address: request.device_address,
@@ -1156,7 +1181,7 @@ where
         rejoin: bool,
     ) -> Result<(), NetworkError> {
         let is_router_or_coordinator = self.nib().capability_information().device_type()
-            || *self.nib().network_address() == NWK_COORDINATOR_ADDRESS;
+            || self.nib().network_address() == NWK_COORDINATOR_ADDRESS;
 
         let mut buf = [0u8; 64];
         if is_router_or_coordinator {
@@ -1173,7 +1198,7 @@ where
             )?;
             // read out before the `.await` below — held across it, this
             // guard would deadlock against a concurrent write of this field
-            let pan_id = *self.nib().panid();
+            let pan_id = self.nib().panid();
             self.mac
                 .transmit_data(
                     Address::Short(PanId(pan_id), MacShortAddress(NWK_BROADCAST_ALL)),
@@ -1229,6 +1254,8 @@ where
         nib.update_is_concentrator(|value| *value = false);
         nib.update_concentrator_radius(|value| *value = 0);
         nib.update_security_material_set(|value| value.clear());
+        // the counters are keyed by key sequence number, so they die with the keys
+        nib.update_incoming_frame_counters(|value| value.clear());
         nib.update_active_key_seq_number(|value| *value = 0x00);
         nib.update_address_map(|value| value.clear());
         nib.update_panid(|value| *value = 0xffff);
@@ -1266,7 +1293,6 @@ where
                     rx_on_when_idle: false,
                     end_device_configuration: 0,
                     relationship: relationship::NONE,
-                    transmit_failure: 0,
                     lqi: pd.link_quality,
                     outgoing_cost: 0,
                     age: 0,
@@ -1358,7 +1384,7 @@ where
         }
 
         // a device already joined must not re-associate (3.6.1.4.1.1)
-        if *self.nib().network_address() != 0xffff {
+        if self.nib().network_address() != 0xffff {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
 
@@ -1506,7 +1532,7 @@ where
         // leave zeroes nwkExtendedPANId (3.6.1.10.1) without ending the rejoin
         // path, so an unknown extended PAN id takes the requested one
         let remembered_epid = *self.nib().extended_panid();
-        if *self.nib().network_address() == 0xffff
+        if self.nib().network_address() == 0xffff
             || (remembered_epid != 0 && remembered_epid != request.extended_pan_id.0)
         {
             return fail(NlmeJoinStatus::InvalidRequest);
@@ -1666,15 +1692,22 @@ where
             )
         };
 
-        nib.update_neighbor_table(|table| {
-            for (index, neighbor) in table.iter_mut().enumerate() {
-                neighbor.relationship = if index == candidate_idx {
+        {
+            // only the old and the new parent change relationship, so touching
+            // rows that already hold the right value would rewrite the table
+            let mut table = nib.neighbor_table_mut();
+            for index in 0..table.len() {
+                let wanted = if index == candidate_idx {
                     relationship::PARENT
                 } else {
                     relationship::NONE
                 };
+                if table.get(index).is_some_and(|n| n.relationship == wanted) {
+                    continue;
+                }
+                table.update(index, |neighbor| neighbor.relationship = wanted);
             }
-        });
+        }
         nib.update_panid(|value| *value = pan_id);
         nib.update_update_id(|value| *value = update_id);
         self.mac.configure(MacConfig::channel(channel)).await;
@@ -1739,7 +1772,10 @@ where
                 // traffic the pre-key joiner cannot decode (SecurityError/ParseError)
                 // the NWK-unsecured transport-key (4.6.3.7.2) stays buffered for a
                 // later poll
-                Ok(None) | Err(NetworkError::SecurityError(_) | NetworkError::ParseError) => (),
+                Ok(None) => (),
+                Err(e @ (NetworkError::SecurityError(_) | NetworkError::ParseError)) => {
+                    log::debug!("[NWK-POLL] dropped rx frame: {e:?}");
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -1878,7 +1914,6 @@ mod tests {
             rx_on_when_idle: false,
             end_device_configuration: 0,
             relationship: 0x03,
-            transmit_failure: 0,
             lqi,
             outgoing_cost: 0,
             age: 0,
@@ -2113,10 +2148,10 @@ mod tests {
         assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
         assert_eq!(confirm.channel, 11);
 
-        assert_eq!(*nlme.nib().network_address(), 0x1234);
+        assert_eq!(nlme.nib().network_address(), 0x1234);
         assert_eq!(*nlme.nib().extended_panid(), 0xDEAD);
-        assert_eq!(*nlme.nib().panid(), 0xAAAA);
-        assert_eq!(*nlme.nib().update_id(), 0);
+        assert_eq!(nlme.nib().panid(), 0xAAAA);
+        assert_eq!(nlme.nib().update_id(), 0);
 
         let table = nlme.nib().neighbor_table();
         assert_eq!(table[0].relationship, 0x00);
@@ -2143,7 +2178,7 @@ mod tests {
 
         let confirm = block_on(nlme.join(default_join_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
-        assert_eq!(*nlme.nib().update_id(), 7);
+        assert_eq!(nlme.nib().update_id(), 7);
     }
 
     #[test]
@@ -2288,7 +2323,7 @@ mod tests {
                 .set_discover_route(DiscoverRoute::Suppress)
                 .set_security_flag(true)
                 .set_source_ieee_flag(true),
-            destination: ShortAddress(*nib.network_address()),
+            destination: ShortAddress(nib.network_address()),
             source: ShortAddress(0x0000),
             radius: 1,
             sequence_number: 0,
@@ -2392,7 +2427,7 @@ mod tests {
         let confirm = block_on(nlme.join(rejoin_request(0xDEAD)));
         assert_eq!(confirm.status, NlmeJoinStatus::Success);
         assert_eq!(confirm.network_address, ShortAddress(0x5678));
-        assert_eq!(*nlme.nib().network_address(), 0x5678);
+        assert_eq!(nlme.nib().network_address(), 0x5678);
     }
 
     #[test]
@@ -2410,7 +2445,7 @@ mod tests {
             }),
         ));
 
-        assert_eq!(*nlme.nib().network_address(), 0x5678);
+        assert_eq!(nlme.nib().network_address(), 0x5678);
         block_on(nlme.rejoin_response.wait());
     }
 
@@ -2496,8 +2531,6 @@ mod tests {
         let mut set = StorageVec::new();
         set.push(NetworkSecurityMaterialDescriptor {
             key_seq_number: 0,
-            outgoing_frame_counter: 1,
-            incoming_frame_counter_set: StorageVec::new(),
             key: ByteArray([0x42; 16]),
             network_key_type: 0,
         })
@@ -2548,7 +2581,7 @@ mod tests {
         block_on(nlme.send_end_device_timeout_request()).unwrap();
         assert_eq!(
             nlme.pending_timeout_request.load(Ordering::Relaxed),
-            *nlme.nib().end_device_timeout_default()
+            nlme.nib().end_device_timeout_default()
         );
     }
 
@@ -2573,8 +2606,8 @@ mod tests {
         ));
 
         let nib = nlme.nib();
-        assert_eq!(*nib.parent_information(), 0b011);
-        assert_eq!(*nib.end_device_timeout(), 0x03);
+        assert_eq!(nib.parent_information(), 0b011);
+        assert_eq!(nib.end_device_timeout(), 0x03);
         // pending request consumed
         assert_eq!(
             nlme.pending_timeout_request.load(Ordering::Relaxed),
@@ -2596,8 +2629,8 @@ mod tests {
         ));
 
         let nib = nlme.nib();
-        assert_eq!(*nib.parent_information(), 0x00);
-        assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
+        assert_eq!(nib.parent_information(), 0x00);
+        assert_eq!(nib.end_device_timeout(), NO_PENDING_TIMEOUT);
     }
 
     #[test]
@@ -2613,8 +2646,8 @@ mod tests {
         ));
 
         let nib = nlme.nib();
-        assert_eq!(*nib.parent_information(), 0x00);
-        assert_eq!(*nib.end_device_timeout(), NO_PENDING_TIMEOUT);
+        assert_eq!(nib.parent_information(), 0x00);
+        assert_eq!(nib.end_device_timeout(), NO_PENDING_TIMEOUT);
     }
 
     #[test]
@@ -2684,7 +2717,7 @@ mod tests {
         assert_eq!(confirm.device_address, None);
 
         let nib = nlme.nib();
-        assert_eq!(*nib.network_address(), 0xffff);
+        assert_eq!(nib.network_address(), 0xffff);
         assert_eq!(*nib.extended_panid(), 0);
         assert!(nib.neighbor_table().is_empty());
         assert!(nib.security_material_set().is_empty());
@@ -2707,7 +2740,7 @@ mod tests {
         }));
         // 3.6.1.10.1: the local leave runs regardless of the confirm status
         assert_eq!(confirm.status, NlmeLeaveStatus::MacError);
-        assert_eq!(*nlme.nib().network_address(), NWK_UNASSIGNED_ADDRESS);
+        assert_eq!(nlme.nib().network_address(), NWK_UNASSIGNED_ADDRESS);
         assert!(nlme.nib().security_material_set().is_empty());
     }
 
@@ -2726,7 +2759,7 @@ mod tests {
         // no transmit_data expectation set: a call here would panic the mock
         block_on(nlme.handle_nwk_command(&header, Command::Leave(leave)));
 
-        assert_eq!(*nlme.nib().network_address(), 0x1234);
+        assert_eq!(nlme.nib().network_address(), 0x1234);
     }
 
     #[test]
@@ -2768,7 +2801,7 @@ mod tests {
         // rejoin requested: the NIB is left intact for the (not yet
         // implemented) rejoin procedure, aside from the extended PAN id
         // which 3.6.1.10.1 clears unconditionally for an end device
-        assert_eq!(*nib.network_address(), 0x1234);
+        assert_eq!(nib.network_address(), 0x1234);
         assert_eq!(*nib.extended_panid(), 0);
         assert!(!nib.neighbor_table().is_empty());
     }
@@ -2794,7 +2827,7 @@ mod tests {
             ShortAddress(0x0000)
         );
         // not our parent -> we are still joined
-        assert_ne!(*nib.network_address(), 0xffff);
+        assert_ne!(nib.network_address(), 0xffff);
     }
 
     #[test]
@@ -2825,7 +2858,7 @@ mod tests {
         };
         block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
 
-        assert_eq!(*nlme.nib().network_address(), 0xffff);
+        assert_eq!(nlme.nib().network_address(), 0xffff);
     }
 
     #[test]
@@ -2839,7 +2872,7 @@ mod tests {
         // no transmit_data expectation set: a call here would panic the mock
         block_on(nlme.handle_nwk_command(&dummy_header(0x9999), Command::Leave(leave)));
 
-        assert_eq!(*nlme.nib().network_address(), 0x1234);
+        assert_eq!(nlme.nib().network_address(), 0x1234);
     }
 
     #[test]
@@ -2854,7 +2887,7 @@ mod tests {
         // no transmit_data expectation set: a call here would panic the mock
         block_on(nlme.handle_nwk_command(&dummy_header(0x0000), Command::Leave(leave)));
 
-        assert_eq!(*nlme.nib().network_address(), 0x0000);
+        assert_eq!(nlme.nib().network_address(), 0x0000);
     }
 
     #[test]
@@ -3030,14 +3063,10 @@ mod tests {
         seed_joined_nib(&nlme);
 
         let _ = block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3]));
-        assert!(block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3])).is_ok());
+        assert_eq!(nlme.transmit_failures(ShortAddress(0x0000)), 1);
 
-        let table = nlme.nib().neighbor_table();
-        let parent = table
-            .iter()
-            .find(|n| n.relationship == relationship::PARENT)
-            .expect("parent");
-        assert_eq!(parent.transmit_failure, 0);
+        assert!(block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3])).is_ok());
+        assert_eq!(nlme.transmit_failures(ShortAddress(0x0000)), 0);
     }
 
     #[test]
@@ -3106,7 +3135,7 @@ mod tests {
 
         assert_eq!(adopted, Some((ShortAddress(0x1234), 20)));
         assert_eq!(nlme.parent_short_address().unwrap(), ShortAddress(0x1234));
-        assert_eq!(*nlme.nib().update_id(), 7);
+        assert_eq!(nlme.nib().update_id(), 7);
         // the previous parent is demoted: only one entry is the parent
         let table = nlme.nib().neighbor_table();
         assert_eq!(
@@ -3189,7 +3218,7 @@ mod tests {
                 .set_discover_route(DiscoverRoute::Suppress)
                 .set_security_flag(true)
                 .set_source_ieee_flag(true),
-            destination: ShortAddress(*nib.network_address()),
+            destination: ShortAddress(nib.network_address()),
             source: ShortAddress(0x0000),
             radius: 1,
             sequence_number: 0,

@@ -1,83 +1,151 @@
-//! Flash persistence of the AIB (see [`crate::storage`]).
+//! AIB persistence: how its fields reach flash, and the frame-counter policy
+//! deciding when they need to (see [`crate::storage`]).
 
+#[cfg(feature = "storage")]
 use byte::BytesExt;
-use embedded_storage_async::nor_flash::NorFlash;
+use zigbee_types::ByteArray;
+use zigbee_types::IeeeAddress;
 
 use super::Aib;
 use super::AibId;
-use crate::storage::FlashMap;
-use crate::storage::Shadow;
+use super::DeviceKeyPairDescriptor;
+use super::KeyAttribute;
+use super::LinkKeyType;
+#[cfg(feature = "storage")]
+use crate::storage::PersistentIb;
 use crate::storage::round_down;
 use crate::storage::round_up;
 
-// upper byte of the flash map key namespaces the AIB
-const TAG: u16 = 0x0100;
-
-// missing or unparsable items keep their defaults
-pub(crate) async fn restore<F: NorFlash>(map: &mut FlashMap<F>, aib: &Aib) {
-    for id in AibId::VARIANTS {
-        let Some(key) = id.storage_key() else {
-            continue;
-        };
-        let key = TAG | u16::from(key);
-        if let Some(data) = map.fetch(key).await
-            && !aib.import_field(*id, data)
-        {
-            log::warn!("stored AIB field {key:#06x} did not parse; using default");
-        }
+/// Advances the outgoing APS frame counter of the key pair shared with
+/// `device`.
+pub(crate) fn advance_outgoing_frame_counter(aib: &Aib, device: IeeeAddress) {
+    let mut pairs = aib.device_key_pair_set_mut();
+    let Some(index) = pairs.position(|pair| pair.device_address == device) else {
+        return;
+    };
+    let previous = pairs
+        .get(index)
+        .map_or(0, |pair| pair.outgoing_frame_counter);
+    let next = previous.wrapping_add(1);
+    // as for the NWK counter, only a crossing moves the stored bound
+    if round_up(next) == round_up(previous) {
+        pairs.update_quiet(index, |pair| pair.outgoing_frame_counter = next);
+    } else {
+        pairs.update(index, |pair| pair.outgoing_frame_counter = next);
     }
-    // restore does not count as modification
-    let _ = aib.take_dirty();
 }
 
-// persists all AIB fields modified since the last call
-pub(crate) async fn flush<F: NorFlash>(map: &mut FlashMap<F>, shadow: &mut Shadow, aib: &Aib) {
-    let dirty = aib.take_dirty();
-    if dirty == 0 {
-        return;
+/// Records `counter` as the most recently accepted incoming APS counter for
+/// `device`, adding a key pair for a first-time device.
+///
+/// Returns `false` when the table is full, so the caller can reject the frame
+/// instead of accepting one whose counter cannot be tracked.
+pub(crate) fn record_incoming_frame_counter(
+    aib: &Aib,
+    device: IeeeAddress,
+    counter: u32,
+    default_link_key: [u8; 16],
+) -> bool {
+    let mut pairs = aib.device_key_pair_set_mut();
+    let Some(index) = pairs.position(|pair| pair.device_address == device) else {
+        let stored = pairs
+            .push(DeviceKeyPairDescriptor {
+                device_address: device,
+                key_attributes: KeyAttribute::VerifiedKey,
+                link_key: ByteArray(default_link_key),
+                outgoing_frame_counter: 0,
+                incoming_frame_counter: counter,
+                link_key_type: LinkKeyType::GlobalLinkKey,
+            })
+            .is_ok();
+        if !stored {
+            log::warn!("[APS] key pair table full, rejecting frame from {device:?}");
+        }
+        return stored;
+    };
+    let previous = pairs
+        .get(index)
+        .map_or(0, |pair| pair.incoming_frame_counter);
+    if round_down(counter) == round_down(previous) {
+        pairs.update_quiet(index, |pair| pair.incoming_frame_counter = counter);
+    } else {
+        pairs.update(index, |pair| pair.incoming_frame_counter = counter);
+    }
+    true
+}
+
+#[cfg(feature = "storage")]
+impl PersistentIb for Aib {
+    type Id = AibId;
+
+    const TAG: u8 = 0x01;
+    const NAME: &'static str = "AIB";
+    const MAX_KEY: u8 = AibId::MAX_KEY;
+
+    fn field(key: u8) -> Option<AibId> {
+        AibId::from_storage_key(key)
     }
 
-    for id in AibId::VARIANTS {
-        if dirty & (1 << (*id as u64)) == 0 {
-            continue;
-        }
-        let Some(key) = id.storage_key() else {
-            continue;
-        };
+    fn dirty_bit(id: AibId) -> u64 {
+        id.bit()
+    }
 
-        let len = if *id == AibId::device_key_pair_set {
-            // normalize counters so the stored image only changes when a
-            // counter crosses its headroom boundary
-            let mut set = ::core::clone::Clone::clone(&*aib.device_key_pair_set());
-            for pair in set.iter_mut() {
-                pair.outgoing_frame_counter = round_up(pair.outgoing_frame_counter);
-                pair.incoming_frame_counter = round_down(pair.incoming_frame_counter);
-            }
+    fn take_dirty(&self) -> u64 {
+        Self::take_dirty(self)
+    }
+
+    fn mark_dirty(&self, id: AibId) {
+        Self::mark_dirty(self, id);
+    }
+
+    fn import_field(&self, id: AibId, data: &[u8]) -> bool {
+        Self::import_field(self, id, data)
+    }
+
+    fn encode_field(&self, id: AibId, buf: &mut [u8]) -> Option<usize> {
+        self.export_field(id, buf)
+    }
+
+    fn table_len(&self, id: AibId) -> Option<usize> {
+        Self::table_len(self, id)
+    }
+
+    fn truncate_table(&self, id: AibId, len: usize) {
+        Self::truncate_table(self, id, len);
+    }
+
+    fn take_dirty_entries(&self, id: AibId) -> u64 {
+        Self::take_dirty_entries(self, id)
+    }
+
+    fn take_len_dirty(&self, id: AibId) -> bool {
+        Self::take_len_dirty(self, id)
+    }
+
+    fn table_capacity(&self, id: AibId) -> usize {
+        Self::table_capacity(self, id)
+    }
+
+    fn arm_counter_bounds(&self) {
+        Self::mark_dirty(self, AibId::device_key_pair_set);
+    }
+
+    fn import_entry(&self, id: AibId, index: usize, data: &[u8]) -> bool {
+        Self::import_entry(self, id, index, data)
+    }
+
+    fn encode_entry(&self, id: AibId, index: usize, buf: &mut [u8]) -> Option<usize> {
+        // the pair's counters are quantized like the NWK ones
+        if id == AibId::device_key_pair_set {
+            let table = self.device_key_pair_set();
+            let mut pair = Clone::clone(table.get(index)?);
+            drop(table);
+            pair.outgoing_frame_counter = round_up(pair.outgoing_frame_counter);
+            pair.incoming_frame_counter = round_down(pair.incoming_frame_counter);
             let mut offset = 0;
-            let Ok(()) = map.data.write_with(&mut offset, set, byte::LE) else {
-                continue;
-            };
-            if shadow.1 == offset && shadow.0[..offset] == map.data[..offset] {
-                continue;
-            }
-            offset
-        } else {
-            let Some(len) = aib.export_field(*id, &mut map.data) else {
-                continue;
-            };
-            len
-        };
-
-        let key = TAG | u16::from(key);
-        if map.store(key, len).await {
-            if *id == AibId::device_key_pair_set {
-                shadow.0[..len].copy_from_slice(&map.data[..len]);
-                shadow.1 = len;
-            }
-        } else {
-            // retry at the next flush
-            aib.mark_dirty(*id);
-            log::debug!("storing AIB field {key:#06x} failed");
+            buf.write_with(&mut offset, pair, byte::LE).ok()?;
+            return Some(offset);
         }
+        Self::export_entry(self, id, index, buf)
     }
 }

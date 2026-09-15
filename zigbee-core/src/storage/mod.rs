@@ -3,19 +3,47 @@
 //! The NIB/AIB live in a RAM mirror; every setter marks its field dirty and
 //! signals a change. The application only chooses where the state lives:
 //! RAM-only via the plain `init()` functions, or NOR flash via
-//! [`init_with_flash`] plus a spawned task running [`FlashStorage::run`] that
+//! [`FlashStorage::new`] plus a spawned task running [`FlashStorage::run`] that
 //! persists changes as they happen.
 //!
-//! Frame counters are persisted with headroom so a reboot can never reuse an
-//! outgoing counter value: outgoing counters are stored rounded up two
-//! `HEADROOM` boundaries ahead, incoming counters rounded down to a `WINDOW`
-//! boundary. After a reboot up to `WINDOW` already-seen incoming counter
-//! values may be accepted again — the cost of not writing flash on every
-//! received frame.
+//! Frame counters are persisted so that a reboot can never reuse an outgoing
+//! counter value (4.3.4). What is stored is a quantized bound, not the live
+//! value: outgoing counters are rounded up two `HEADROOM` boundaries ahead,
+//! incoming counters rounded down to a `WINDOW` boundary. A counter moving
+//! inside its current step changes nothing that is stored, so the mutation
+//! sites advance it without marking it dirty and only mark on a crossing —
+//! that is what keeps the flash write rate far below the frame rate. After a
+//! reboot up to `WINDOW` already-seen incoming counter values may be accepted
+//! again, the cost of not writing flash on every received frame.
 //!
-//! The per-IB restore/flush logic lives with the respective information base
-//! (`nwk::nib::storage`, `aps::aib::storage`); this module only provides the
-//! flash map plumbing.
+//! Table fields are stored one map item per row plus a length record, and only
+//! the rows a caller actually touched are rewritten. Mutating a table through
+//! `update_<field>` conservatively marks every row; the `<field>_mut` handle
+//! marks just the rows it changes. A shrunk table leaves its surplus rows in
+//! flash — the length record bounds what is read back, which avoids needing
+//! erasable items.
+//!
+//! How a field is encoded is IB-specific and lives with the respective
+//! information base (`nwk::nib::storage`, `aps::aib::storage`) as a
+//! `PersistentIb` impl; this module only provides the flash map plumbing.
+
+// outgoing frame counters are stored this far ahead of the live value, so a
+// power cut can never hand out a counter that was already transmitted
+pub(crate) const HEADROOM: u32 = 1024;
+// incoming frame counters are stored rounded down to this granularity
+const WINDOW: u32 = 1024;
+
+// next counter value a rebooted device may use; two boundaries ahead so the
+// stored bound is refreshed a full HEADROOM before it could be reached
+pub(crate) const fn round_up(counter: u32) -> u32 {
+    (counter / HEADROOM)
+        .saturating_add(2)
+        .saturating_mul(HEADROOM)
+}
+
+pub(crate) const fn round_down(counter: u32) -> u32 {
+    (counter / WINDOW) * WINDOW
+}
 
 /// Sink dirty information-base state is flushed into.
 pub trait StorageDriver {
@@ -54,14 +82,6 @@ impl StorageDriver for NoStorage {
 pub(crate) mod flash;
 
 #[cfg(feature = "storage")]
-pub(crate) use flash::FlashMap;
-#[cfg(feature = "storage")]
 pub use flash::FlashStorage;
 #[cfg(feature = "storage")]
-pub(crate) use flash::Shadow;
-#[cfg(feature = "storage")]
-pub use flash::init_with_flash;
-#[cfg(feature = "storage")]
-pub(crate) use flash::round_down;
-#[cfg(feature = "storage")]
-pub(crate) use flash::round_up;
+pub(crate) use flash::PersistentIb;

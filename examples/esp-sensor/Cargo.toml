@@ -52,7 +52,7 @@ esp32c6-pac = { package = "esp32c6", version = "=0.23.2", optional = true }
 esp32h2-pac = { package = "esp32h2", version = "=0.19.2", optional = true }
 esp-bootloader-esp-idf = { version = "0.5.0" }
 esp-hal = { version = "1.1.0", features = ["log-04", "unstable"] }
-esp-println = { version = "0.17.0", features = ["log-04"] }
+esp-println = { version = "0.17.0", features = ["log-04", "timestamp"] }
 esp-radio = { version = "1.0.0-beta.0", features = [
     "ieee802154",
     "unstable",
