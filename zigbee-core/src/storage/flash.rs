@@ -4,7 +4,7 @@ use core::pin::pin;
 use core::task::Poll;
 
 use embedded_storage_async::nor_flash::NorFlash;
-use sequential_storage::cache::NoCache;
+use sequential_storage::cache::KeyPointerCache;
 use sequential_storage::map::MapConfig;
 use sequential_storage::map::MapStorage;
 use sequential_storage::map::SerializationError;
@@ -40,6 +40,26 @@ const SCRATCH: usize = {
 // every map item must fit into one flash sector (4 KiB on esp32)
 const _: () = assert!(SCRATCH <= 4096);
 
+// Pages of the region the cache tracks. A larger region still works, it just
+// keeps fewer of its page states cached
+const CACHED_PAGES: usize = 16;
+
+// Every key a full device can hold, so garbage collection never falls back to
+// a scan. `migrate_items` asks whether each item on the page it is recycling
+// is still the newest copy of its key; uncached that is a walk of the whole
+// map per item, which is quadratic in the number of items and is what made a
+// single store take tens of seconds once tables were stored per row
+const CACHED_KEYS: usize = nib::NibId::MAX_ITEMS + aib::AibId::MAX_ITEMS;
+
+// the cache starts empty on a cold boot and `fetch_all_items` does not fill
+// it, so the first collection after a reboot still scans. Restoring always
+// stores a counter bound, which can be the write that triggers it, and that
+// boot then stalls for as long as the scan takes. Enlarging the region makes
+// it worse, not better: the scan grows with the number of items it holds.
+// Filling the cache from the restore pass would settle it, but that needs
+// `MapItemIter` to report where each item sits
+type Cache = KeyPointerCache<CACHED_PAGES, u32, CACHED_KEYS>;
+
 // entry index reserved for a table's length record
 const LEN_INDEX: u16 = 0xffff;
 
@@ -51,12 +71,55 @@ const fn item_key(tag: u8, field: u8, index: u16) -> u32 {
     ((tag as u32) << 24) | ((field as u32) << 16) | index as u32
 }
 
+// what one pass over the map found for each field of an information base
+//
+// items come back in the order they were written, so a table's length record
+// and its rows can arrive in any order. Both are recorded while the values are
+// imported and resolved once the pass is done
+struct RestoredTables {
+    // rows[field], bit per row index the map holds
+    rows: [u64; 64],
+    // lens[field], rows the length record claims
+    lens: [u16; 64],
+}
+
+impl RestoredTables {
+    const fn empty() -> Self {
+        Self {
+            rows: [0; 64],
+            lens: [0; 64],
+        }
+    }
+
+    fn set_row(&mut self, field: u8, index: u16, held: bool) {
+        if index >= 64 {
+            return;
+        }
+        if held {
+            self.rows[field as usize] |= 1 << index;
+        } else {
+            self.rows[field as usize] &= !(1 << index);
+        }
+    }
+
+    // rows a table keeps: what the length record claims, cut short at the
+    // first row the map does not hold. A power loss between writing the record
+    // and writing the rows leaves a table claiming more than it has
+    fn restored_len(&self, field: u8) -> usize {
+        let claimed = usize::from(self.lens[field as usize]).min(64);
+        let held = self.rows[field as usize];
+        (0..claimed)
+            .take_while(|index| held & (1 << index) != 0)
+            .count()
+    }
+}
+
 /// An information base whose persisted fields are mirrored into the flash map.
 ///
 /// Implemented next to the respective information base, which owns the
 /// knowledge of how its fields are encoded.
 pub(crate) trait PersistentIb {
-    type Id: Copy + PartialEq + 'static;
+    type Id: core::fmt::Debug + Copy + PartialEq + 'static;
 
     /// Namespaces this IB in the map key.
     const TAG: u8;
@@ -132,32 +195,16 @@ impl<'a, I: PersistentIb> Value<'a> for FieldValue<'_, I> {
 
 // key-value flash map shared by the information bases
 pub(crate) struct FlashMap<F: NorFlash> {
-    map: MapStorage<u32, F, NoCache>,
+    map: MapStorage<u32, F, Cache>,
     scratch: [u8; SCRATCH],
 }
 
 impl<F: NorFlash> FlashMap<F> {
     fn new(flash: F, range: Range<u32>) -> Self {
         Self {
-            map: MapStorage::new(flash, MapConfig::new(range), NoCache::new()),
+            map: MapStorage::new(flash, MapConfig::new(range), Cache::new()),
             scratch: [0; SCRATCH],
         }
-    }
-
-    async fn fetch(&mut self, key: u32) -> Option<&[u8]> {
-        self.map
-            .fetch_item::<&[u8]>(&mut self.scratch, &key)
-            .await
-            .ok()
-            .flatten()
-    }
-
-    async fn fetch_len(&mut self, key: u32) -> Option<u16> {
-        self.map
-            .fetch_item::<u16>(&mut self.scratch, &key)
-            .await
-            .ok()
-            .flatten()
     }
 
     // wear-leveled and crash-safe
@@ -171,39 +218,53 @@ impl<F: NorFlash> FlashMap<F> {
     /// Restores all persisted fields; missing or unparsable items keep their
     /// defaults.
     pub(crate) async fn restore<I: PersistentIb>(&mut self, ib: &I) {
+        let mut tables = RestoredTables::empty();
+
+        // one pass hands back every key the map holds together with its value,
+        // so nothing has to be looked up again. The same key can appear more
+        // than once and the last one is the live value, which importing as
+        // they come leaves applied
+        if let Ok(mut items) = self.map.fetch_all_items(&mut self.scratch).await {
+            log::trace!("[FLASH] fetch_all_items");
+            let mut num_key = 0;
+            while let Ok(Some((key, data))) = items.next::<&[u8]>(&mut self.scratch).await {
+                num_key += 1;
+                let [tag, field, index_high, index_low] = key.to_be_bytes();
+                if tag != I::TAG {
+                    continue;
+                }
+                let Some(id) = I::field(field) else {
+                    continue;
+                };
+                let index = u16::from_be_bytes([index_high, index_low]);
+
+                if index == LEN_INDEX {
+                    if let Ok(len) = data.try_into().map(u16::from_le_bytes) {
+                        tables.lens[field as usize] = len;
+                    }
+                } else if ib.table_len(id).is_some() {
+                    // an emptied row is how a shrunk table drops one, so it has
+                    // to clear a row an earlier item established
+                    let held = !data.is_empty() && ib.import_entry(id, usize::from(index), data);
+                    tables.set_row(field, index, held);
+                } else if !ib.import_field(id, data) {
+                    log::warn!(
+                        "[FLASH] stored {} field {field:#04x} did not parse; using default",
+                        I::NAME
+                    );
+                }
+            }
+            log::trace!("[FLASH] {} keys={num_key}", I::NAME);
+        }
+
+        // rows placed past the restored length were only there to keep the
+        // table dense while the pass filled it in
         for field in 0..=I::MAX_KEY {
             let Some(id) = I::field(field) else {
                 continue;
             };
-
             if ib.table_len(id).is_some() {
-                let Some(len) = self.fetch_len(item_key(I::TAG, field, LEN_INDEX)).await else {
-                    continue;
-                };
-                // a row that is missing or unparsable ends the table there:
-                // later rows cannot be placed without leaving a hole
-                let mut restored = 0;
-                for index in 0..len {
-                    let Some(data) = self.fetch(item_key(I::TAG, field, index)).await else {
-                        break;
-                    };
-                    if !ib.import_entry(id, index as usize, data) {
-                        log::warn!(
-                            "stored {} field {field:#04x} entry {index} did not parse",
-                            I::NAME
-                        );
-                        break;
-                    }
-                    restored += 1;
-                }
-                ib.truncate_table(id, restored);
-            } else if let Some(data) = self.fetch(item_key(I::TAG, field, 0)).await
-                && !ib.import_field(id, data)
-            {
-                log::warn!(
-                    "stored {} field {field:#04x} did not parse; using default",
-                    I::NAME
-                );
+                ib.truncate_table(id, tables.restored_len(field));
             }
         }
 
@@ -258,6 +319,7 @@ impl<F: NorFlash> FlashMap<F> {
                     .await
                 }
                 None if field_dirty => {
+                    log::trace!("[FLASH] store key={field} id={id:?}");
                     let key = item_key(I::TAG, field, 0);
                     self.store(
                         key,
@@ -275,7 +337,7 @@ impl<F: NorFlash> FlashMap<F> {
             if !stored {
                 // retry at the next flush
                 ib.mark_dirty(id);
-                log::debug!("storing {} field {field:#04x} failed", I::NAME);
+                log::trace!("[FLASH] storing {} field {field:#04x} failed", I::NAME);
             }
         }
     }
@@ -312,6 +374,7 @@ impl<F: NorFlash> FlashMap<F> {
             let key = item_key(I::TAG, field, row);
 
             let stored = if index < len {
+                log::trace!("[FLASH] store key={field} id={id:?} index={index}");
                 self.store(
                     key,
                     &FieldValue {
@@ -362,8 +425,11 @@ impl<F: NorFlash> FlashStorage<F> {
         aib::init();
 
         let mut map = FlashMap::new(flash, range);
+        log::trace!("restore nib,aib");
         map.restore(nib::get_ref()).await;
+        log::trace!("restore nib done");
         map.restore(aib::get_ref()).await;
+        log::trace!("restore aib done");
 
         Self {
             map: spin::Mutex::new(map),
@@ -455,6 +521,14 @@ mod tests {
         let nib = Nib::new();
         let aib = Aib::new();
         (nib, aib)
+    }
+
+    // restoring no longer fetches single keys, but asserting what a row looks
+    // like in flash still needs a raw read
+    fn stored_row(map: &mut FlashMap<Flash>, key: u32) -> Option<&[u8]> {
+        block_on(map.map.fetch_item::<&[u8]>(&mut map.scratch, &key))
+            .ok()
+            .flatten()
     }
 
     fn new_map() -> FlashMap<Flash> {
@@ -668,12 +742,12 @@ mod tests {
             NibId::security_material_set as u8,
             0,
         );
-        assert!(block_on(map.fetch(key)).is_some_and(|row| !row.is_empty()));
+        assert!(stored_row(&mut map, key).is_some_and(|row| !row.is_empty()));
 
         // a leave or factory reset must not leave the network key readable
         nib.update_security_material_set(|set| set.clear());
         block_on(map.flush(&nib));
-        assert_eq!(block_on(map.fetch(key)), Some(&[][..]));
+        assert_eq!(stored_row(&mut map, key), Some(&[][..]));
     }
 
     #[test]
@@ -746,6 +820,63 @@ mod tests {
 
         // one sender advancing must not rewrite the other seven rows
         assert!(writes(false) < writes(true));
+    }
+
+    #[test]
+    fn rows_are_restored_when_they_arrive_out_of_order() {
+        let (nib, _) = fresh_ibs();
+        let mut map = new_map();
+
+        nib.update_group_idtable(|table| {
+            for group in [10u16, 11, 12] {
+                let _ = table.push(group);
+            }
+        });
+
+        // only dirty rows are rewritten, so the newest copy of a row can sit
+        // ahead of the rows below it. Writing them in reverse makes the pass
+        // meet row 2 while the table is still empty
+        let field = NibId::group_idtable as u8;
+        let tag = <Nib as PersistentIb>::TAG;
+        let mut row = [0u8; 16];
+        for index in [2usize, 1, 0] {
+            let len = nib
+                .export_entry(NibId::group_idtable, index, &mut row)
+                .unwrap();
+            assert!(block_on(
+                map.store(item_key(tag, field, index as u16), &&row[..len])
+            ));
+        }
+        assert!(block_on(map.store(item_key(tag, field, LEN_INDEX), &3u16)));
+
+        let (nib2, _) = fresh_ibs();
+        block_on(map.restore(&nib2));
+        assert_eq!(nib2.group_idtable().as_slice(), &[10, 11, 12]);
+    }
+
+    #[test]
+    fn a_table_with_a_missing_row_is_restored_up_to_the_hole() {
+        let (nib, _) = fresh_ibs();
+        let mut map = new_map();
+
+        nib.update_group_idtable(|table| {
+            for group in 0..4 {
+                let _ = table.push(group);
+            }
+        });
+        block_on(map.flush(&nib));
+
+        // a power loss between the length record and the rows leaves a table
+        // longer than what was written
+        let field = NibId::group_idtable as u8;
+        assert!(block_on(map.store(
+            item_key(<Nib as PersistentIb>::TAG, field, LEN_INDEX),
+            &6u16
+        )));
+
+        let (nib2, _) = fresh_ibs();
+        block_on(map.restore(&nib2));
+        assert_eq!(nib2.group_idtable().as_slice(), &[0, 1, 2, 3]);
     }
 
     #[test]

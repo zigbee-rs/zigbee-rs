@@ -71,8 +71,17 @@ macro_rules! construct_ib {
                 table.update($i, |slot| *slot = entry);
                 return true;
             }
-            // appending is the only other placement that keeps the rows dense
-            return $i == table.len() && table.push(entry).is_ok();
+            // rows arrive in the order they were written, so a later row can
+            // land first. Filling the gap keeps them dense; a gap slot is
+            // always overwritten by its own row later in the same pass, and
+            // one whose row is missing entirely falls beyond the restored
+            // length
+            while table.len() < $i {
+                if table.push(entry.clone()).is_err() {
+                    return false;
+                }
+            }
+            return table.push(entry).is_ok();
         }
     };
     (@table_len $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
@@ -109,6 +118,11 @@ macro_rules! construct_ib {
             <$ty as ::zigbee_types::sync::Table>::CAPACITY
                 <= ::zigbee_types::sync::TRACKED_ENTRIES
         );
+    };
+    (@items $ty:path; [] [$($t:ident)?]) => { 0 };
+    (@items $ty:path; [$skey:literal] []) => { 1 };
+    (@items $ty:path; [$skey:literal] [$t:ident]) => {
+        <$ty as ::zigbee_types::sync::Table>::CAPACITY + 1
     };
     (@len_dirty $s:ident, $id:ident, $field:ident; [] [$($t:ident)?]) => {};
     (@len_dirty $s:ident, $id:ident, $field:ident; [$skey:literal] []) => {};
@@ -232,6 +246,14 @@ macro_rules! construct_ib {
                 $($(if $skey > max { max = $skey; })?)+
                 max
             };
+
+            /// Map items this information base occupies when every table is
+            /// full: one per plain field, plus one per table row and a
+            /// length record per table.
+            pub const MAX_ITEMS: usize = 0
+                $(+ $crate::construct_ib!(
+                    @items $field_ty; [$($skey)?] [$($table)?]
+                ))+;
 
             /// Upper bound of the encoded size over all persisted fields.
             ///
@@ -435,8 +457,8 @@ macro_rules! construct_ib {
                 None
             }
 
-            /// Decodes `data` into the table entry at `index`, appending when
-            /// it is one past the end.
+            /// Decodes `data` into the table entry at `index`, growing the
+            /// table to reach it.
             pub fn import_entry(&self, id: $ib_id, index: usize, data: &[u8]) -> bool {
                 use byte::BytesExt;
                 use byte::TryRead;
