@@ -73,6 +73,7 @@ use crate::nwk::frame::header::Header as NwkHeader;
 use crate::nwk::nib;
 use crate::nwk::nib::CapabilityInformation;
 use crate::nwk::nib::DeviceType;
+use crate::nwk::nib::MAX_NEIGBOUR_TABLE;
 use crate::nwk::nib::MAX_PARENT_LINK_COST;
 use crate::nwk::nib::NWK_BROADCAST_ADDRESS_MIN;
 use crate::nwk::nib::NWK_BROADCAST_ALL;
@@ -161,6 +162,10 @@ pub struct Nlme<M> {
     // NLME-NWK-STATUS.indication (3.2.2.32) reporting a network failure to the
     // higher layer
     nwk_status_indication: Signal<NlmeNwkStatusIndication>,
+    // consecutive transmit failures per neighbor with an outgoing link
+    // (3.6.3.7). Volatile link health: a reboot has no failed transmissions
+    // behind it, so this never reaches the flash-backed neighbor table
+    transmit_failures: spin::RwLock<StorageVec<(ShortAddress, u8), MAX_NEIGBOUR_TABLE>>,
 }
 
 /// Keepalive method negotiated with the router parent (3.6.10.3).
@@ -199,6 +204,7 @@ where
             timeout_response: Signal::new(),
             leave_indication: Signal::new(),
             nwk_status_indication: Signal::new(),
+            transmit_failures: spin::RwLock::new(StorageVec::new()),
         }
     }
 
@@ -607,39 +613,54 @@ where
     /// with an NLME-NWK-STATUS.indication of `ParentLinkFailure` (3.6.3.7.1)
     /// and [`NetworkError::ParentLinkFailure`] is returned.
     async fn transmit_via_parent(&self, buf: &[u8]) -> Result<(), NetworkError> {
-        let parent = self.parent_address()?;
-        let Err(e) = self.mac.transmit_data(parent, buf).await else {
+        let parent = self.parent_short_address()?;
+        let Err(e) = self.mac.transmit_data(self.parent_address()?, buf).await else {
             // an acknowledged frame proves the parent still holds this device
             // in its neighbor table (3.6.10.6)
-            self.update_parent_neighbor(|neighbor| neighbor.transmit_failure = 0);
+            self.clear_transmit_failures(parent);
             self.refresh_parent_timeout();
             return Ok(());
         };
 
-        let mut failures = 0;
-        self.update_parent_neighbor(|neighbor| {
-            neighbor.transmit_failure = neighbor.transmit_failure.saturating_add(1);
-            failures = neighbor.transmit_failure;
-        });
+        let failures = self.record_transmit_failure(parent);
         log::debug!("[NWK] transmission via parent failed ({e:?}), failures={failures}");
         if failures < MAX_PARENT_TRANSMIT_FAILURES {
             return Err(e.into());
         }
 
-        self.update_parent_neighbor(|neighbor| neighbor.transmit_failure = 0);
+        self.clear_transmit_failures(parent);
         Err(self.parent_link_failure())
     }
 
-    // apply `update` to the parent's neighbor table entry, if there is one
-    fn update_parent_neighbor(&self, update: impl FnOnce(&mut NwkNeighbor)) {
-        self.nib().update_neighbor_table(|table| {
-            if let Some(parent) = table
-                .iter_mut()
-                .find(|n| n.relationship == relationship::PARENT)
-            {
-                update(parent);
-            }
-        });
+    // count one more failed transmission to `neighbor` and report the total
+    fn record_transmit_failure(&self, neighbor: ShortAddress) -> u8 {
+        let mut failures = self.transmit_failures.write();
+        if let Some((_, count)) = failures.iter_mut().find(|(addr, _)| *addr == neighbor) {
+            *count = count.saturating_add(1);
+            return *count;
+        }
+        // a full map only costs the link its history, so drop the oldest
+        if failures.push((neighbor, 1)).is_err() {
+            failures.remove(0);
+            let _ = failures.push((neighbor, 1));
+        }
+        1
+    }
+
+    fn clear_transmit_failures(&self, neighbor: ShortAddress) {
+        let mut failures = self.transmit_failures.write();
+        if let Some(index) = failures.iter().position(|(addr, _)| *addr == neighbor) {
+            failures.remove(index);
+        }
+    }
+
+    #[cfg(test)]
+    fn transmit_failures(&self, neighbor: ShortAddress) -> u8 {
+        self.transmit_failures
+            .read()
+            .iter()
+            .find(|(addr, _)| *addr == neighbor)
+            .map_or(0, |(_, count)| *count)
     }
 
     // raise NLME-NWK-STATUS.indication 0x09 (3.6.3.7.1, 3.6.10.3, 3.2.2.32)
@@ -836,14 +857,19 @@ where
         let Some(source_ieee) = header.source_ieee else {
             return;
         };
-        self.nib().update_neighbor_table(|table| {
-            if let Some(neighbor) = table
-                .iter_mut()
-                .find(|n| n.network_address == header.source)
-            {
-                neighbor.extended_address = source_ieee;
-            }
-        });
+        let mut table = self.nib().neighbor_table_mut();
+        let Some(index) = table.position(|n| n.network_address == header.source) else {
+            return;
+        };
+        // every frame from this neighbor reports the same address, so only the
+        // first one is a change worth persisting
+        if table
+            .get(index)
+            .is_some_and(|n| n.extended_address == source_ieee)
+        {
+            return;
+        }
+        table.update(index, |neighbor| neighbor.extended_address = source_ieee);
     }
 
     /// Find the parent's network address from the neighbor table.
@@ -1267,7 +1293,6 @@ where
                     rx_on_when_idle: false,
                     end_device_configuration: 0,
                     relationship: relationship::NONE,
-                    transmit_failure: 0,
                     lqi: pd.link_quality,
                     outgoing_cost: 0,
                     age: 0,
@@ -1667,15 +1692,22 @@ where
             )
         };
 
-        nib.update_neighbor_table(|table| {
-            for (index, neighbor) in table.iter_mut().enumerate() {
-                neighbor.relationship = if index == candidate_idx {
+        {
+            // only the old and the new parent change relationship, so touching
+            // rows that already hold the right value would rewrite the table
+            let mut table = nib.neighbor_table_mut();
+            for index in 0..table.len() {
+                let wanted = if index == candidate_idx {
                     relationship::PARENT
                 } else {
                     relationship::NONE
                 };
+                if table.get(index).is_some_and(|n| n.relationship == wanted) {
+                    continue;
+                }
+                table.update(index, |neighbor| neighbor.relationship = wanted);
             }
-        });
+        }
         nib.update_panid(|value| *value = pan_id);
         nib.update_update_id(|value| *value = update_id);
         self.mac.configure(MacConfig::channel(channel)).await;
@@ -1882,7 +1914,6 @@ mod tests {
             rx_on_when_idle: false,
             end_device_configuration: 0,
             relationship: 0x03,
-            transmit_failure: 0,
             lqi,
             outgoing_cost: 0,
             age: 0,
@@ -3032,14 +3063,10 @@ mod tests {
         seed_joined_nib(&nlme);
 
         let _ = block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3]));
-        assert!(block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3])).is_ok());
+        assert_eq!(nlme.transmit_failures(ShortAddress(0x0000)), 1);
 
-        let table = nlme.nib().neighbor_table();
-        let parent = table
-            .iter()
-            .find(|n| n.relationship == relationship::PARENT)
-            .expect("parent");
-        assert_eq!(parent.transmit_failure, 0);
+        assert!(block_on(nlme.send_data(ShortAddress(0x0000), true, &[1, 2, 3])).is_ok());
+        assert_eq!(nlme.transmit_failures(ShortAddress(0x0000)), 0);
     }
 
     #[test]

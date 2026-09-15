@@ -81,7 +81,7 @@ const NWKC_MAC_FRAME_OVERHEAD: u8 = 0x0b;
 // implementation specific
 
 // 1 for end device
-const MAX_NEIGBOUR_TABLE: usize = 16;
+pub(crate) const MAX_NEIGBOUR_TABLE: usize = 16;
 // 0 for end devices
 const MAX_ROUTE_TABLE: usize = 8;
 const MAX_BROADCAST_TRANSACTION_TABLE: usize = 4;
@@ -384,7 +384,6 @@ impl_byte! {
         pub rx_on_when_idle: bool,
         pub end_device_configuration: u16,
         pub relationship: u8,
-        pub transmit_failure: u8,
         pub lqi: u8,
         pub outgoing_cost: u8,
         pub age: u8,
