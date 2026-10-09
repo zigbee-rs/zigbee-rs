@@ -202,6 +202,16 @@ where
         self.device.wait_until_joined().await;
     }
 
+    /// Persist everything before a reset the application knows is coming.
+    ///
+    /// Call this before a reboot, a deep sleep or a firmware update. The next
+    /// boot then resumes anti-replay at the exact frame counters it had
+    /// accepted; without it, counters come back quantized and a small window
+    /// of already-seen counters is accepted again.
+    pub async fn shutdown(&self) {
+        self.storage.shutdown().await;
+    }
+
     /// Forget the joined network and persist that, so the next boot
     /// re-commissions instead of resuming.
     pub async fn forget_network(&self) {

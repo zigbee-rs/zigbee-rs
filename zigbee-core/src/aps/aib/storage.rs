@@ -12,6 +12,8 @@ use super::DeviceKeyPairDescriptor;
 use super::KeyAttribute;
 use super::LinkKeyType;
 #[cfg(feature = "storage")]
+use crate::storage::CounterPrecision;
+#[cfg(feature = "storage")]
 use crate::storage::PersistentIb;
 use crate::storage::round_down;
 use crate::storage::round_up;
@@ -134,18 +136,32 @@ impl PersistentIb for Aib {
         Self::import_entry(self, id, index, data)
     }
 
-    fn encode_entry(&self, id: AibId, index: usize, buf: &mut [u8]) -> Option<usize> {
-        // the pair's counters are quantized like the NWK ones
+    fn encode_entry(
+        &self,
+        id: AibId,
+        index: usize,
+        buf: &mut [u8],
+        precision: CounterPrecision,
+    ) -> Option<usize> {
+        // the pair's counters are quantized like the NWK ones. The outgoing
+        // bound stays ahead even on a shutdown flush, since nothing stops the
+        // device transmitting afterwards
         if id == AibId::device_key_pair_set {
             let table = self.device_key_pair_set();
             let mut pair = Clone::clone(table.get(index)?);
             drop(table);
             pair.outgoing_frame_counter = round_up(pair.outgoing_frame_counter);
-            pair.incoming_frame_counter = round_down(pair.incoming_frame_counter);
+            if precision == CounterPrecision::Quantized {
+                pair.incoming_frame_counter = round_down(pair.incoming_frame_counter);
+            }
             let mut offset = 0;
             buf.write_with(&mut offset, pair, byte::LE).ok()?;
             return Some(offset);
         }
         Self::export_entry(self, id, index, buf)
+    }
+
+    fn mark_counter_rows(&self) {
+        self.device_key_pair_set_mut().mark_all();
     }
 }

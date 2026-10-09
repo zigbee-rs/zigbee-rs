@@ -9,6 +9,8 @@ use super::IncomingFrameCounterDescriptor;
 use super::Nib;
 use super::NibId;
 #[cfg(feature = "storage")]
+use crate::storage::CounterPrecision;
+#[cfg(feature = "storage")]
 use crate::storage::PersistentIb;
 use crate::storage::round_down;
 use crate::storage::round_up;
@@ -153,18 +155,31 @@ impl PersistentIb for Nib {
         Self::import_entry(self, id, index, data)
     }
 
-    fn encode_entry(&self, id: NibId, index: usize, buf: &mut [u8]) -> Option<usize> {
+    fn encode_entry(
+        &self,
+        id: NibId,
+        index: usize,
+        buf: &mut [u8],
+        precision: CounterPrecision,
+    ) -> Option<usize> {
         // round incoming counters down to a window boundary so the stored row
-        // only changes once per WINDOW frames from that sender
+        // only changes once per RX_WINDOW frames from that sender; a shutdown
+        // flush stores them exactly and gives up no window at all
         if id == NibId::incoming_frame_counters {
             let counters = self.incoming_frame_counters();
             let mut entry = Clone::clone(counters.get(index)?);
             drop(counters);
-            entry.incoming_frame_counter = round_down(entry.incoming_frame_counter);
+            if precision == CounterPrecision::Quantized {
+                entry.incoming_frame_counter = round_down(entry.incoming_frame_counter);
+            }
             let mut offset = 0;
             buf.write_with(&mut offset, entry, byte::LE).ok()?;
             return Some(offset);
         }
         Self::export_entry(self, id, index, buf)
+    }
+
+    fn mark_counter_rows(&self) {
+        self.incoming_frame_counters_mut().mark_all();
     }
 }

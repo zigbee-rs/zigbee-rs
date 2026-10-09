@@ -593,6 +593,14 @@ impl<'a, V: Table> TableMut<'a, V> {
         self.mark_range(0, previous_len);
     }
 
+    /// Marks every row it holds, so the next flush rewrites the whole table.
+    ///
+    /// For persisting values the quiet updates left behind, such as frame
+    /// counters before a planned reset.
+    pub fn mark_all(&self) {
+        self.mark_range(0, self.entries.len());
+    }
+
     fn mark_len(&self) {
         self.len_dirty.store(true, Ordering::Release);
     }

@@ -12,6 +12,7 @@ use sequential_storage::map::Value;
 use zigbee_types::sync::TRACKED_ENTRIES;
 use zigbee_types::sync::yield_now;
 
+use super::CounterPrecision;
 use super::HEADROOM;
 use super::StorageDriver;
 use super::round_up;
@@ -167,7 +168,17 @@ pub(crate) trait PersistentIb {
     fn import_entry(&self, id: Self::Id, index: usize, data: &[u8]) -> bool;
 
     /// Encodes one table row with frame counters given their headroom.
-    fn encode_entry(&self, id: Self::Id, index: usize, buf: &mut [u8]) -> Option<usize>;
+    fn encode_entry(
+        &self,
+        id: Self::Id,
+        index: usize,
+        buf: &mut [u8],
+        precision: CounterPrecision,
+    ) -> Option<usize>;
+
+    /// Marks the rows holding frame counters, so a flush rewrites the values
+    /// the quiet updates left unmarked.
+    fn mark_counter_rows(&self);
 }
 
 // serializes straight into the sequential-storage item buffer, so nothing is
@@ -177,12 +188,13 @@ struct FieldValue<'a, I: PersistentIb> {
     id: I::Id,
     // None encodes the whole field, Some(index) one table row
     index: Option<usize>,
+    precision: CounterPrecision,
 }
 
 impl<'a, I: PersistentIb> Value<'a> for FieldValue<'_, I> {
     fn serialize_into(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
         match self.index {
-            Some(index) => self.ib.encode_entry(self.id, index, buffer),
+            Some(index) => self.ib.encode_entry(self.id, index, buffer, self.precision),
             None => self.ib.encode_field(self.id, buffer),
         }
         .ok_or(SerializationError::BufferTooSmall)
@@ -279,12 +291,12 @@ impl<F: NorFlash> FlashMap<F> {
         // push the outgoing bounds ahead of the values just restored, before
         // any frame can be sent with them
         ib.arm_counter_bounds();
-        self.flush(ib).await;
+        self.flush(ib, CounterPrecision::Quantized).await;
     }
 
     /// Persists everything modified since the last call; table fields write only
     /// the rows that changed.
-    pub(crate) async fn flush<I: PersistentIb>(&mut self, ib: &I) {
+    pub(crate) async fn flush<I: PersistentIb>(&mut self, ib: &I, precision: CounterPrecision) {
         let dirty = ib.take_dirty();
 
         for field in 0..=I::MAX_KEY {
@@ -315,6 +327,7 @@ impl<F: NorFlash> FlashMap<F> {
                         capacity,
                         rows,
                         len_changed || field_dirty,
+                        precision,
                     )
                     .await
                 }
@@ -327,6 +340,7 @@ impl<F: NorFlash> FlashMap<F> {
                             ib,
                             id,
                             index: None,
+                            precision,
                         },
                     )
                     .await
@@ -351,6 +365,7 @@ impl<F: NorFlash> FlashMap<F> {
         capacity: usize,
         rows: u64,
         store_len: bool,
+        precision: CounterPrecision,
     ) -> bool {
         if store_len {
             let Ok(len_record) = u16::try_from(len) else {
@@ -381,6 +396,7 @@ impl<F: NorFlash> FlashMap<F> {
                         ib,
                         id,
                         index: Some(index),
+                        precision,
                     },
                 )
                 .await
@@ -437,6 +453,26 @@ impl<F: NorFlash> FlashStorage<F> {
     }
 }
 
+impl<F: NorFlash> FlashStorage<F> {
+    async fn flush_with(&self, precision: CounterPrecision) {
+        let mut map = loop {
+            if let Some(map) = self.map.try_lock() {
+                break map;
+            }
+            // another task is mid-flush; let it finish
+            yield_now().await;
+        };
+        if precision == CounterPrecision::Exact {
+            // marked under the lock, so a concurrent flush cannot consume the
+            // marks and store the quantized values instead
+            nib::get_ref().mark_counter_rows();
+            aib::get_ref().mark_counter_rows();
+        }
+        map.flush(nib::get_ref(), precision).await;
+        map.flush(aib::get_ref(), precision).await;
+    }
+}
+
 impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     /// Persists information-base changes as they happen; run this in its own
     /// task, or let the application runtime drive it.
@@ -452,15 +488,13 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     }
 
     async fn flush(&self) {
-        let mut map = loop {
-            if let Some(map) = self.map.try_lock() {
-                break map;
-            }
-            // another task is mid-flush; let it finish
-            yield_now().await;
-        };
-        map.flush(nib::get_ref()).await;
-        map.flush(aib::get_ref()).await;
+        self.flush_with(CounterPrecision::Quantized).await;
+    }
+
+    /// Writes the incoming frame counters exactly, so the next boot resumes
+    /// anti-replay at the last counter it accepted.
+    async fn shutdown(&self) {
+        self.flush_with(CounterPrecision::Exact).await;
     }
 }
 
@@ -497,6 +531,8 @@ mod tests {
     use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
     use crate::nwk::nib::Nib;
     use crate::nwk::nib::NibId;
+    use crate::nwk::nib::storage as nib_storage;
+    use crate::storage::round_down;
 
     // 4 pages of 4 KiB, 1-byte words: mirrors the esp32-c6 layout
     type Flash = MockFlashBase<4, 1, 4096>;
@@ -572,7 +608,7 @@ mod tests {
                         );
                     }
                     highest = Some(issued);
-                    block_on(map.flush(&nib));
+                    block_on(map.flush(&nib, CounterPrecision::Quantized));
                 }
                 // power cut: anything not yet flushed is lost
             }
@@ -671,8 +707,8 @@ mod tests {
         nib.update_panid(|value| *value = 0xabcd);
         nib.update_extended_panid(|value| *value = 0x1122_3344_5566_7788);
         aib.update_trust_center_address(|value| *value = IeeeAddress(0xdead_beef));
-        block_on(map.flush(&nib));
-        block_on(map.flush(&aib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
+        block_on(map.flush(&aib, CounterPrecision::Quantized));
 
         let (nib2, aib2) = fresh_ibs();
         block_on(map.restore(&nib2));
@@ -689,7 +725,7 @@ mod tests {
         let mut map = new_map();
 
         nib.update_outgoing_frame_counter(|value| *value = 5);
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
         block_on(map.restore(&nib2));
@@ -711,7 +747,7 @@ mod tests {
 
             for _ in 0..ticks {
                 let _ = nib_storage::take_outgoing_frame_counter(&nib).unwrap();
-                block_on(map.flush(&nib));
+                block_on(map.flush(&nib, CounterPrecision::Quantized));
             }
 
             let FlashMap { map, .. } = map;
@@ -736,7 +772,7 @@ mod tests {
         let mut map = new_map();
 
         nib.update_security_material_set(|value| *value = security_material());
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
         let key = item_key(
             <Nib as PersistentIb>::TAG,
             NibId::security_material_set as u8,
@@ -746,7 +782,7 @@ mod tests {
 
         // a leave or factory reset must not leave the network key readable
         nib.update_security_material_set(|set| set.clear());
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
         assert_eq!(stored_row(&mut map, key), Some(&[][..]));
     }
 
@@ -765,14 +801,14 @@ mod tests {
                     let _ = table.push(group);
                 }
             });
-            block_on(map.flush(&nib));
+            block_on(map.flush(&nib, CounterPrecision::Quantized));
 
             if whole_table {
                 nib.update_group_idtable(|table| table[3] = 42);
             } else {
                 nib.group_idtable_mut().update(3, |entry| *entry = 42);
             }
-            block_on(map.flush(&nib));
+            block_on(map.flush(&nib, CounterPrecision::Quantized));
 
             let FlashMap { map, .. } = map;
             let (flash, _) = map.destroy();
@@ -801,7 +837,7 @@ mod tests {
                     });
                 }
             });
-            block_on(map.flush(&nib));
+            block_on(map.flush(&nib, CounterPrecision::Quantized));
 
             if whole_table {
                 nib.update_incoming_frame_counters(|counters| {
@@ -811,7 +847,7 @@ mod tests {
                 nib.incoming_frame_counters_mut()
                     .update(3, |entry| entry.incoming_frame_counter = 9);
             }
-            block_on(map.flush(&nib));
+            block_on(map.flush(&nib, CounterPrecision::Quantized));
 
             let FlashMap { map, .. } = map;
             let (flash, _) = map.destroy();
@@ -820,6 +856,37 @@ mod tests {
 
         // one sender advancing must not rewrite the other seven rows
         assert!(writes(false) < writes(true));
+    }
+
+    #[test]
+    fn shutdown_flush_leaves_no_replay_window() {
+        // an unclean reset gives up the window the stored value is rounded
+        // down to; a shutdown flush must give up nothing
+        let restored = |precision| {
+            let (nib, _) = fresh_ibs();
+            let mut map = new_map();
+            let sender = IeeeAddress(0x1122_3344);
+
+            for counter in 1..=100 {
+                assert!(nib_storage::record_incoming_frame_counter(
+                    &nib, 0, sender, counter
+                ));
+            }
+            if precision == CounterPrecision::Exact {
+                nib.mark_counter_rows();
+            }
+            block_on(map.flush(&nib, precision));
+
+            let (nib2, _) = fresh_ibs();
+            block_on(map.restore(&nib2));
+            nib2.incoming_frame_counters()
+                .first()
+                .unwrap()
+                .incoming_frame_counter
+        };
+
+        assert_eq!(restored(CounterPrecision::Exact), 100);
+        assert_eq!(restored(CounterPrecision::Quantized), round_down(100));
     }
 
     #[test]
@@ -864,7 +931,7 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         // a power loss between the length record and the rows leaves a table
         // longer than what was written
@@ -889,10 +956,10 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         nib.group_idtable_mut().remove(1);
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
         block_on(map.restore(&nib2));
@@ -909,10 +976,10 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         nib.group_idtable_mut().clear();
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
         block_on(map.restore(&nib2));
@@ -929,15 +996,15 @@ mod tests {
                 let _ = table.push(group);
             }
         });
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         nib.group_idtable_mut().clear();
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
         let mut table = nib.group_idtable_mut();
         let _ = table.push(77);
         let _ = table.push(88);
         drop(table);
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
         block_on(map.restore(&nib2));
@@ -952,7 +1019,7 @@ mod tests {
         let mut map = FlashMap::new(flash, Flash::FULL_FLASH_RANGE);
 
         nib.update_network_address(|value| *value = 0x1234);
-        block_on(map.flush(&nib));
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
         assert_eq!(nib.take_dirty(), NibId::network_address.bit());
     }
 }
