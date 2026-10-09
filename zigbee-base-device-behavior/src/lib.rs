@@ -165,7 +165,7 @@ impl BaseDeviceBehavior {
         let nib = self.nib();
 
         // BDB 7.1 step 2
-        let on_a_network = *nib.network_address() != 0xffff;
+        let on_a_network = nib.network_address() != 0xffff;
         self.bdb_node_is_on_a_network
             .store(on_a_network, Ordering::Relaxed);
         if !on_a_network {
