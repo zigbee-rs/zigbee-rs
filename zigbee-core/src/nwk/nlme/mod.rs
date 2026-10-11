@@ -719,7 +719,7 @@ where
                 })
         };
 
-        let mut candidates: heapless::Vec<usize, 16> = table
+        let _candidates: heapless::Vec<usize, 16> = table
             .iter()
             .enumerate()
             .filter(|(_, n)| {
