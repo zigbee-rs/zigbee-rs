@@ -691,43 +691,51 @@ where
         log::debug!("[NWK-JOIN] neighbor table: {table:#?}");
         let stack_profile = self.nib().stack_profile();
         let permits = |n: &NwkNeighbor| !require_permit_joining || n.permit_joining;
+        // BDB 8.2: a steering device may name the wildcard extended PAN id
+        // (zero), which matches every discovered network; the join then stores
+        // the epid of the network it actually joined (3.6.1.4.1.1)
+        let matches_epid =
+            |n: &NwkNeighbor| extended_pan_id.0 == 0 || n.extended_pan_id == extended_pan_id;
 
         // 3.6.1.4.1.1: the update id wraps back to zero, so it is treated as
         // a modular counter - an id `b` is newer than `a` when the signed
-        // difference `(b - a) as i8` is positive
-        let best_update_id = table
-            .iter()
-            .filter(|n| {
-                n.extended_pan_id == extended_pan_id && permits(n) && n.potential_parent == 1
-            })
-            .map(|n| n.update_id)
-            // positive signed difference means id is newer
-            .reduce(|best, id| {
-                if id.wrapping_sub(best).cast_signed() > 0 {
-                    id
-                } else {
-                    best
-                }
-            });
-
-        let mut candidates: heapless::Vec<usize, 16> = best_update_id
-            .into_iter()
-            .flat_map(|best_update_id| {
-                table.iter().enumerate().filter(move |(_, n)| {
-                    // correct network, accepting joins of the right type, low
-                    // enough link cost, a potential parent, and on the most
-                    // recent update id
-                    n.extended_pan_id == extended_pan_id
-                        && permits(n)
-                        && if join_as_router {
-                            n.router_capacity
-                        } else {
-                            n.end_device_capacity
-                        }
-                        && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
-                        && n.potential_parent == 1
-                        && n.update_id == best_update_id
+        // difference `(b - a) as i8` is positive.
+        //
+        // nwkUpdateId identifies a snapshot of *one* network's settings
+        // (3.5.2), so the newest id is only meaningful among the neighbors of
+        // that same network - under the wildcard the table spans several
+        let newest_update_id = |epid: IeeeAddress| {
+            table
+                .iter()
+                .filter(|n| n.extended_pan_id == epid && permits(n) && n.potential_parent == 1)
+                .map(|n| n.update_id)
+                // positive signed difference means id is newer
+                .reduce(|best, id| {
+                    if id.wrapping_sub(best).cast_signed() > 0 {
+                        id
+                    } else {
+                        best
+                    }
                 })
+        };
+
+        let mut candidates: heapless::Vec<usize, 16> = table
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| {
+                // correct network, accepting joins of the right type, low
+                // enough link cost, a potential parent, and on the most
+                // recent update id of its own network
+                matches_epid(n)
+                    && permits(n)
+                    && if join_as_router {
+                        n.router_capacity
+                    } else {
+                        n.end_device_capacity
+                    }
+                    && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
+                    && n.potential_parent == 1
+                    && Some(n.update_id) == newest_update_id(n.extended_pan_id)
             })
             .map(|(i, _)| i)
             .collect();
@@ -1446,7 +1454,9 @@ where
                             return NlmeJoinConfirm {
                                 status: NlmeJoinStatus::Success,
                                 network_address: assigned_addr,
-                                extended_pan_id: request.extended_pan_id,
+                                // the request may name the wildcard: the
+                                // confirm names the network actually joined
+                                extended_pan_id: joined_epid,
                                 channel: parent_channel,
                                 enhanced_beacon_type: false,
                                 mac_interface_index: 0u8,
@@ -1507,10 +1517,24 @@ where
         // path, so an unknown extended PAN id takes the requested one
         let remembered_epid = *self.nib().extended_panid();
         if *self.nib().network_address() == 0xffff
-            || (remembered_epid != 0 && remembered_epid != request.extended_pan_id.0)
+            || (remembered_epid != 0
+                && request.extended_pan_id.0 != 0
+                && remembered_epid != request.extended_pan_id.0)
         {
             return fail(NlmeJoinStatus::InvalidRequest);
         }
+
+        // a wildcard rejoin names the network this device remembers and holds
+        // a key to; resolving it here keeps candidate selection and the
+        // confirm pinned to that network rather than to any discovered one
+        let request = if request.extended_pan_id.0 == 0 && remembered_epid != 0 {
+            NlmeJoinRequest {
+                extended_pan_id: IeeeAddress(remembered_epid),
+                ..request
+            }
+        } else {
+            request
+        };
 
         // whether joining or rejoining, nwkParentInformation is reset
         // (3.2.2.13.3)
@@ -1951,6 +1975,42 @@ mod tests {
     }
 
     #[test]
+    fn select_parent_accepts_the_wildcard_extended_pan_id() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0))
+            .unwrap();
+        table
+            .push(make_neighbor(0xBBBB, 0x0001, 0x5678, 200, 0))
+            .unwrap();
+        nlme.nib().update_neighbor_table(|value| *value = table);
+
+        // BDB 8.2: the wildcard epid matches every discovered network
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0), false);
+        assert_eq!(candidates.len(), 2);
+    }
+    #[test]
+    fn wildcard_keeps_networks_whose_update_id_differs() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
+
+        let mut table = StorageVec::new();
+        // two distinct networks, each on its own nwkUpdateId snapshot
+        let mut a = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        a.update_id = 0;
+        let mut b = make_neighbor(0xBBBB, 0x0001, 0x5678, 200, 0);
+        b.update_id = 5;
+        table.push(a).unwrap();
+        table.push(b).unwrap();
+        nlme.nib().update_neighbor_table(|value| *value = table);
+
+        // nwkUpdateId is per-network (3.5.2): a stale-looking id in one
+        // network must not exclude it from a wildcard scan
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0), false);
+        assert_eq!(candidates.len(), 2);
+    }
+    #[test]
     fn select_parent_filters_by_link_cost() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
 
@@ -2120,6 +2180,34 @@ mod tests {
 
         let table = nlme.nib().neighbor_table();
         assert_eq!(table[0].relationship, 0x00);
+    }
+
+    #[test]
+    fn join_wildcard_extended_pan_id_joins_the_discovered_network() {
+        let mut mac = MockMlme::new();
+        mac.expect_associate().returning(|_, _, _| {
+            Ok(AssociationResponse {
+                device_address: IeeeAddress(0),
+                association_address: ShortAddress(0x1234),
+                status: AssociationStatus::Successful,
+            })
+        });
+
+        let (_guard, nlme) = make_nlme(mac);
+
+        let mut table = StorageVec::new();
+        table
+            .push(make_neighbor(0xAAAA, 0x0000, 0xDEAD, 200, 0))
+            .unwrap();
+        nlme.nib().update_neighbor_table(|value| *value = table);
+
+        // BDB 8.2 steering with the wildcard epid: whatever network permits
+        // the join is the one confirm and NIB end up naming
+        let confirm = block_on(nlme.join(default_join_request(0)));
+
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
+        assert_eq!(*nlme.nib().extended_panid(), 0xDEAD);
     }
 
     #[test]
@@ -2350,6 +2438,34 @@ mod tests {
 
         let confirm = block_on(nlme.join(rejoin_request(0xBEEF)));
         assert_eq!(confirm.status, NlmeJoinStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn nwk_wildcard_rejoin_names_the_remembered_network() {
+        let mut mac = MockMlme::new();
+        mac.expect_transmit_data()
+            .times(1)
+            .withf(|dest, _| *dest == Address::Short(PanId(0xAAAA), MacShortAddress(0x0000)))
+            .returning(|_, _| Ok(()));
+        mac.expect_poll_data().times(1).returning(|_, buf| {
+            let response = encrypted_rejoin_response(0x5678, 0x00);
+            buf[..response.len()].copy_from_slice(&response);
+            Ok((response.len(), 200u8))
+        });
+        // the assigned address has to reach the hardware filter
+        mac.expect_configure()
+            .times(1)
+            .withf(|config| config.short_address == Some(ShortAddress(0x5678)))
+            .returning(|_| ());
+
+        let (_guard, nlme) = make_nlme(mac);
+        seed_joined_nib(&nlme);
+
+        // a wildcard rejoin resolves to the remembered network (3.6.1.4.2)
+        let confirm = block_on(nlme.join(rejoin_request(0)));
+        assert_eq!(confirm.status, NlmeJoinStatus::Success);
+        assert_eq!(confirm.extended_pan_id.0, 0xDEAD);
+        assert_eq!(*nlme.nib().extended_panid(), 0xDEAD);
     }
 
     #[test]
