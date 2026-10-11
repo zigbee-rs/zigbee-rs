@@ -114,7 +114,7 @@ jobs:
           minimum-coverage: 14
           artifact-name: code-coverage-report
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          update-comment: true
+          update-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
   build:
     runs-on: ubuntu-latest
