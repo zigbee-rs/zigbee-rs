@@ -719,7 +719,7 @@ where
                 })
         };
 
-        let _candidates: heapless::Vec<usize, 16> = table
+        let mut candidates: heapless::Vec<usize, 16> = table
             .iter()
             .enumerate()
             .filter(|(_, n)| {
@@ -736,42 +736,6 @@ where
                     && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
                     && n.potential_parent == 1
                     && Some(n.update_id) == newest_update_id(n.extended_pan_id)
-            })
-            .map(|(i, _)| i)
-            .collect();
-        // a modular counter - an id `b` is newer than `a` when the signed
-        // difference `(b - a) as i8` is positive
-        let best_update_id = table
-            .iter()
-            .filter(|n| matches_epid(n) && permits(n) && n.potential_parent == 1)
-            .map(|n| n.update_id)
-            // positive signed difference means id is newer
-            .reduce(|best, id| {
-                if id.wrapping_sub(best).cast_signed() > 0 {
-                    id
-                } else {
-                    best
-                }
-            });
-
-        let mut candidates: heapless::Vec<usize, 16> = best_update_id
-            .into_iter()
-            .flat_map(|best_update_id| {
-                table.iter().enumerate().filter(move |(_, n)| {
-                    // correct network, accepting joins of the right type, low
-                    // enough link cost, a potential parent, and on the most
-                    // recent update id
-                    matches_epid(n)
-                        && permits(n)
-                        && if join_as_router {
-                            n.router_capacity
-                        } else {
-                            n.end_device_capacity
-                        }
-                        && link_cost_from_lqi(n.lqi) <= MAX_PARENT_LINK_COST
-                        && n.potential_parent == 1
-                        && n.update_id == best_update_id
-                })
             })
             .map(|(i, _)| i)
             .collect();
@@ -2027,25 +1991,25 @@ mod tests {
         let candidates = nlme.select_parent_candidates(IeeeAddress(0), false);
         assert_eq!(candidates.len(), 2);
     }
-      #[test]
-      fn wildcard_keeps_networks_whose_update_id_differs() {
-          let (_guard, nlme) = make_nlme(MockMlme::new());
+    #[test]
+    fn wildcard_keeps_networks_whose_update_id_differs() {
+        let (_guard, nlme) = make_nlme(MockMlme::new());
 
-          let mut table = StorageVec::new();
-          // two distinct networks, each on its own nwkUpdateId snapshot
-          let mut a = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
-          a.update_id = 0;
-          let mut b = make_neighbor(0xBBBB, 0x0001, 0x5678, 200, 0);
-          b.update_id = 5;
-          table.push(a).unwrap();
-          table.push(b).unwrap();
-          nlme.nib().update_neighbor_table(|value| *value = table);
+        let mut table = StorageVec::new();
+        // two distinct networks, each on its own nwkUpdateId snapshot
+        let mut a = make_neighbor(0xAAAA, 0x0000, 0x1234, 200, 0);
+        a.update_id = 0;
+        let mut b = make_neighbor(0xBBBB, 0x0001, 0x5678, 200, 0);
+        b.update_id = 5;
+        table.push(a).unwrap();
+        table.push(b).unwrap();
+        nlme.nib().update_neighbor_table(|value| *value = table);
 
-          // nwkUpdateId is per-network (3.5.2): a stale-looking id in one
-          // network must not exclude it from a wildcard scan
-          let candidates = nlme.select_parent_candidates(IeeeAddress(0), false);
-          assert_eq!(candidates.len(), 2);
-      }
+        // nwkUpdateId is per-network (3.5.2): a stale-looking id in one
+        // network must not exclude it from a wildcard scan
+        let candidates = nlme.select_parent_candidates(IeeeAddress(0), false);
+        assert_eq!(candidates.len(), 2);
+    }
     #[test]
     fn select_parent_filters_by_link_cost() {
         let (_guard, nlme) = make_nlme(MockMlme::new());
