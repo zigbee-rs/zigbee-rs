@@ -85,6 +85,15 @@ pub(crate) fn record_incoming_frame_counter(
     true
 }
 
+/// Drops every incoming counter recorded under `key_seq_number`, for a key
+/// that left the security material set or was replaced.
+pub(crate) fn forget_incoming_frame_counters(nib: &Nib, key_seq_number: u8) {
+    let mut counters = nib.incoming_frame_counters_mut();
+    while let Some(index) = counters.position(|entry| entry.key_seq_number == key_seq_number) {
+        counters.remove(index);
+    }
+}
+
 #[cfg(feature = "storage")]
 impl PersistentIb for Nib {
     type Id = NibId;

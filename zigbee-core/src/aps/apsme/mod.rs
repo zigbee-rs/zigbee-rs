@@ -747,6 +747,10 @@ fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescr
         network_key_type: STANDARD_NETWORK_KEY,
     };
 
+    // the incoming counters are keyed by sequence number, so a key leaving
+    // the set or replaced by a different one takes its counters along
+    let mut retired = None;
+    let mut changed = true;
     nib.update_security_material_set(|set| {
         // a re-transported key replaces its own entry, a new one the alternate
         let slot = set
@@ -754,14 +758,31 @@ fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescr
             .position(|m| m.key_seq_number == descriptor.sequence_number)
             .or_else(|| set.iter().position(|m| m.key_seq_number != active));
         match slot {
-            Some(index) => set[index] = material,
+            Some(index) => {
+                let previous = &set[index];
+                if previous.key_seq_number != descriptor.sequence_number {
+                    retired = Some(previous.key_seq_number);
+                }
+                // an identical key re-transported keeps its counters, which
+                // would otherwise reopen every recorded frame for replay
+                changed = retired.is_some() || previous.key != descriptor.key;
+                set[index] = material;
+            }
             None => {
                 if set.push(material).is_err() {
                     log::warn!("[APS] no room for the alternate network key");
+                    changed = false;
                 }
             }
         }
     });
+    if let Some(key_seq_number) = retired {
+        nib_storage::forget_incoming_frame_counters(nib, key_seq_number);
+    }
+    // a wrapped sequence number can still name counters of an older key
+    if changed {
+        nib_storage::forget_incoming_frame_counters(nib, descriptor.sequence_number);
+    }
 
     // a device without material for its active key (e.g. after a rejoin that
     // followed a leave) could not encrypt at all — the transported key becomes
@@ -877,6 +898,7 @@ mod tests {
     use crate::aps::frame::command::ConfirmKey;
     use crate::aps::frame::command::SwitchKey;
     use crate::aps::types::SrcEndpoint;
+    use crate::nwk::nib::MAX_NEIGBOUR_TABLE;
 
     fn bind_request(cluster_id: u16) -> ApsmeBindRequest {
         ApsmeBindRequest {
@@ -1239,6 +1261,83 @@ mod tests {
         assert_eq!(set.len(), 2);
         assert_eq!(set[0].key_seq_number, 5);
         assert_eq!(set[1].key_seq_number, 4);
+    }
+
+    #[test]
+    fn key_rotations_retire_the_incoming_counters_of_replaced_keys() {
+        let apsme = Apsme::new(0xAB);
+        let aib = setup_aib();
+        let nib = nib_with_active_key();
+
+        for key_seq_number in 4u8..7 {
+            // traffic from a full neighbor table under the active key
+            let active = nib.active_key_seq_number();
+            for sender in 0..MAX_NEIGBOUR_TABLE as u64 {
+                assert!(
+                    nib_storage::record_incoming_frame_counter(
+                        &nib,
+                        active,
+                        IeeeAddress(sender),
+                        1
+                    ),
+                    "no room for sender {sender} under key {active}"
+                );
+            }
+
+            apsme.handle_aps_command(
+                &aib,
+                &nib,
+                &network_key(key_seq_number, [key_seq_number; 16], TC_IEEE),
+                true,
+            );
+            apsme.handle_aps_command(
+                &aib,
+                &nib,
+                &Command::SwitchKey(SwitchKey {
+                    sequence_number: key_seq_number,
+                }),
+                true,
+            );
+        }
+
+        // only keys still held own counters, so a new sender still finds room
+        let held: heapless::Vec<u8, 2> = nib
+            .security_material_set()
+            .iter()
+            .map(|material| material.key_seq_number)
+            .collect();
+        assert!(
+            nib.incoming_frame_counters()
+                .iter()
+                .all(|entry| held.contains(&entry.key_seq_number))
+        );
+        assert!(nib_storage::record_incoming_frame_counter(
+            &nib,
+            nib.active_key_seq_number(),
+            IeeeAddress(0xffff),
+            1
+        ));
+    }
+
+    #[test]
+    fn retransported_key_keeps_its_counters_only_when_unchanged() {
+        let apsme = Apsme::new(0xAB);
+        let aib = setup_aib();
+        let nib = nib_with_active_key();
+        assert!(nib_storage::record_incoming_frame_counter(
+            &nib,
+            3,
+            IeeeAddress(1),
+            500
+        ));
+
+        // the same key again must not reopen the frames recorded under it
+        apsme.handle_aps_command(&aib, &nib, &network_key(3, [0xaa; 16], TC_IEEE), true);
+        assert_eq!(nib.incoming_frame_counters().len(), 1);
+
+        // a different key under the same sequence number starts over
+        apsme.handle_aps_command(&aib, &nib, &network_key(3, [0xcc; 16], TC_IEEE), true);
+        assert!(nib.incoming_frame_counters().is_empty());
     }
 
     #[test]
