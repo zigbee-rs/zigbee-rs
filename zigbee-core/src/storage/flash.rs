@@ -72,46 +72,155 @@ const fn item_key(tag: u8, field: u8, index: u16) -> u32 {
     ((tag as u32) << 24) | ((field as u32) << 16) | index as u32
 }
 
-// what one pass over the map found for each field of an information base
+// table fields either information base persists; sizes the restore
+// bookkeeping
+const MAX_TABLES: usize = if nib::NibId::TABLES > aib::AibId::TABLES {
+    nib::NibId::TABLES
+} else {
+    aib::AibId::TABLES
+};
+
+// what the restore pass found in the map for one table field
+struct RestoredTable {
+    field: u8,
+    // bit per row index the map holds
+    rows: u64,
+    // rows the length record claims
+    len: u16,
+}
+
+impl RestoredTable {
+    fn set_row(&mut self, index: u16, held: bool) {
+        if index >= 64 {
+            return;
+        }
+        if held {
+            self.rows |= 1 << index;
+        } else {
+            self.rows &= !(1 << index);
+        }
+    }
+
+    // rows a table keeps: what the length record claims, cut short at the
+    // first row the map does not hold. A power loss while a shrink empties its
+    // rows leaves the record claiming more than the table has
+    fn restored_len(&self) -> usize {
+        let claimed = usize::from(self.len).min(64);
+        (0..claimed)
+            .take_while(|index| self.rows & (1 << index) != 0)
+            .count()
+    }
+
+    // whether flash disagrees with what was restored: a record claiming more
+    // rows, or rows held past the end. Left alone, a later grow that loses
+    // power before its record would expose those stale rows again
+    fn needs_repair(&self) -> bool {
+        let restored = self.restored_len();
+        let held_past_end = u32::try_from(restored)
+            .ok()
+            .and_then(|shift| self.rows.checked_shr(shift))
+            .unwrap_or(0);
+        usize::from(self.len) != restored || held_past_end != 0
+    }
+}
+
+// what one pass over the map found for the tables of an information base
 //
 // items come back in the order they were written, so a table's length record
 // and its rows can arrive in any order. Both are recorded while the values are
 // imported and resolved once the pass is done
 struct RestoredTables {
-    // rows[field], bit per row index the map holds
-    rows: [u64; 64],
-    // lens[field], rows the length record claims
-    lens: [u16; 64],
+    tables: heapless::Vec<RestoredTable, MAX_TABLES>,
 }
 
 impl RestoredTables {
-    const fn empty() -> Self {
+    const fn new() -> Self {
         Self {
-            rows: [0; 64],
-            lens: [0; 64],
+            tables: heapless::Vec::new(),
         }
     }
 
-    fn set_row(&mut self, field: u8, index: u16, held: bool) {
-        if index >= 64 {
+    fn get(&self, field: u8) -> Option<&RestoredTable> {
+        self.tables.iter().find(|table| table.field == field)
+    }
+
+    fn get_or_insert(&mut self, field: u8) -> Option<&mut RestoredTable> {
+        if self.get(field).is_none() {
+            self.tables
+                .push(RestoredTable {
+                    field,
+                    rows: 0,
+                    len: 0,
+                })
+                .ok()?;
+        }
+        self.tables.iter_mut().find(|table| table.field == field)
+    }
+
+    fn import<I: PersistentIb>(&mut self, ib: &I, field: u8, index: u16, data: &[u8]) {
+        let Some(id) = I::field(field) else {
+            return;
+        };
+        if ib.table_len(id).is_none() {
+            if !ib.import_field(id, data) {
+                log::warn!(
+                    "[FLASH] stored {} field {field:#04x} did not parse; using default",
+                    I::NAME
+                );
+            }
             return;
         }
-        if held {
-            self.rows[field as usize] |= 1 << index;
-        } else {
-            self.rows[field as usize] &= !(1 << index);
+        let Some(table) = self.get_or_insert(field) else {
+            return;
+        };
+        if index == LEN_INDEX {
+            if let Ok(len) = data.try_into().map(u16::from_le_bytes) {
+                table.len = len;
+            }
+            return;
         }
+        // an emptied row is how a shrunk table drops one, so it has to clear a
+        // row an earlier item established
+        let held = !data.is_empty() && ib.import_entry(id, usize::from(index), data);
+        table.set_row(index, held);
     }
 
-    // rows a table keeps: what the length record claims, cut short at the
-    // first row the map does not hold. A power loss between writing the record
-    // and writing the rows leaves a table claiming more than it has
-    fn restored_len(&self, field: u8) -> usize {
-        let claimed = usize::from(self.lens[field as usize]).min(64);
-        let held = self.rows[field as usize];
-        (0..claimed)
-            .take_while(|index| held & (1 << index) != 0)
-            .count()
+    // resolves the tables once the pass is done and leaves nothing marked
+    // but what flash has to catch up on
+    fn settle<I: PersistentIb>(&self, ib: &I) {
+        // rows placed past the restored length were only there to keep the
+        // table dense while the pass filled it in
+        for field in 0..=I::MAX_KEY {
+            let Some(id) = I::field(field) else {
+                continue;
+            };
+            if ib.table_len(id).is_some() {
+                let len = self.get(field).map_or(0, RestoredTable::restored_len);
+                ib.truncate_table(id, len);
+            }
+        }
+
+        // restore does not count as modification
+        let _ = ib.take_dirty();
+        for field in 0..=I::MAX_KEY {
+            if let Some(id) = I::field(field) {
+                let _ = ib.take_dirty_entries(id);
+                let _ = ib.take_len_dirty(id);
+            }
+        }
+
+        // rewriting the whole table brings flash back to what was restored
+        for table in self.tables.iter().filter(|table| table.needs_repair()) {
+            let Some(id) = I::field(table.field) else {
+                continue;
+            };
+            log::debug!("[FLASH] repairing {} table {:#04x}", I::NAME, table.field);
+            ib.mark_dirty(id);
+        }
+
+        // push the outgoing bounds ahead of the values just restored, before
+        // any frame can be sent with them
+        ib.arm_counter_bounds();
     }
 }
 
@@ -227,71 +336,35 @@ impl<F: NorFlash> FlashMap<F> {
             .is_ok()
     }
 
-    /// Restores all persisted fields; missing or unparsable items keep their
-    /// defaults.
-    pub(crate) async fn restore<I: PersistentIb>(&mut self, ib: &I) {
-        let mut tables = RestoredTables::empty();
+    /// Restores all persisted fields of both information bases in one pass
+    /// over the map; missing or unparsable items keep their defaults.
+    pub(crate) async fn restore<A: PersistentIb, B: PersistentIb>(&mut self, a: &A, b: &B) {
+        let mut a_tables = RestoredTables::new();
+        let mut b_tables = RestoredTables::new();
 
-        // one pass hands back every key the map holds together with its value,
-        // so nothing has to be looked up again. The same key can appear more
-        // than once and the last one is the live value, which importing as
-        // they come leaves applied
+        // the pass hands back every item together with its value, so nothing
+        // has to be looked up again. The same key can appear more than once and
+        // the last one is the live value, which importing as they come leaves
+        // applied
         if let Ok(mut items) = self.map.fetch_all_items(&mut self.scratch).await {
-            log::trace!("[FLASH] fetch_all_items");
-            let mut num_key = 0;
             while let Ok(Some((key, data))) = items.next::<&[u8]>(&mut self.scratch).await {
-                num_key += 1;
                 let [tag, field, index_high, index_low] = key.to_be_bytes();
-                if tag != I::TAG {
-                    continue;
-                }
-                let Some(id) = I::field(field) else {
-                    continue;
-                };
                 let index = u16::from_be_bytes([index_high, index_low]);
-
-                if index == LEN_INDEX {
-                    if let Ok(len) = data.try_into().map(u16::from_le_bytes) {
-                        tables.lens[field as usize] = len;
-                    }
-                } else if ib.table_len(id).is_some() {
-                    // an emptied row is how a shrunk table drops one, so it has
-                    // to clear a row an earlier item established
-                    let held = !data.is_empty() && ib.import_entry(id, usize::from(index), data);
-                    tables.set_row(field, index, held);
-                } else if !ib.import_field(id, data) {
-                    log::warn!(
-                        "[FLASH] stored {} field {field:#04x} did not parse; using default",
-                        I::NAME
-                    );
+                if tag == A::TAG {
+                    a_tables.import(a, field, index, data);
+                } else if tag == B::TAG {
+                    b_tables.import(b, field, index, data);
                 }
             }
-            log::trace!("[FLASH] {} keys={num_key}", I::NAME);
         }
 
-        // rows placed past the restored length were only there to keep the
-        // table dense while the pass filled it in
-        for field in 0..=I::MAX_KEY {
-            let Some(id) = I::field(field) else {
-                continue;
-            };
-            if ib.table_len(id).is_some() {
-                ib.truncate_table(id, tables.restored_len(field));
-            }
-        }
-
-        // restore does not count as modification
-        let _ = ib.take_dirty();
-        for field in 0..=I::MAX_KEY {
-            if let Some(id) = I::field(field) {
-                let _ = ib.take_dirty_entries(id);
-                let _ = ib.take_len_dirty(id);
-            }
-        }
-        // push the outgoing bounds ahead of the values just restored, before
-        // any frame can be sent with them
-        ib.arm_counter_bounds();
-        self.flush(ib, CounterPrecision::Quantized).await;
+        a_tables.settle(a);
+        b_tables.settle(b);
+        // the incoming counters just restored are exactly what flash held, so
+        // writing any of them back exactly keeps what a shutdown stored
+        // instead of rounding it down
+        self.flush(a, CounterPrecision::Exact).await;
+        self.flush(b, CounterPrecision::Exact).await;
     }
 
     /// Persists everything modified since the last call; table fields write only
@@ -310,7 +383,7 @@ impl<F: NorFlash> FlashMap<F> {
                     // always taken, so both dirty sets are cleared either way
                     let rows = ib.take_dirty_entries(id);
                     let len_changed = ib.take_len_dirty(id);
-                    // a whole-table update may have moved any row
+                    // a failed store or a repair rewrites the whole table
                     let rows = if field_dirty { u64::MAX } else { rows };
                     if rows == 0 && !len_changed && !field_dirty {
                         continue;
@@ -367,18 +440,13 @@ impl<F: NorFlash> FlashMap<F> {
         store_len: bool,
         precision: CounterPrecision,
     ) -> bool {
-        if store_len {
-            let Ok(len_record) = u16::try_from(len) else {
-                return false;
-            };
-            if !self
-                .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
-                .await
-            {
-                return false;
-            }
-        }
+        let Ok(len_record) = u16::try_from(len) else {
+            return false;
+        };
 
+        // rows go first and the length record last, so a power loss in between
+        // leaves the old record: a grow keeps its new rows hidden, a shrink
+        // has already emptied the rows it drops
         for index in 0..capacity.min(TRACKED_ENTRIES) {
             if rows & (1 << index) == 0 {
                 continue;
@@ -411,7 +479,11 @@ impl<F: NorFlash> FlashMap<F> {
                 return false;
             }
         }
-        true
+
+        !store_len
+            || self
+                .store(item_key(I::TAG, field, LEN_INDEX), &len_record)
+                .await
     }
 }
 
@@ -441,11 +513,7 @@ impl<F: NorFlash> FlashStorage<F> {
         aib::init();
 
         let mut map = FlashMap::new(flash, range);
-        log::trace!("restore nib,aib");
-        map.restore(nib::get_ref()).await;
-        log::trace!("restore nib done");
-        map.restore(aib::get_ref()).await;
-        log::trace!("restore aib done");
+        map.restore(nib::get_ref(), aib::get_ref()).await;
 
         Self {
             map: spin::Mutex::new(map),
@@ -527,6 +595,7 @@ mod tests {
     use super::*;
     use crate::aps::aib::Aib;
     use crate::aps::aib::AibId;
+    use crate::aps::aib::storage as aib_storage;
     use crate::nwk::nib::IncomingFrameCounterDescriptor;
     use crate::nwk::nib::NetworkSecurityMaterialDescriptor;
     use crate::nwk::nib::Nib;
@@ -597,7 +666,7 @@ mod tests {
             for _ in 0..4 {
                 let (nib, _) = fresh_ibs();
                 nib.update_security_material_set(|value| *value = security_material());
-                block_on(map.restore(&nib));
+                block_on(map.restore(&nib, &Aib::new()));
 
                 for _ in 0..cut {
                     let issued = nib_storage::take_outgoing_frame_counter(&nib).unwrap();
@@ -689,8 +758,7 @@ mod tests {
     fn restore_from_empty_flash_keeps_defaults() {
         let (nib, aib) = fresh_ibs();
         let mut map = new_map();
-        block_on(map.restore(&nib));
-        block_on(map.restore(&aib));
+        block_on(map.restore(&nib, &aib));
         assert_eq!(nib.network_address(), 0xffff);
         assert_eq!(
             *aib.trust_center_address(),
@@ -711,8 +779,7 @@ mod tests {
         block_on(map.flush(&aib, CounterPrecision::Quantized));
 
         let (nib2, aib2) = fresh_ibs();
-        block_on(map.restore(&nib2));
-        block_on(map.restore(&aib2));
+        block_on(map.restore(&nib2, &aib2));
         assert_eq!(nib2.network_address(), 0x1234);
         assert_eq!(nib2.panid(), 0xabcd);
         assert_eq!(*nib2.extended_panid(), 0x1122_3344_5566_7788);
@@ -728,7 +795,7 @@ mod tests {
         block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         let restored = nib2.outgoing_frame_counter();
         assert_eq!(restored, round_up(5));
         assert!(restored > 5 + HEADROOM);
@@ -743,7 +810,7 @@ mod tests {
             let flash = Flash::new(WriteCountCheck::Twice, None, true);
             let baseline = flash.stats_snapshot();
             let mut map = FlashMap::new(flash, Flash::FULL_FLASH_RANGE);
-            block_on(map.restore(&nib));
+            block_on(map.restore(&nib, &Aib::new()));
 
             for _ in 0..ticks {
                 let _ = nib_storage::take_outgoing_frame_counter(&nib).unwrap();
@@ -878,7 +945,7 @@ mod tests {
             block_on(map.flush(&nib, precision));
 
             let (nib2, _) = fresh_ibs();
-            block_on(map.restore(&nib2));
+            block_on(map.restore(&nib2, &Aib::new()));
             nib2.incoming_frame_counters()
                 .first()
                 .unwrap()
@@ -887,6 +954,59 @@ mod tests {
 
         assert_eq!(restored(CounterPrecision::Exact), 100);
         assert_eq!(restored(CounterPrecision::Quantized), round_down(100));
+    }
+
+    #[test]
+    fn whole_table_update_marks_only_the_rows_it_held() {
+        let (nib, _) = fresh_ibs();
+        nib.update_incoming_frame_counters(|counters| {
+            for sender in 0..2 {
+                let _ = counters.push(IncomingFrameCounterDescriptor {
+                    key_seq_number: 0,
+                    sender_address: IeeeAddress(sender),
+                    incoming_frame_counter: 0,
+                });
+            }
+        });
+        let id = NibId::incoming_frame_counters;
+        let _ = nib.take_dirty_entries(id);
+        let _ = nib.take_len_dirty(id);
+
+        // rows past the length were empty before and stay empty, and an update
+        // in place leaves the length record alone
+        nib.update_incoming_frame_counters(|counters| counters[1].incoming_frame_counter = 7);
+        assert_eq!(nib.take_dirty_entries(id), 0b11);
+        assert!(!nib.take_len_dirty(id));
+        assert_eq!(nib.take_dirty() & id.bit(), 0);
+
+        // a shrink still marks the row it dropped
+        nib.update_incoming_frame_counters(|counters| {
+            counters.pop();
+        });
+        assert_eq!(nib.take_dirty_entries(id), 0b11);
+        assert!(nib.take_len_dirty(id));
+    }
+
+    #[test]
+    fn restore_keeps_the_exact_counters_a_shutdown_stored() {
+        let (_, aib) = fresh_ibs();
+        let mut map = new_map();
+        let peer = IeeeAddress(0xaabb);
+
+        assert!(aib_storage::record_incoming_frame_counter(
+            &aib, peer, 100, [0xbb; 16]
+        ));
+        aib.mark_counter_rows();
+        block_on(map.flush(&aib, CounterPrecision::Exact));
+
+        // restoring rewrites the row to push its outgoing bound ahead; that
+        // must not round the incoming counter down on the way
+        for _ in 0..2 {
+            let (nib2, aib2) = fresh_ibs();
+            block_on(map.restore(&nib2, &aib2));
+            let pairs = aib2.device_key_pair_set();
+            assert_eq!(pairs.first().unwrap().incoming_frame_counter, 100);
+        }
     }
 
     #[test]
@@ -917,7 +1037,7 @@ mod tests {
         assert!(block_on(map.store(item_key(tag, field, LEN_INDEX), &3u16)));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         assert_eq!(nib2.group_idtable().as_slice(), &[10, 11, 12]);
     }
 
@@ -942,8 +1062,51 @@ mod tests {
         )));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         assert_eq!(nib2.group_idtable().as_slice(), &[0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn an_interrupted_shrink_is_repaired_on_restore() {
+        let (nib, _) = fresh_ibs();
+        let mut map = new_map();
+
+        nib.update_group_idtable(|table| {
+            for group in 0..4 {
+                let _ = table.push(group);
+            }
+        });
+        block_on(map.flush(&nib, CounterPrecision::Quantized));
+
+        // a shrink to two rows loses power after emptying row 2: the record
+        // still claims four and row 3 still holds its old value
+        let tag = <Nib as PersistentIb>::TAG;
+        let field = NibId::group_idtable as u8;
+        assert!(block_on(map.store(item_key(tag, field, 2), &EMPTY_ROW)));
+
+        let (nib2, _) = fresh_ibs();
+        block_on(map.restore(&nib2, &Aib::new()));
+        assert_eq!(nib2.group_idtable().as_slice(), &[0, 1]);
+        assert_eq!(stored_row(&mut map, item_key(tag, field, 3)), Some(&[][..]));
+        assert_eq!(
+            stored_row(&mut map, item_key(tag, field, LEN_INDEX)),
+            Some(&2u16.to_le_bytes()[..])
+        );
+
+        // a later grow losing power before its record must not bring the old
+        // row 3 back along with the new row 2
+        let mut row = [0u8; 16];
+        nib2.update_group_idtable(|table| {
+            let _ = table.push(9);
+        });
+        let len = nib2
+            .export_entry(NibId::group_idtable, 2, &mut row)
+            .unwrap();
+        assert!(block_on(map.store(item_key(tag, field, 2), &&row[..len])));
+
+        let (nib3, _) = fresh_ibs();
+        block_on(map.restore(&nib3, &Aib::new()));
+        assert_eq!(nib3.group_idtable().as_slice(), &[0, 1]);
     }
 
     #[test]
@@ -962,7 +1125,7 @@ mod tests {
         block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         assert_eq!(nib2.group_idtable().as_slice(), &[0, 2, 3]);
     }
 
@@ -982,7 +1145,7 @@ mod tests {
         block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         assert!(nib2.group_idtable().is_empty());
     }
 
@@ -1007,7 +1170,7 @@ mod tests {
         block_on(map.flush(&nib, CounterPrecision::Quantized));
 
         let (nib2, _) = fresh_ibs();
-        block_on(map.restore(&nib2));
+        block_on(map.restore(&nib2, &Aib::new()));
         assert_eq!(nib2.group_idtable().as_slice(), &[77, 88]);
     }
 

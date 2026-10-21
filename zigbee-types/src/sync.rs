@@ -477,12 +477,17 @@ impl<V: Table> IbCell<V> for TableCell<V> {
 
     fn update(&self, f: impl FnOnce(&mut V)) {
         let mut entries = self.entries.write();
+        let previous_len = entries.len();
         f(&mut entries);
-        // the closure has the whole table, so any row may have moved
-        for index in 0..entries.capacity().min(TRACKED_ENTRIES) {
+        // the closure has the whole table, so any row it held or now holds may
+        // have moved; rows past both lengths were empty before and still are
+        let touched = previous_len.max(entries.len()).min(TRACKED_ENTRIES);
+        for index in 0..touched {
             self.dirty.set(index as u8);
         }
-        self.len_dirty.store(true, Ordering::Release);
+        if entries.len() != previous_len {
+            self.len_dirty.store(true, Ordering::Release);
+        }
     }
 
     fn get_owned(&self) -> V

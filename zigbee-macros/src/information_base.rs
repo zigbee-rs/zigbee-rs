@@ -119,6 +119,19 @@ macro_rules! construct_ib {
                 <= ::zigbee_types::sync::TRACKED_ENTRIES
         );
     };
+    (@tables [] [$($t:ident)?]) => { 0 };
+    (@tables [$skey:literal] []) => { 0 };
+    (@tables [$skey:literal] [$t:ident]) => { 1 };
+    // what a setter marks: a plain field as a whole, a table only signals since
+    // its cell already marked the rows the closure could have touched
+    (@mark $s:ident; [] [$($t:ident)?]) => {};
+    (@mark $s:ident; [$skey:literal] []) => {
+        $s.dirty.set($skey);
+        DIRTY_SIGNAL.signal();
+    };
+    (@mark $s:ident; [$skey:literal] [$t:ident]) => {
+        DIRTY_SIGNAL.signal();
+    };
     (@items $ty:path; [] [$($t:ident)?]) => { 0 };
     (@items $ty:path; [$skey:literal] []) => { 1 };
     (@items $ty:path; [$skey:literal] [$t:ident]) => {
@@ -255,6 +268,10 @@ macro_rules! construct_ib {
                     @items $field_ty; [$($skey)?] [$($table)?]
                 ))+;
 
+            /// Persisted table fields.
+            pub const TABLES: usize = 0
+                $(+ $crate::construct_ib!(@tables [$($skey)?] [$($table)?]))+;
+
             /// Upper bound of the encoded size over all persisted fields.
             ///
             /// `byte` encodings are packed and never larger than the
@@ -308,6 +325,9 @@ macro_rules! construct_ib {
         const _: () = {
             // dirty mask is a u64 bitmask indexed by storage key
             assert!($ib_id::MAX_KEY < 64, "information base cannot have more than 64 keys");
+            $(
+                $crate::construct_ib!(@capacity_bound $field_ty; [$($skey)?] [$($table)?]);
+            )+
         };
 
         // plain in-memory representation with one lock per field so readers
@@ -503,11 +523,7 @@ macro_rules! construct_ib {
                 /// Updates the field in place.
                 pub fn $update(&self, f: impl FnOnce(&mut $field_ty)) {
                     ::zigbee_types::sync::IbCell::update(&self.fields.$field, f);
-
-                    $(
-                        self.dirty.set($skey);
-                        DIRTY_SIGNAL.signal();
-                    )?
+                    $crate::construct_ib!(@mark self; [$($skey)?] [$($table)?]);
                 }
             )+
         }

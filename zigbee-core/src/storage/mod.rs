@@ -38,8 +38,8 @@
 //!
 //! Table fields are stored one map item per row plus a length record, and only
 //! the rows a caller actually touched are rewritten. Mutating a table through
-//! `update_<field>` conservatively marks every row; the `<field>_mut` handle
-//! marks just the rows it changes. A shrunk table leaves its surplus rows in
+//! `update_<field>` conservatively marks every row it held or now holds; the
+//! `<field>_mut` handle marks just the rows it changes. A shrunk table leaves its surplus rows in
 //! flash — the length record bounds what is read back, which avoids needing
 //! erasable items.
 //!

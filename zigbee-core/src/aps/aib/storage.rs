@@ -129,7 +129,8 @@ impl PersistentIb for Aib {
     }
 
     fn arm_counter_bounds(&self) {
-        Self::mark_dirty(self, AibId::device_key_pair_set);
+        // only the rows held carry counters
+        self.device_key_pair_set_mut().mark_all();
     }
 
     fn import_entry(&self, id: AibId, index: usize, data: &[u8]) -> bool {
