@@ -71,7 +71,7 @@ const ZIGBEE_FLASH_RANGE: Range<u32> = 0x3f_0000..0x3f_4000;
 ///
 /// This is a placeholder and will not match any real network!
 /// replace it with the Extended PAN ID of your own coordinator.
-const EXTENDED_PAN_ID: u64 = 0x00124b002a9a7166;
+const EXTENDED_PAN_ID: u64 = 0xabcdef0123456789;
 
 /// Channel to scan on (must match the coordinator's channel).
 const CHANNEL: u8 = 11;
@@ -224,7 +224,8 @@ async fn stack_task(stack: &'static Stack) {
     // returns only when no rejoin could get us back onto the network: the
     // network is gone or our keys are stale, so re-commission from scratch
     let outcome = stack.run(Delay).await;
-    println!("Off the network ({outcome:?}), forgetting it and rebooting");
+    println!("Off the network ({outcome:?}), forgetting it and rebooting in 60s");
+    Timer::after_secs(60).await;
     stack.forget_network().await;
     esp_hal::system::software_reset();
 }
@@ -244,7 +245,6 @@ async fn identify_task() {
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
-    println!("start");
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -256,11 +256,8 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // the stack owns persistence: the information bases are restored here and
     // the stack persists dirty state (keys, frame counters, tables) whenever it
     // changes them
-    println!("setup flash");
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    println!("setup flash peripheral done");
     let storage = zigbee::storage::FlashStorage::new(flash, ZIGBEE_FLASH_RANGE).await;
-    println!("setup flash done");
 
     let config = stack_config();
 
