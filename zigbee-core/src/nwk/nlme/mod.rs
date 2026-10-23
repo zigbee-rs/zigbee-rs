@@ -485,40 +485,15 @@ where
         Some(seconds.saturating_mul(1000))
     }
 
-    /// Send one keepalive to the parent (3.6.10.3).
+    /// Send an End Device Timeout Request as keepalive and await the parent's
+    /// response (3.6.10.3), for parents expecting
+    /// [`KeepaliveMethod::TimeoutRequest`].
     ///
-    /// The method follows `nwkParentInformation`: a MAC data poll, or an End
-    /// Device Timeout Request whose response is awaited. A failed timeout
-    /// request raises an NLME-NWK-STATUS.indication with
+    /// A successful response restarts the local timeout (3.6.10.6). A missing
+    /// or rejected one raises an NLME-NWK-STATUS.indication with
     /// [`NetworkStatusCode::ParentLinkFailure`] and returns
-    /// [`NetworkError::ParentLinkFailure`]; a successful keepalive restarts
-    /// the local timeout (3.6.10.6).
-    pub async fn send_keepalive(&self) -> Result<(), NetworkError> {
-        match self.keepalive_method() {
-            KeepaliveMethod::MacDataPoll => self.mac_data_poll_keepalive().await,
-            KeepaliveMethod::TimeoutRequest => self.timeout_request_keepalive().await,
-            KeepaliveMethod::None => Ok(()),
-        }
-    }
-
-    // 3.6.10.3: a data poll refreshes the parent's timeout on its own; any
-    // frame it retrieves belongs to the receive loop, which is not running
-    // when the higher layer drives the keepalive itself
-    async fn mac_data_poll_keepalive(&self) -> Result<(), NetworkError> {
-        let mut buf = [0u8; 256];
-        match self.poll_nwk_frame(&mut buf).await {
-            Ok(Some(_)) => log::debug!("[NWK] keepalive poll dropped a data frame"),
-            Ok(None) => (),
-            Err(e) => return Err(e),
-        }
-        self.refresh_parent_timeout();
-        Ok(())
-    }
-
-    // 3.6.10.3: unicast an End Device Timeout Request and wait
-    // macResponseWaitTime for the response; anything else is a parent link
-    // failure
-    async fn timeout_request_keepalive(&self) -> Result<(), NetworkError> {
+    /// [`NetworkError::ParentLinkFailure`].
+    pub async fn send_timeout_request_keepalive(&self) -> Result<(), NetworkError> {
         // arm before transmitting: the response may be delivered by a
         // concurrently running receive loop
         self.timeout_response.reset();
@@ -3097,7 +3072,7 @@ mod tests {
             *value = EndDeviceTimeoutResponse::TIMEOUT_REQUEST_KEEPALIVE;
         });
 
-        let result = block_on(nlme.send_keepalive());
+        let result = block_on(nlme.send_timeout_request_keepalive());
         assert!(matches!(result, Err(NetworkError::ParentLinkFailure)));
         assert_eq!(
             nlme.take_nwk_status_indication().map(|i| i.status),
@@ -3126,7 +3101,7 @@ mod tests {
             *value = EndDeviceTimeoutResponse::TIMEOUT_REQUEST_KEEPALIVE;
         });
 
-        assert!(block_on(nlme.send_keepalive()).is_ok());
+        assert!(block_on(nlme.send_timeout_request_keepalive()).is_ok());
         assert!(nlme.take_nwk_status_indication().is_none());
         // the negotiated 120 s are being tracked again
         assert!(!nlme.tick_parent_timeout(119_000));

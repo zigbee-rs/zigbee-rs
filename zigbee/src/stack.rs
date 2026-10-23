@@ -294,7 +294,10 @@ where
     /// started ahead of commissioning. The receive strategy follows the joined
     /// capability (`nwkCapabilityInformation`, 3.4.1.3.1.1): a device with
     /// `rxOnWhenIdle = TRUE` listens for frames directly, while a sleepy end
-    /// device polls its parent every `poll_interval_ms`.
+    /// device polls its parent every `poll_interval_ms`. When the parent tracks
+    /// data polls as keepalives, the polls also keep the device in its
+    /// neighbor table and are sent at least as often as the negotiated
+    /// keepalive interval (3.6.10.3).
     ///
     /// A leave takes the device off the network and parks the loop until it is
     /// back on. [`Self::run`] drives this for you.
@@ -337,7 +340,7 @@ where
                 }
                 Err(e) => log::debug!("[APP] rx dispatch error: {e:?}"),
             }
-            delay.delay_ms(self.config.timing().poll_interval_ms).await;
+            delay.delay_ms(self.poll_interval_ms()).await;
         }
     }
 
@@ -394,23 +397,26 @@ where
         }
     }
 
-    /// Send one keepalive to the parent (3.6.10.3).
-    ///
-    /// Every end device — sleepy or `rxOnWhenIdle` — refreshes its entry in
-    /// the parent's neighbor table this way, using the method the parent
-    /// announced: a MAC data poll, whose retrieved frame is dispatched like in
-    /// [`Self::rx_loop`], or an End Device Timeout Request. Without a
-    /// negotiated timeout there is nothing to send and it succeeds silently.
-    ///
-    /// `Err(NetworkError::ParentLinkFailure)` means the link is gone — the
-    /// parent rejected or ignored a timeout request, or enough keepalives went
-    /// unanswered to run out the local end-device timeout (3.6.10.6).
-    pub async fn keepalive(&self) -> Result<(), NetworkError> {
+    // one keepalive per keepalive interval (3.6.10.3); relies on a running
+    // rx loop whose polls are the keepalives of a sleepy device
+    async fn keepalive(&self) -> Result<(), NetworkError> {
         let device = &self.device;
         let handler = &self.handler;
         let nlme = device.nlme();
         let cfg = self.config.descriptors();
+        let interval = nlme.keepalive_interval_ms().unwrap_or(0);
+        let rx_on_when_idle = nib::get_ref()
+            .capability_information()
+            .receiver_on_when_idle();
         let result = match nlme.keepalive_method() {
+            // every acknowledged rx loop poll restarts the local timeout, so
+            // only age it here (3.6.10.6)
+            KeepaliveMethod::MacDataPoll if !rx_on_when_idle => {
+                if nlme.tick_parent_timeout(interval) {
+                    return Err(NetworkError::ParentLinkFailure);
+                }
+                return Ok(());
+            }
             // the data poll itself is the keepalive, so dispatch what it brings
             // back instead of dropping it
             KeepaliveMethod::MacDataPoll => {
@@ -420,7 +426,8 @@ where
                 }
                 result
             }
-            KeepaliveMethod::TimeoutRequest | KeepaliveMethod::None => nlme.send_keepalive().await,
+            KeepaliveMethod::TimeoutRequest => nlme.send_timeout_request_keepalive().await,
+            KeepaliveMethod::None => Ok(()),
         };
         let Err(e) = result else {
             return Ok(());
@@ -429,11 +436,20 @@ where
         // 3.6.10.6: an unanswered keepalive drains the local timeout, so a
         // single missed one does not yet count as a lost parent
         log::warn!("[APP] keepalive failed: {e:?}");
-        let interval = nlme.keepalive_interval_ms().unwrap_or(0);
         if nlme.tick_parent_timeout(interval) {
             return Err(NetworkError::ParentLinkFailure);
         }
         Err(e)
+    }
+
+    // 3.6.10.3: a poll that doubles as keepalive must not fall behind the
+    // negotiated keepalive interval
+    fn poll_interval_ms(&self) -> u32 {
+        let configured = self.config.timing().poll_interval_ms;
+        self.device
+            .nlme()
+            .negotiated_poll_interval_ms()
+            .map_or(configured, |negotiated| configured.min(negotiated))
     }
 }
 

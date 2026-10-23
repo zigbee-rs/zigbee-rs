@@ -42,7 +42,8 @@ pub struct DeviceConfig {
 pub struct TimingConfig {
     /// How often a sleepy end device polls its parent for buffered frames.
     /// Keep it below the parent's indirect-transaction persistence time
-    /// (~7.68 s).
+    /// (~7.68 s). Capped at the negotiated keepalive interval when the parent
+    /// tracks data polls as keepalives.
     pub poll_interval_ms: u32,
     /// Keepalive period used until one is negotiated with the parent
     /// (3.6.10.3 leaves the period to the manufacturer); the negotiated
