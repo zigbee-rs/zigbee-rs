@@ -36,8 +36,8 @@ use spin::Mutex;
 use zigbee_types::IeeeAddress;
 use zigbee_types::ShortAddress;
 use zigbee_types::StorageVec;
-use zigbee_types::sync::Event;
 use zigbee_types::sync::Signal;
+use zigbee_types::sync::SingleWaiterEvent;
 use zigbee_types::sync::with_timeout;
 
 use super::aib;
@@ -119,12 +119,11 @@ struct AckKey {
 }
 
 // one outstanding acknowledged transmission; each slot carries its own
-// event because several senders can wait at once and an Event holds a
-// single waker
+// event because several senders can wait at once, each for its own ack
 #[derive(Default)]
 struct PendingAck {
     key: Mutex<Option<AckKey>>,
-    acked: Event,
+    acked: SingleWaiterEvent,
 }
 
 // duplicate rejection table (2.2.8.4.2), keyed on source address and APS

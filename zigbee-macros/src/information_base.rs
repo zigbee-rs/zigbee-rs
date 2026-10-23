@@ -198,8 +198,8 @@ macro_rules! construct_ib {
             unsafe { IB.as_ref().expect(concat!(stringify!($ib_name), " not initialized")) }
         }
 
-        static DIRTY_SIGNAL: ::zigbee_types::sync::Event =
-            ::zigbee_types::sync::Event::new();
+        static DIRTY_SIGNAL: ::zigbee_types::sync::SingleWaiterEvent =
+            ::zigbee_types::sync::SingleWaiterEvent::new();
 
         /// Waits until a persisted attribute changes (single waiter).
         ///
