@@ -190,7 +190,7 @@ where
         if resuming {
             log::info!(
                 "[APP] resuming on network: addr={:#06x}",
-                *nib::get_ref().network_address()
+                nib::get_ref().network_address()
             );
         }
         resuming
@@ -200,6 +200,16 @@ where
     /// installed, so the application can start talking to it.
     pub async fn wait_until_joined(&self) {
         self.device.wait_until_joined().await;
+    }
+
+    /// Persist everything before a reset the application knows is coming.
+    ///
+    /// Call this before a reboot, a deep sleep or a firmware update. The next
+    /// boot then resumes anti-replay at the exact frame counters it had
+    /// accepted; without it, counters come back quantized and a small window
+    /// of already-seen counters is accepted again.
+    pub async fn shutdown(&self) {
+        self.storage.shutdown().await;
     }
 
     /// Forget the joined network and persist that, so the next boot
@@ -294,7 +304,7 @@ where
         let cfg = self.config.descriptors();
         // a restored network address means the device resumed on a network
         // without a fresh key exchange — release the gate immediately
-        if *nib::get_ref().network_address() != ShortAddress::default().0 {
+        if nib::get_ref().network_address() != ShortAddress::default().0 {
             device.mark_rejoined();
         }
         device.wait_until_joined().await;

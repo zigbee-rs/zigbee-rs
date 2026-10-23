@@ -50,6 +50,13 @@ use zigbee_types::ShortAddress;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+#[unsafe(no_mangle)]
+extern "Rust" fn _esp_println_timestamp() -> u64 {
+    esp_hal::time::Instant::now()
+        .duration_since_epoch()
+        .as_millis()
+}
+
 /// flash region reserved for zigbee persistence.
 ///
 /// MUST be adjusted to your partition table: it must not overlap the
@@ -217,7 +224,8 @@ async fn stack_task(stack: &'static Stack) {
     // returns only when no rejoin could get us back onto the network: the
     // network is gone or our keys are stale, so re-commission from scratch
     let outcome = stack.run(Delay).await;
-    println!("Off the network ({outcome:?}), forgetting it and rebooting");
+    println!("Off the network ({outcome:?}), forgetting it and rebooting in 60s");
+    Timer::after_secs(60).await;
     stack.forget_network().await;
     esp_hal::system::software_reset();
 }
@@ -249,7 +257,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     // the stack persists dirty state (keys, frame counters, tables) whenever it
     // changes them
     let flash = BlockingAsync::new(FlashStorage::new(peripherals.FLASH));
-    let storage = zigbee::storage::init_with_flash(flash, ZIGBEE_FLASH_RANGE).await;
+    let storage = zigbee::storage::FlashStorage::new(flash, ZIGBEE_FLASH_RANGE).await;
 
     let config = stack_config();
 
@@ -285,9 +293,9 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         .map_or(0xffff, |n| n.network_address.0);
     println!(
         "On network: addr={:#06x} parent={:#06x} pan={:#06x} epid={:#x} channel={} update_id={}",
-        *nib.network_address(),
+        nib.network_address(),
         parent,
-        *nib.panid(),
+        nib.panid(),
         *nib.extended_panid(),
         stack.config().channel(),
         nib.update_id()

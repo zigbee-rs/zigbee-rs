@@ -63,14 +63,12 @@ pub use zigbee_core::security;
 /// Persistence of the information bases.
 pub use zigbee_core::storage;
 /// Flash-backed persistence (feature `storage`): restore the information bases
-/// with [`init_with_flash`], then hand the driver to [`Stack::new`].
+/// with [`FlashStorage::new`], then hand the driver to [`Stack::new`].
 #[cfg(feature = "storage")]
 pub use zigbee_core::storage::FlashStorage;
 /// RAM-only persistence: pass it to [`Stack::new`] when state need not survive
 /// a reset.
 pub use zigbee_core::storage::NoStorage;
-#[cfg(feature = "storage")]
-pub use zigbee_core::storage::init_with_flash;
 /// Zigbee Device Objects — driven by [`Stack`] and [`bdb`].
 #[doc(hidden)]
 pub use zigbee_core::zdo;
