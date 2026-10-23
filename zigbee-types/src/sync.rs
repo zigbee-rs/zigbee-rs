@@ -1,9 +1,10 @@
 //! Async signaling primitives.
 //!
-//! Runtime-agnostic: built on [`AtomicWaker`], usable from any executor.
+//! Runtime-agnostic: built on plain wakers, usable from any executor.
 
 use core::future::Future;
 use core::future::poll_fn;
+use core::mem;
 use core::pin::pin;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU8;
@@ -11,6 +12,7 @@ use core::sync::atomic::AtomicU16;
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 use core::task::Poll;
+use core::task::Waker;
 
 use atomic_waker::AtomicWaker;
 use spin::Mutex;
@@ -117,68 +119,143 @@ impl<T> Signal<T> {
     }
 }
 
-/// One-shot event flag supporting a single waiter.
-#[derive(Default)]
-pub struct Event {
+// flag plus the tasks waiting for it to be set; a waiter beyond `N` wakes
+// the tracked ones so they re-register, so none is left without a wakeup
+struct Flag<const N: usize> {
     set: AtomicBool,
-    waker: AtomicWaker,
+    wakers: Mutex<[Option<Waker>; N]>,
 }
 
-impl Event {
-    /// Creates an unset event.
-    pub const fn new() -> Self {
+impl<const N: usize> Default for Flag<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Flag<N> {
+    const fn new() -> Self {
         Self {
             set: AtomicBool::new(false),
-            waker: AtomicWaker::new(),
+            wakers: Mutex::new([const { None }; N]),
         }
+    }
+
+    fn signal(&self) {
+        self.set.store(true, Ordering::Release);
+        let wakers = mem::replace(&mut *self.wakers.lock(), [const { None }; N]);
+        wakers.into_iter().flatten().for_each(Waker::wake);
+    }
+
+    fn reset(&self) {
+        self.set.store(false, Ordering::Release);
+    }
+
+    fn is_set(&self) -> bool {
+        self.set.load(Ordering::Acquire)
+    }
+
+    async fn wait(&self, consume: bool) {
+        let take = || match consume {
+            true => self.set.swap(false, Ordering::AcqRel),
+            false => self.is_set(),
+        };
+        poll_fn(|cx| {
+            if take() {
+                return Poll::Ready(());
+            }
+            self.register(cx.waker());
+            // re-check to close the race with a signal between check and
+            // register
+            if take() {
+                return Poll::Ready(());
+            }
+            Poll::Pending
+        })
+        .await;
+    }
+
+    fn register(&self, waker: &Waker) {
+        let mut wakers = self.wakers.lock();
+        if let Some(slot) = wakers.iter_mut().find(|slot| match slot {
+            Some(registered) => registered.will_wake(waker),
+            None => true,
+        }) {
+            *slot = Some(waker.clone());
+            return;
+        }
+        let evicted = mem::replace(&mut *wakers, [const { None }; N]);
+        wakers[0] = Some(waker.clone());
+        drop(wakers);
+        evicted.into_iter().flatten().for_each(Waker::wake);
+    }
+}
+
+/// Event flag consumed by a single waiter.
+///
+/// A signal that arrives before anyone waits is kept until taken. Only one
+/// task may wait at a time; use [`MultiWaiterEvent`] for several.
+#[derive(Default)]
+pub struct SingleWaiterEvent(Flag<1>);
+
+impl SingleWaiterEvent {
+    /// Creates an unset event.
+    pub const fn new() -> Self {
+        Self(Flag::new())
     }
 
     /// Set the flag and wake the waiter.
     pub fn signal(&self) {
-        self.set.store(true, Ordering::Release);
-        self.waker.wake();
+        self.0.signal();
     }
 
     /// Clear a pending, unconsumed signal.
     pub fn reset(&self) {
-        self.set.store(false, Ordering::Release);
+        self.0.reset();
     }
 
     /// Whether the flag is currently set.
     pub fn is_set(&self) -> bool {
-        self.set.load(Ordering::Acquire)
+        self.0.is_set()
     }
 
-    /// Wait until signaled, consuming the flag (edge semantics).
+    /// Wait until signaled, consuming the flag.
     pub async fn wait(&self) {
-        poll_fn(|cx| {
-            if self.set.swap(false, Ordering::AcqRel) {
-                return Poll::Ready(());
-            }
-            self.waker.register(cx.waker());
-            // re-check to close the race with a signal between check and
-            // register
-            if self.set.swap(false, Ordering::AcqRel) {
-                return Poll::Ready(());
-            }
-            Poll::Pending
-        })
-        .await;
+        self.0.wait(true).await;
+    }
+}
+
+/// Event flag any number of tasks can wait on.
+///
+/// Stays set until reset, releasing every waiter in the meantime. Up to `N`
+/// waiters are tracked at once; more still work, at the cost of spurious
+/// wakeups.
+#[derive(Default)]
+pub struct MultiWaiterEvent<const N: usize>(Flag<N>);
+
+impl<const N: usize> MultiWaiterEvent<N> {
+    /// Creates an unset event.
+    pub const fn new() -> Self {
+        Self(Flag::new())
     }
 
-    /// Wait until signaled, leaving the flag set (level semantics).
-    pub async fn wait_set(&self) {
-        poll_fn(|cx| {
-            if self.set.load(Ordering::Acquire) {
-                return Poll::Ready(());
-            }
-            self.waker.register(cx.waker());
-            if self.set.load(Ordering::Acquire) {
-                return Poll::Ready(());
-            }
-            Poll::Pending
-        })
-        .await;
+    /// Set the flag and wake every waiter.
+    pub fn signal(&self) {
+        self.0.signal();
+    }
+
+    /// Clear the flag; waiters arriving from now on wait for the next signal.
+    pub fn reset(&self) {
+        self.0.reset();
+    }
+
+    /// Whether the flag is currently set.
+    pub fn is_set(&self) -> bool {
+        self.0.is_set()
+    }
+
+    /// Wait until signaled, leaving the flag set.
+    pub async fn wait(&self) {
+        self.0.wait(false).await;
     }
 }
 
@@ -434,7 +511,7 @@ pub struct TableCell<V> {
 impl<V: Table> TableCell<V> {
     /// Borrows the table for entry-level mutation, recording exactly which
     /// rows change.
-    pub fn table_mut<'a>(&'a self, signal: &'a Event) -> TableMut<'a, V> {
+    pub fn table_mut<'a>(&'a self, signal: &'a SingleWaiterEvent) -> TableMut<'a, V> {
         TableMut::new(self.entries.write(), &self.dirty, &self.len_dirty, signal)
     }
 
@@ -515,7 +592,7 @@ pub struct TableMut<'a, V: Table> {
     entries: spin::RwLockWriteGuard<'a, V>,
     dirty: &'a BitSet64,
     len_dirty: &'a AtomicBool,
-    signal: &'a Event,
+    signal: &'a SingleWaiterEvent,
 }
 
 impl<'a, V: Table> TableMut<'a, V> {
@@ -524,7 +601,7 @@ impl<'a, V: Table> TableMut<'a, V> {
         entries: spin::RwLockWriteGuard<'a, V>,
         dirty: &'a BitSet64,
         len_dirty: &'a AtomicBool,
-        signal: &'a Event,
+        signal: &'a SingleWaiterEvent,
     ) -> Self {
         Self {
             entries,
@@ -631,16 +708,19 @@ impl<'a, V: Table> TableMut<'a, V> {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use core::future::Future;
     use core::pin::pin;
     use core::task::Context;
-    use core::task::Waker;
+    use std::sync::Arc;
+    use std::task::Wake;
 
     use super::*;
 
     #[test]
     fn wait_consumes_signal() {
-        let event = Event::new();
+        let event = SingleWaiterEvent::new();
         let mut cx = Context::from_waker(Waker::noop());
 
         let mut wait = pin!(event.wait());
@@ -670,14 +750,85 @@ mod tests {
         assert!(pin!(signal.wait()).poll(&mut cx).is_pending());
     }
 
+    struct CountingWaker(AtomicU32);
+
+    impl Wake for CountingWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn counting_waker() -> (Arc<CountingWaker>, Waker) {
+        let counter = Arc::new(CountingWaker(AtomicU32::new(0)));
+        (counter.clone(), Waker::from(counter))
+    }
+
+    fn wakes(counter: &CountingWaker) -> u32 {
+        counter.0.load(Ordering::Relaxed)
+    }
+
     #[test]
-    fn wait_set_leaves_flag() {
-        let event = Event::new();
+    fn multi_waiter_event_wakes_every_waiter() {
+        let event = MultiWaiterEvent::<2>::new();
+        let (first, first_waker) = counting_waker();
+        let (second, second_waker) = counting_waker();
+        let mut first_wait = pin!(event.wait());
+        let mut second_wait = pin!(event.wait());
+
+        assert!(
+            first_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&first_waker))
+                .is_pending()
+        );
+        assert!(
+            second_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&second_waker))
+                .is_pending()
+        );
+
+        event.signal();
+        assert_eq!((wakes(&first), wakes(&second)), (1, 1));
+        assert!(
+            first_wait
+                .poll(&mut Context::from_waker(&first_waker))
+                .is_ready()
+        );
+        // level semantics: still open
+        assert!(
+            second_wait
+                .poll(&mut Context::from_waker(&second_waker))
+                .is_ready()
+        );
+    }
+
+    #[test]
+    fn multi_waiter_event_overflow_wakes_evicted_waiters() {
+        let event = MultiWaiterEvent::<1>::new();
+        let (first, first_waker) = counting_waker();
+        let (_, second_waker) = counting_waker();
+
+        assert!(
+            pin!(event.wait())
+                .poll(&mut Context::from_waker(&first_waker))
+                .is_pending()
+        );
+        assert!(
+            pin!(event.wait())
+                .poll(&mut Context::from_waker(&second_waker))
+                .is_pending()
+        );
+        assert_eq!(wakes(&first), 1);
+    }
+
+    #[test]
+    fn reset_multi_waiter_event_parks_new_waiters() {
+        let event = MultiWaiterEvent::<1>::new();
         let mut cx = Context::from_waker(Waker::noop());
 
         event.signal();
-        assert!(pin!(event.wait_set()).poll(&mut cx).is_ready());
-        // level semantics: still set
-        assert!(pin!(event.wait_set()).poll(&mut cx).is_ready());
+        event.reset();
+        assert!(pin!(event.wait()).poll(&mut cx).is_pending());
     }
 }
