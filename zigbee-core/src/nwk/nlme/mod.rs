@@ -1296,7 +1296,7 @@ where
 
         // populate the neighbor table with mandatory fields (Table 3-63)
         // and optional discovery-time fields (Table 3-64)
-        let neighbor_table = scan_result
+        let neighbors = scan_result
             .pan_descriptor
             .iter()
             .filter_map(|pd| match pd.coord_address {
@@ -1336,22 +1336,17 @@ where
                     pan_id: pd.coord_pan_id.0,
                 }),
                 Address::Extended(_, _) => None,
-            })
-            .collect();
+            });
+        let neighbor_table = collect_discovery_neighbors(neighbors);
 
         self.nib()
             .update_neighbor_table(|value| *value = StorageVec(neighbor_table));
 
         // build network descriptors for the confirm primitive
-        let network_descriptors = scan_result
-            .pan_descriptor
-            .into_iter()
-            .map(From::from)
-            .collect();
-
-        Ok(NlmeNetworkDiscoveryConfirm {
-            network_descriptor: network_descriptors,
-        })
+        let network_descriptors = scan_result.pan_descriptor.into_iter().map(From::from);
+        Ok(NlmeNetworkDiscoveryConfirm::from_descriptors(
+            network_descriptors,
+        ))
     }
 
     /// 3.2.2.5
@@ -1863,6 +1858,33 @@ where
         // end devices route via parent
         self.transmit_via_parent(&buf[..total_len]).await
     }
+}
+
+fn collect_discovery_neighbors<const N: usize>(
+    neighbors: impl Iterator<Item = NwkNeighbor>,
+) -> heapless::Vec<NwkNeighbor, N> {
+    let mut table: heapless::Vec<NwkNeighbor, N> = heapless::Vec::new();
+    for mut neighbor in neighbors {
+        if let Some(existing) = table.iter_mut().find(|existing| {
+            existing.extended_pan_id == neighbor.extended_pan_id
+                && existing.pan_id == neighbor.pan_id
+                && existing.logical_channel == neighbor.logical_channel
+                && existing.network_address == neighbor.network_address
+        }) {
+            // Refresh beacon fields, retaining the best observed link quality.
+            neighbor.lqi = neighbor.lqi.max(existing.lqi);
+            *existing = neighbor;
+        } else if let Err(neighbor) = table.push(neighbor) {
+            // A scan may exceed the table capacity; prefer stronger links to
+            // keeping whichever beacons happened to arrive first.
+            if let Some(weakest) = table.iter_mut().min_by_key(|entry| entry.lqi)
+                && neighbor.lqi > weakest.lqi
+            {
+                *weakest = neighbor;
+            }
+        }
+    }
+    table
 }
 
 #[cfg(test)]
@@ -3221,6 +3243,90 @@ mod tests {
             nlme.select_rejoin_candidates(IeeeAddress(0xDEAD), false),
             heapless::Vec::<usize, 16>::from_slice(&[0]).unwrap()
         );
+    }
+
+    #[test]
+    fn discovery_keeps_strongest_neighbors_when_full() {
+        // The ESP MAC can return more scan results than the fixed NIB holds.
+        let neighbors = collect_discovery_neighbors::<16>(
+            (0_u8..17).map(|i| make_neighbor(0xAAAA, u16::from(i), 0xDEAD, i + 100, 1)),
+        );
+
+        assert_eq!(neighbors.len(), 16);
+        assert!(
+            !neighbors
+                .iter()
+                .any(|n| n.network_address == ShortAddress(0))
+        );
+        assert!(
+            neighbors
+                .iter()
+                .any(|n| n.network_address == ShortAddress(16))
+        );
+    }
+
+    #[test]
+    fn discovery_coalesces_repeated_beacons() {
+        let neighbors = collect_discovery_neighbors::<16>(
+            (0_u8..27).map(|i| make_neighbor(0xAAAA, 0x1234, 0xDEAD, i + 100, 1)),
+        );
+
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].lqi, 126);
+    }
+
+    #[test]
+    fn discovery_does_not_replace_stronger_neighbors() {
+        let neighbors = collect_discovery_neighbors::<16>(
+            (0_u8..17).map(|i| make_neighbor(0xAAAA, u16::from(i), 0xDEAD, 200 - i, 1)),
+        );
+
+        assert_eq!(neighbors.len(), 16);
+        assert!(
+            neighbors
+                .iter()
+                .any(|n| n.network_address == ShortAddress(0))
+        );
+        assert!(
+            !neighbors
+                .iter()
+                .any(|n| n.network_address == ShortAddress(16))
+        );
+    }
+
+    #[test]
+    fn discovery_distinguishes_devices_networks_and_channels() {
+        let neighbors = collect_discovery_neighbors::<16>((0..5).map(|i| {
+            let mut neighbor = make_neighbor(0xAAAA, 0x1234, 0xDEAD, 200, 1);
+            match i {
+                1 => neighbor.network_address = ShortAddress(0x5678),
+                2 => neighbor.pan_id = 0xBBBB,
+                3 => neighbor.extended_pan_id = IeeeAddress(0xBEEF),
+                4 => neighbor.logical_channel = 12,
+                _ => (),
+            }
+            neighbor
+        }));
+
+        assert_eq!(neighbors.len(), 5);
+    }
+
+    #[test]
+    fn discovery_refreshes_duplicate_beacon_fields() {
+        let neighbors = collect_discovery_neighbors::<1>((0..2).map(|i| {
+            let mut neighbor = make_neighbor(0xAAAA, 0x1234, 0xDEAD, 200, 1);
+            if i == 1 {
+                neighbor.lqi = 100;
+                neighbor.permit_joining = false;
+                neighbor.update_id = 1;
+            }
+            neighbor
+        }));
+
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0].lqi, 200);
+        assert!(!neighbors[0].permit_joining);
+        assert_eq!(neighbors[0].update_id, 1);
     }
 
     #[test]
