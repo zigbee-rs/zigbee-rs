@@ -11,8 +11,9 @@ pub mod config;
 pub mod descriptor;
 pub mod device_annce;
 use zigbee_types::StorageVec;
-use zigbee_types::sync::Event;
+use zigbee_types::sync::MultiWaiterEvent;
 use zigbee_types::sync::Signal;
+use zigbee_types::sync::SingleWaiterEvent;
 
 use crate::apl::descriptors::node_descriptor::LogicalType;
 use crate::aps::aib;
@@ -49,6 +50,8 @@ use crate::security::SecurityContext;
 // network key (4.4.10); wide enough to cover the router -> TC -> router
 // round-trip when the parent is not the coordinator
 const TRANSPORT_KEY_POLL_RETRIES: u8 = 20;
+// receive loop plus application tasks waiting to talk to the network
+const MAX_JOIN_WAITERS: usize = 4;
 
 /// Provides an interface between the application object, the device profile and
 /// the APS.
@@ -63,13 +66,14 @@ pub struct ZigbeeDevice<M> {
     apsme: Apsme,
     // ZDP transaction sequence number (2.4.2), independent of the APS counter
     zdp_seq: AtomicU8,
-    // signaled once the network key is installed; gates the receive loop
-    joined: Event,
+    // set once the network key is installed; gates the receive loop and
+    // application tasks
+    joined: MultiWaiterEvent<MAX_JOIN_WAITERS>,
     // carries an inbound Node_Desc_rsp (2.4.4.2.3) to the procedure that
     // asked for it, e.g. the BDB TC link key exchange
     node_desc_rsp: Signal<descriptor::NodeDescRsp>,
     // set when a leave asked this device to rejoin (3.6.1.10.4 step 1)
-    rejoin_requested: Event,
+    rejoin_requested: SingleWaiterEvent,
 }
 
 // Zigbee Device Profile identifier (endpoint 0)
@@ -218,9 +222,9 @@ impl<M: Mlme> ZigbeeDevice<M> {
             nlme,
             apsme: Apsme::new(aps_counter_init),
             zdp_seq: AtomicU8::new(zdp_seq_init),
-            joined: Event::new(),
+            joined: MultiWaiterEvent::new(),
             node_desc_rsp: Signal::new(),
-            rejoin_requested: Event::new(),
+            rejoin_requested: SingleWaiterEvent::new(),
         }
     }
 
@@ -631,8 +635,10 @@ impl<M: Mlme> ZigbeeDevice<M> {
     }
 
     /// Wait until the network key is installed and the device is joined.
+    ///
+    /// Any number of tasks may wait at the same time.
     pub async fn wait_until_joined(&self) {
-        self.joined.wait_set().await;
+        self.joined.wait().await;
     }
 
     // open or close the join gate, keeping the APS layer's view in sync
