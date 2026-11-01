@@ -362,6 +362,19 @@ where
     /// response means a legacy parent and leaves the NIB untouched.
     pub async fn send_end_device_timeout_request(&self) -> Result<(), NetworkError> {
         let requested_timeout = self.nib().end_device_timeout_default();
+
+        let parent = self.parent_short_address()?;
+        log::debug!(
+            "[NWK] timeout request: parent=0x{:04x}, requested_timeout_enum={}",
+            parent.0,
+            requested_timeout,
+        );
+
+        // The IEEE address is optional until learned from received traffic.
+        if let Some(ieee) = self.neighbor_ieee_address(parent) {
+            log::debug!("[NWK] parent IEEE address: 0x{:016x}", ieee.0);
+        }
+
         let command = Command::EndDeviceTimeoutRequest(EndDeviceTimeoutRequest {
             requested_timeout,
             // all bits reserved, must be 0 (3.4.11.3.2)
@@ -369,8 +382,7 @@ where
         });
 
         let mut buf = [0u8; 256];
-        let len =
-            self.build_nwk_command_frame(self.parent_short_address()?, command, true, &mut buf)?;
+        let len = self.build_nwk_command_frame(parent, command, true, &mut buf)?;
         self.pending_timeout_request
             .store(requested_timeout, Ordering::Relaxed);
         self.mac
@@ -531,17 +543,23 @@ where
     // response by polling for it
     async fn poll_until_timeout_response(&self, retries: u8) {
         let mut buf = [0u8; 128];
-        for _ in 0..retries {
+        for attempt in 0..retries {
             if self.timeout_response.is_signaled() {
                 return;
             }
+
+            log::debug!("[NWK] timeout-response poll {}/{}", attempt + 1, retries);
+
             match self.poll_parent(&mut buf).await {
-                Ok(Some(len)) => match self.process_received_nwk_frame(&mut buf[..len]).await {
-                    Ok(Some(_)) => log::debug!("[NWK] keepalive poll dropped a data frame"),
-                    Ok(None) => (),
-                    Err(e) => log::debug!("[NWK] keepalive frame not processed: {e:?}"),
-                },
-                Ok(None) => (),
+                Ok(Some(len)) => {
+                    log::debug!("[NWK] timeout-response poll: received {len} bytes");
+                    match self.process_received_nwk_frame(&mut buf[..len]).await {
+                        Ok(Some(_)) => log::debug!("[NWK] keepalive poll dropped a data frame"),
+                        Ok(None) => (),
+                        Err(e) => log::debug!("[NWK] keepalive frame not processed: {e:?}"),
+                    }
+                }
+                Ok(None) => log::debug!("[NWK] timeout-response poll: no queued frame"),
                 Err(e) => log::debug!("[NWK] keepalive poll failed: {e:?}"),
             }
         }

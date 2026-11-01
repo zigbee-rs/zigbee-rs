@@ -398,7 +398,8 @@ where
     }
 
     // one keepalive per keepalive interval (3.6.10.3); relies on a running
-    // rx loop whose polls are the keepalives of a sleepy device
+    // rx loop whose polls are the keepalives of a sleepy device. When no
+    // keepalive method was negotiated, use MAC data polling as a fallback.
     async fn keepalive(&self) -> Result<(), NetworkError> {
         let device = &self.device;
         let handler = &self.handler;
@@ -417,9 +418,9 @@ where
                 }
                 return Ok(());
             }
-            // the data poll itself is the keepalive, so dispatch what it brings
-            // back instead of dropping it
-            KeepaliveMethod::MacDataPoll => {
+            // Use MAC polling when negotiated, or as a fallback when no
+            // keepalive method was negotiated. Dispatch any retrieved frame.
+            KeepaliveMethod::MacDataPoll | KeepaliveMethod::None => {
                 let result = device.poll_and_dispatch(cfg, handler).await;
                 if result.is_ok() {
                     nlme.refresh_parent_timeout();
@@ -427,7 +428,6 @@ where
                 result
             }
             KeepaliveMethod::TimeoutRequest => nlme.send_timeout_request_keepalive().await,
-            KeepaliveMethod::None => Ok(()),
         };
         let Err(e) = result else {
             return Ok(());

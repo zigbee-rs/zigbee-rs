@@ -534,7 +534,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
         self.mark_rejoined();
         // 3.6.10.2: renegotiated after every rejoin, even with the same parent
         log::debug!("[ZDO] rejoined, negotiating end-device timeout");
-        let _ = self.nlme.negotiate_end_device_timeout().await;
+        match self.nlme.negotiate_end_device_timeout().await {
+            Ok(true) => log::debug!("[ZDO] timeout negotiation succeeded"),
+            Ok(false) => log::debug!("[ZDO] timeout negotiation unsuccessful"),
+            Err(error) => {
+                log::warn!("[ZDO] timeout negotiation error: {error:?}");
+            }
+        }
         log::debug!("[ZDO] announcing self");
         let result = self.announce_self().await;
         log::debug!("[ZDO] rejoin complete: {result:?}");
