@@ -16,6 +16,7 @@ use byte::ctx;
 const USER_DESCRIPTOR_SIZE: usize = 16;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UserDescriptor<'a>(&'a [u8]);
 
 impl<'a> TryRead<'a, ()> for UserDescriptor<'a> {

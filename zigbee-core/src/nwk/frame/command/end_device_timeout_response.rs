@@ -9,6 +9,7 @@ impl_byte! {
     ///
     /// See Section 3.4.12.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct EndDeviceTimeoutResponse {
         /// Whether the parent accepted the requested timeout.
         pub status: u8,

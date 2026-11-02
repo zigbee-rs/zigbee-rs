@@ -12,6 +12,7 @@ use crate::frame::header::frame_control::FrameType;
 use crate::types::ids::CommandId;
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ZclFramePayload<'a> {
     GeneralCommand(GeneralCommand<'a>),
     ClusterSpecificCommand {

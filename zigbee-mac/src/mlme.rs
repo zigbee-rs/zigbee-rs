@@ -111,10 +111,14 @@ pub trait Mlme {
 /// Every field is optional: `None` leaves that attribute as the implementation
 /// has it, so a caller only states what it actually knows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MacConfig {
     /// `phyCurrentChannel`: the channel the network operates on.
     pub channel: Option<u8>,
     /// `macPANId` of that network.
+    // `ieee802154` implements no `defmt::Format`, so its types ride along via
+    // `Debug` wherever they are a field of ours
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub pan_id: Option<PanId>,
     /// `macShortAddress` assigned to this device.
     pub short_address: Option<ShortAddress>,
@@ -161,14 +165,17 @@ impl MacConfig {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AssociationResponse {
     pub device_address: IeeeAddress,
     pub association_address: ShortAddress,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub status: AssociationStatus,
 }
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ScanType {
     Ed,
     Active,
@@ -221,6 +228,7 @@ pub type PanDescriptorList = alloc::vec::Vec<PanDescriptor>;
 pub type PanDescriptorList = heapless::Vec<PanDescriptor, MAX_PAN_DESCRIPTOR_SIZE>;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ScanResult {
     pub scan_type: ScanType,
     pub pan_descriptor: PanDescriptorList,
@@ -228,11 +236,14 @@ pub struct ScanResult {
 
 #[non_exhaustive]
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PanDescriptor {
     pub channel: u8,
     pub coord_addr_mode: u8,
     pub coord_pan_id: ShortAddress,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub coord_address: Address,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub superframe_spec: SuperframeSpecification,
     // TODO: gts_permit, timestamp, acl_entry, security_failure
     pub link_quality: u8,
@@ -242,6 +253,7 @@ pub struct PanDescriptor {
 
 impl_byte! {
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ZigbeeBeacon {
         pub protocol_id: u8,
         pub stack_profile: StackProfile,
@@ -268,6 +280,21 @@ impl core::fmt::Debug for StackProfile {
             .field("device_depth", &self.device_depth())
             .field("end_device_capacity", &self.end_device_capacity())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for StackProfile {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "StackProfile {{ stack_profile: {}, protocol_version: {}, router_capacity: {}, device_depth: {}, end_device_capacity: {} }}",
+            self.stack_profile(),
+            self.protocol_version(),
+            self.router_capacity(),
+            self.device_depth(),
+            self.end_device_capacity()
+        );
     }
 }
 

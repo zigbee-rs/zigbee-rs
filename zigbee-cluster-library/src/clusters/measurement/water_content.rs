@@ -37,6 +37,7 @@ pub mod attribute {
 ///
 /// Counted as 100 x the percentage, so 100% is `0x2710`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WaterContent(u16);
 
 impl WaterContent {

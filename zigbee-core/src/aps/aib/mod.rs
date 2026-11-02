@@ -87,17 +87,20 @@ construct_ib! {
 // TODO: define group entry fields
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ApsGroup(u8);
 }
 
 // TODO: define window size fields
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ApsWindowSize(u8);
 }
 
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct DeviceKeyPairDescriptor {
         pub device_address: IeeeAddress,
         pub key_attributes: KeyAttribute,
@@ -111,6 +114,7 @@ impl_byte! {
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum KeyAttribute {
         ProvisionalKey = 0x00,
         UnverifiedKey = 0x01,
@@ -123,6 +127,7 @@ impl_byte! {
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum LinkKeyType {
         UniqueLinkKey = 0x00,
         GlobalLinkKey = 0x01,

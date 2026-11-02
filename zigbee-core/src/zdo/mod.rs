@@ -88,6 +88,7 @@ const MAX_MATCHING_ENDPOINTS: usize = 16;
 /// One inbound application-profile request handed to a
 /// [`ClusterRequestHandler`].
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClusterRequest<'a> {
     pub profile_id: u16,
     pub cluster_id: u16,
@@ -105,6 +106,7 @@ pub struct ClusterRequest<'a> {
 /// a request (2.2.4.1.3), so the addressing belongs to whoever built the
 /// response rather than to the layer sending it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClusterReply {
     pub cluster_id: u16,
     pub profile_id: u16,

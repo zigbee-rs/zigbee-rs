@@ -4,6 +4,7 @@ use zigbee_types::ShortAddress;
 impl_byte! {
     /// Network Status Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NetworkStatus {
         pub status_code: NetworkStatusCode,
         pub destination_address: ShortAddress,
@@ -16,6 +17,7 @@ impl_byte! {
     ///
     /// See Section 3.4.3.3.1.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum NetworkStatusCode {
         /// No route available
         NoRouteAvailable = 0x00,

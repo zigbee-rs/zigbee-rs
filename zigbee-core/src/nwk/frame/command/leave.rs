@@ -3,6 +3,7 @@ use zigbee_macros::impl_byte;
 impl_byte! {
     /// Leave Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Leave {
         pub command_options: CommandOptions,
     }
@@ -21,6 +22,19 @@ impl core::fmt::Debug for CommandOptions {
             .field("request", &self.request())
             .field("remove_children", &self.remove_children())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for CommandOptions {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "CommandOptions {{ rejoin: {}, request: {}, remove_children: {} }}",
+            self.rejoin(),
+            self.request(),
+            self.remove_children()
+        );
     }
 }
 

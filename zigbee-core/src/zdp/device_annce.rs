@@ -15,6 +15,7 @@ pub const CLUSTER_ID: u16 = 0x0013;
 impl_byte! {
     /// ZDP Device_annce payload (2.4.3.1.11).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct DeviceAnnce {
         /// NWK address for the local device.
         pub nwk_addr: ShortAddress,

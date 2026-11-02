@@ -15,6 +15,7 @@ use crate::nwk::nib::CapabilityInformation;
 
 /// 3.2.2.4 - NLME-NETWORK-DISCOVERY.confirm
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeNetworkDiscoveryConfirm {
     #[cfg(feature = "alloc")]
     pub network_descriptor: Vec<NetworkDescriptor>,
@@ -29,6 +30,7 @@ pub struct NlmeNetworkDiscoveryConfirm {
 /// discovery.  See Table 3-12 for the fields returned to the next
 /// higher layer.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NetworkDescriptor {
     /// 64-bit PAN identifier
     pub extended_pan_id: IeeeAddress,
@@ -43,8 +45,12 @@ pub struct NetworkDescriptor {
     /// version of the Zigbee protocol in use
     pub zigbee_version: u8,
     /// specifies how often the MAC sub-layer beacon is to be transmitted
+    // re-exported from `ieee802154`, which implements no `defmt::Format`, so
+    // both orders ride along via `Debug`
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub beacon_order: BeaconOrder,
     /// for beacon oriented networks
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     pub superframe_order: SuperframeOrder,
     /// indicates that at least one Zigbee router or network currently permits
     /// joining
@@ -86,6 +92,7 @@ pub struct NlmePermitJoiningRequest {
 }
 /// 3.2.2.8 - NLME-PERMIT-JOINING.confirm
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmePermitJoiningConfirm {
     pub status: NlmeJoinStatus,
 }
@@ -99,6 +106,7 @@ pub struct NlmeEdScanRequest {}
 pub struct NlmeEdScanConfirm {}
 /// Method used to join or rejoin a network (Table 3-21).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RejoinNetwork {
     /// Join through MAC association (0x00).
     Association,
@@ -137,6 +145,7 @@ pub struct NlmeJoinIndication {
 }
 /// 3.2.2.15 - NLME-JOIN.confirm
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeJoinConfirm {
     pub status: NlmeJoinStatus,
     pub network_address: ShortAddress,
@@ -176,6 +185,7 @@ pub struct NlmeDirectJoinConfirm {}
 
 /// 3.2.2.18 - NLME-LEAVE.request (Table 3-26).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeLeaveRequest {
     /// IEEE address of the device to remove, or `None` for this device to
     /// remove itself.
@@ -187,6 +197,7 @@ pub struct NlmeLeaveRequest {
 }
 /// 3.2.2.19 - NLME-LEAVE.indication (Table 3-27).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeLeaveIndication {
     /// IEEE address of the device that left, or `None` if this device was
     /// removed by its parent.
@@ -195,6 +206,7 @@ pub struct NlmeLeaveIndication {
 }
 /// 3.2.2.20 - NLME-LEAVE.confirm (Table 3-28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeLeaveConfirm {
     pub status: NlmeLeaveStatus,
     /// Echoes the request's `device_address`, or `None` for a self-leave.
@@ -218,6 +230,7 @@ pub enum NlmeLeaveStatus {
 
 /// 3.2.2.32 - NLME-NWK-STATUS.indication (Table 3-37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NlmeNwkStatusIndication {
     /// The error code associated with the failure.
     pub status: NetworkStatusCode,

@@ -48,6 +48,7 @@ impl ReportTypestate for NotReportable {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AccessFlags(u8);
 
 impl AccessFlags {
@@ -88,6 +89,7 @@ impl Sendable for ClientToServer {}
 impl Receivable for ServerToClient {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Cluster {
     id: ClusterId,
     manufacturer: Option<ManufacturerCode>,
@@ -307,6 +309,7 @@ impl<P, D> core::fmt::Debug for Command<P, D> {
 /// `Write Attributes Undivided` and `Configure Reporting` all work from the
 /// descriptors rather than from a second, hand-written list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrInfo {
     /// Identifier the attribute is addressed by (2.4.1.4).
     pub id: AttributeId,
@@ -319,6 +322,7 @@ pub struct AttrInfo {
 /// `(ClusterId, Option<ManufacturerCode>)` pair for ZDO advertisement and frame
 /// routing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClusterKey {
     pub id: ClusterId,
     pub manufacturer: Option<ManufacturerCode>,
@@ -334,6 +338,7 @@ impl ClusterKey {
 // attributes without compile-time schema knowledge
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct AttributeDescriptor {
     pub cluster: ClusterId,
     pub manufacturer: Option<ManufacturerCode>,

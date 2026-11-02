@@ -35,6 +35,7 @@ use crate::types::ids::ClusterId;
 /// alongside the payload means the transport cannot address the report to a
 /// cluster the attributes do not belong to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReportFrame<'a> {
     cluster: ClusterId,
     asdu: &'a [u8],
@@ -145,6 +146,7 @@ pub const MIN_INTERVAL_DEFAULT: u16 = 0xffff;
 
 /// The reporting configuration of one attribute (2.5.7.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReportingConfig {
     /// Shortest interval between two reports, in seconds; `0` imposes no
     /// minimum (2.5.7.1.5).

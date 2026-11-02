@@ -7,6 +7,7 @@ impl_byte! {
     /// Request Key Command Frame
     /// Table 4-19
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum RequestKey {
         #[tag_value = 0x02]
         ApplicationLinkKey(IeeeAddress),

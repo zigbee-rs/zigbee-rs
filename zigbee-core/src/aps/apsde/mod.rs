@@ -15,6 +15,7 @@ use crate::aps::types;
 
 // 2.2.4.1.1
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsdeSapRequest<'a> {
     pub dst_addr_mode: DstAddrMode,
     pub dst_address: Address,
@@ -51,6 +52,7 @@ impl Default for ApsdeSapRequest<'_> {
 
 /// The status of the corresponding request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsdeSapConfirmStatus {
     /// indicating that the request to transmit was successful
     #[default]
@@ -73,6 +75,7 @@ pub enum ApsdeSapConfirmStatus {
 
 // 2.2.4.1.2
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsdeSapConfirm {
     pub dst_addr_mode: DstAddrMode,
     pub dst_address: Address,
@@ -83,6 +86,7 @@ pub struct ApsdeSapConfirm {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsdeSapIndicationStatus {
     #[default]
     Success,
@@ -91,6 +95,7 @@ pub enum ApsdeSapIndicationStatus {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SecurityStatus {
     #[default]
     Unsecured,
@@ -100,6 +105,7 @@ pub enum SecurityStatus {
 
 // 2.2.4.1.3
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsdeSapIndication<'a> {
     pub dst_addr_mode: DstAddrMode,
     pub dst_address: Address,

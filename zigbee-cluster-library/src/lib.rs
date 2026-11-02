@@ -35,9 +35,6 @@
     async_fn_in_trait
 )]
 
-#[cfg(feature = "defmt")]
-use defmt as _;
-
 macro_rules! bad_input {
     ($msg:expr) => {
         byte::Error::BadInput { err: $msg }

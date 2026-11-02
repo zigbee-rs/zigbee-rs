@@ -116,6 +116,7 @@ mod tests {
     use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Flags(u8);
 
     impl ZclBitmap8 for Flags {
@@ -172,6 +173,7 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Flags2(u32);
 
     impl ZclBitmap24 for Flags2 {

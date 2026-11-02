@@ -19,6 +19,7 @@ use crate::reporting::ReportFrame;
 
 /// Errors produced when sending a ZCL frame.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ZclSendError {
     /// Source endpoint outside the valid range (2.2.4.1.1).
     InvalidEndpoint,
@@ -30,6 +31,7 @@ pub enum ZclSendError {
 /// (2.2.4.1.1) restricted to the [`ZclSender`] use case: a short address
 /// destination, source/destination endpoints, and the profile/cluster pair.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ZclUnicast {
     pub dst_short: u16,
     pub src_endpoint: u8,
@@ -44,6 +46,7 @@ pub struct ZclUnicast {
 /// [`ReportFrame`] already carries: the attributes in the frame determine the
 /// cluster it is addressed to.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ZclReportTarget {
     pub dst_short: u16,
     pub src_endpoint: u8,

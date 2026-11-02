@@ -3,6 +3,7 @@ use zigbee_macros::impl_byte;
 impl_byte! {
     /// Rejoin Request Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RejoinRequest {
         pub capability_information: CapabilityInformation,
     }
@@ -23,6 +24,20 @@ impl core::fmt::Debug for CapabilityInformation {
             .field("receiver_on_when_idle", &self.receiver_on_when_idle())
             .field("allocate_address", &self.allocate_address())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for CapabilityInformation {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "CapabilityInformation {{ device_type: {}, power_source: {}, receiver_on_when_idle: {}, allocate_address: {} }}",
+            self.device_type(),
+            self.power_source(),
+            self.receiver_on_when_idle(),
+            self.allocate_address()
+        );
     }
 }
 

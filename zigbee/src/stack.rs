@@ -25,6 +25,7 @@ use crate::config::StackConfig;
 
 /// How [`Stack::commission`] got the device onto the network.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Commissioned {
     /// The device rejoined the network it was already on (BDB 7.1).
     Rejoined(NlmeJoinConfirm),
@@ -37,6 +38,7 @@ pub enum Commissioned {
 /// Why [`Stack::run`] returned: the device is off the network and could not
 /// get back on by itself.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum StackStopped {
     /// Commissioning could not put the device onto a network (BDB 8.2).
     Commissioning(NlmeJoinStatus),

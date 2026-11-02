@@ -11,6 +11,7 @@ use crate::aps::types::{self};
 
 /// 2.2.4.3.1 - APSME-BIND.request
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeBindRequest {
     pub src_address: Address,
     pub src_endpoint: types::SrcEndpoint,
@@ -42,6 +43,7 @@ impl ApsmeBindRequest {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsmeBindRequestStatus {
     #[default]
     Success,
@@ -52,6 +54,7 @@ pub enum ApsmeBindRequestStatus {
 
 /// 2.2.4.3.2 - APSME-BIND.confirm
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeBindConfirm {
     pub(crate) status: ApsmeBindRequestStatus,
     pub src_address: Address,
@@ -64,6 +67,7 @@ pub struct ApsmeBindConfirm {
 
 /// 2.2.4.3.3 - APSME-UNBIND.request
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeUnbindRequest {
     pub src_address: Address,
     pub src_endpoint: types::SrcEndpoint,
@@ -89,6 +93,7 @@ impl ApsmeUnbindRequest {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsmeUnbindRequestStatus {
     #[default]
     Success,
@@ -97,6 +102,7 @@ pub enum ApsmeUnbindRequestStatus {
 }
 /// 2.2.4.3.4 - APSME-UNBIND.confirm
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeUnbindConfirm {
     pub(crate) status: ApsmeUnbindRequestStatus,
     pub(crate) src_address: Address,
@@ -109,6 +115,7 @@ pub struct ApsmeUnbindConfirm {
 
 /// 2.2.4.4.2 - APSME-GET.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeGetConfirm {
     pub(crate) status: ApsmeGetConfirmStatus,
     pub(crate) attribute: u8,
@@ -116,6 +123,7 @@ pub struct ApsmeGetConfirm {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsmeGetConfirmStatus {
     #[default]
     Success,
@@ -123,6 +131,7 @@ pub enum ApsmeGetConfirmStatus {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ApsmeSetConfirmStatus {
     #[default]
     Success,
@@ -132,6 +141,7 @@ pub enum ApsmeSetConfirmStatus {
 
 /// 2.2.4.4.4 - APSME-SET.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeSetConfirm {
     pub(crate) status: ApsmeSetConfirmStatus,
     pub(crate) identifier: u8,
@@ -139,22 +149,28 @@ pub struct ApsmeSetConfirm {
 
 /// 2.2.4.5.1 - APSME-ADD-GROUP.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeAddGroupRequest {}
 
 /// 2.2.4.5.2 - APSME-ADD-GROUP.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeAddGroupConfirm {}
 
 /// 2.2.4.5.3 - APSME-REMOVE-GROUP.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeRemoveGroupRequest {}
 /// 2.2.4.5.4 - APSME-REMOVE-GROUP.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeRemoveGroupConfirm {}
 
 /// 2.2.4.5.5 - APSME-REMOVE-ALL-GROUPS.request
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeRemoveAllGroupsRequest {}
 /// 2.2.4.5.6 - APSME-REMOVE-ALL-GROUPS.confirm
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ApsmeRemoveAllGroupsConfirm {}

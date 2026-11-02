@@ -90,6 +90,7 @@ mod tests {
     use crate::types::nullable::Nullable;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     enum PowerSource {
         Mains,
         Battery,

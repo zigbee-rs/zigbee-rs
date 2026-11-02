@@ -471,6 +471,7 @@ impl BaseDeviceBehavior {
 }
 
 #[derive(Debug, Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BdbError {
     #[error("network error")]
     NetworkError(#[from] NetworkError),

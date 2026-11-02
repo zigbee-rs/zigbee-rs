@@ -92,6 +92,7 @@ pub mod attribute {
 /// Reading it as whole percent halves every reading, which is why the
 /// conversion lives here rather than at each call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryPercentage(u8);
 
 impl BatteryPercentage {
@@ -126,6 +127,7 @@ impl BatteryPercentage {
 ///
 /// Counted in units of 100 mV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryVoltage(u8);
 
 impl BatteryVoltage {

@@ -9,6 +9,7 @@ impl_byte! {
     ///
     /// See Section 4.5.1.
     #[derive(Debug, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AuxFrameHeader {
         pub security_control: SecurityControl,
         pub frame_counter: u32,
@@ -36,6 +37,19 @@ impl core::fmt::Debug for SecurityControl {
             .field("key_identifier", &self.key_identifier())
             .field("extended_nonce", &self.extended_nonce())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for SecurityControl {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "SecurityControl {{ security_level: {}, key_identifier: {}, extended_nonce: {} }}",
+            self.security_level(),
+            self.key_identifier(),
+            self.extended_nonce()
+        );
     }
 }
 
@@ -92,6 +106,7 @@ impl_byte! {
     ///
     /// See Section 4.5.1.1.1.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[allow(missing_docs)]
     pub enum SecurityLevel {
         None = 0b000,
@@ -151,6 +166,7 @@ impl SecurityLevel {
 /// See Section 4.5.1.1.2.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum KeyIdentifier {
     Data = 0b00,

@@ -30,6 +30,7 @@ pub mod attribute {
 /// Counted as 10 x the conductivity in mS/m, giving 0.1 resolution. Note the
 /// scale differs from the other chapter 4 clusters, which use 100 x.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ElectricalConductivity(u16);
 
 impl ElectricalConductivity {

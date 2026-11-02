@@ -8,6 +8,7 @@ use super::frame_control::FrameControl;
 impl_byte! {
     /// 3.3.1 General NPDU Frame Format
     #[derive(Clone, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Header<'a> {
         /// See Section 3.3.1.1.
         pub frame_control: FrameControl,
@@ -41,12 +42,14 @@ impl_byte! {
 impl_byte! {
     /// 3.3.1.8 Multicast Control Field
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct MulticastControl(u8);
 }
 
 impl_byte! {
     /// Source Route Subframe
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct SourceRouteSubframe<'a> {
         /// Indicates the number of relays contained in
         /// [`SourceRouteSubframe::relay_list`].

@@ -15,7 +15,8 @@ edition.workspace = true
 
 [features]
 default = ["log"]
-alloc = []
+# `defmt?/alloc` carries `Format` for the `Vec`s this feature switches to
+alloc = ["defmt?/alloc"]
 in-memory-nib = ["alloc"]
 storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
 log = ["dep:log"]

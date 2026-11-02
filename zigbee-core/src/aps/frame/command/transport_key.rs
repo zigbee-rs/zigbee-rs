@@ -8,6 +8,7 @@ impl_byte! {
     /// 4.4.10.1
     /// Table 4-9
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum TransportKey {
         #[tag_value = 0x01]
         StandardNetworkKey(StandardNetworkKeyDescriptor),
@@ -23,6 +24,7 @@ impl_byte! {
 impl_byte! {
     /// Figure 4-8
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct TrustCenterLinkKeyDescriptor {
         pub key: ByteArray<16>,
         pub destination_address: IeeeAddress,
@@ -33,6 +35,7 @@ impl_byte! {
 impl_byte! {
     /// Figure 4-9
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct StandardNetworkKeyDescriptor {
         pub key: ByteArray<16>,
         pub sequence_number: u8,
@@ -44,6 +47,7 @@ impl_byte! {
 impl_byte! {
     /// Figure 4-10
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ApplicationLinkKeyDescriptor {
         pub key: ByteArray<16>,
         pub partner_address: IeeeAddress,

@@ -6,6 +6,7 @@ use zigbee_core::nwk::nlme::management::NetworkDescriptor;
 
 /// Commissioning modes (BDB 5.2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CommissioningMode {
     NetworkSteering = 0x01,
     NetworkFormation,
@@ -15,6 +16,7 @@ pub enum CommissioningMode {
 
 /// Status codes for BDB commissioning (BDB 5.3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BdbCommissioningStatus {
     /// Commissioning was successful.
     Success,
@@ -73,6 +75,7 @@ pub enum NetworkSteeringEvent {
 
 /// Possible errors during the join process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum JoinError {
     /// No suitable networks found during scan.
     NoNetworksFound,

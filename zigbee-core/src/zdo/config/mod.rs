@@ -1,5 +1,6 @@
 /// zigbee configuration
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     /// The radio channel to operate on
     pub radio_channel: u8,
@@ -11,6 +12,7 @@ pub struct Config {
 
 /// Discovery Type
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DiscoveryType {
     #[default]
     /// The IEEE address request is unicast to a particular device and assumes
