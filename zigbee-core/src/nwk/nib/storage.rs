@@ -44,7 +44,7 @@ pub(crate) fn take_outgoing_frame_counter(nib: &Nib) -> Option<u32> {
 /// keep replaying the low counters.
 pub(crate) fn reset_outgoing_frame_counter_on_switch_key(nib: &Nib) {
     if nib.outgoing_frame_counter() > 0x8000_0000 {
-        log::info!("[NWK] resetting the outgoing frame counter on switch-key");
+        defmt_or_log::info!("[NWK] resetting the outgoing frame counter on switch-key");
         nib.update_outgoing_frame_counter(|value| *value = 0);
     }
 }

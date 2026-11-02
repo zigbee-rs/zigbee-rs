@@ -14,13 +14,30 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
+default = ["log"]
 # persist the information bases to NOR flash; re-exports the flash storage
 # driver so an application only depends on this crate
 storage = ["zigbee-core/storage"]
+log = [
+    "dep:log",
+    "zigbee-base-device-behavior/log",
+    "zigbee-core/log",
+    "zigbee-mac/log",
+]
+defmt = [
+    "dep:defmt",
+    "zigbee-base-device-behavior/defmt",
+    "zigbee-cluster-library/defmt",
+    "zigbee-core/defmt",
+    "zigbee-mac/defmt",
+    "zigbee-types/defmt",
+]
 
 [dependencies]
 embedded-hal-async.workspace = true
-log.workspace = true
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+defmt-or-log.workspace = true
 zigbee-core.workspace = true
 zigbee-cluster-library.workspace = true
 zigbee-base-device-behavior.workspace = true

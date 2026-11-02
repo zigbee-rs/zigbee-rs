@@ -363,7 +363,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             Err(NetworkError::SecurityError(_)) => ApsdeSapConfirmStatus::SecurityFail,
             Err(NetworkError::NotJoined) => ApsdeSapConfirmStatus::NoShortAddress,
             Err(e) => {
-                log::debug!("[ZDO] tx failed: {e:?}");
+                defmt_or_log::debug!("[ZDO] tx failed: {:?}", e);
                 ApsdeSapConfirmStatus::NoAck
             }
         }
@@ -502,20 +502,20 @@ impl<M: Mlme> ZigbeeDevice<M> {
             scan_duration,
         };
 
-        log::debug!("[ZDO] secure rejoin, EPID={extended_pan_id:?}");
+        defmt_or_log::debug!("[ZDO] secure rejoin, EPID={:?}", extended_pan_id);
         let confirm = self.nlme.join(request(true)).await;
         if confirm.status == NlmeJoinStatus::Success {
             self.finish_rejoin().await?;
             return Ok(confirm);
         }
 
-        log::warn!(
+        defmt_or_log::warn!(
             "[ZDO] secure rejoin failed ({:?}), falling back to trust center rejoin",
             confirm.status
         );
         let confirm = self.nlme.join(request(false)).await;
         if confirm.status != NlmeJoinStatus::Success {
-            log::warn!("[ZDO] trust center rejoin failed ({:?})", confirm.status);
+            defmt_or_log::warn!("[ZDO] trust center rejoin failed ({:?})", confirm.status);
             return Ok(confirm);
         }
 
@@ -533,17 +533,17 @@ impl<M: Mlme> ZigbeeDevice<M> {
     async fn finish_rejoin(&self) -> Result<(), NetworkError> {
         self.mark_rejoined();
         // 3.6.10.2: renegotiated after every rejoin, even with the same parent
-        log::debug!("[ZDO] rejoined, negotiating end-device timeout");
+        defmt_or_log::debug!("[ZDO] rejoined, negotiating end-device timeout");
         match self.nlme.negotiate_end_device_timeout().await {
-            Ok(true) => log::debug!("[ZDO] timeout negotiation succeeded"),
-            Ok(false) => log::debug!("[ZDO] timeout negotiation unsuccessful"),
+            Ok(true) => defmt_or_log::debug!("[ZDO] timeout negotiation succeeded"),
+            Ok(false) => defmt_or_log::debug!("[ZDO] timeout negotiation unsuccessful"),
             Err(error) => {
-                log::warn!("[ZDO] timeout negotiation error: {error:?}");
+                defmt_or_log::warn!("[ZDO] timeout negotiation error: {:?}", error);
             }
         }
-        log::debug!("[ZDO] announcing self");
+        defmt_or_log::debug!("[ZDO] announcing self");
         let result = self.announce_self().await;
-        log::debug!("[ZDO] rejoin complete: {result:?}");
+        defmt_or_log::debug!("[ZDO] rejoin complete: {:?}", result);
         result
     }
 
@@ -576,7 +576,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
 
         match transport_key {
             TransportKey::StandardNetworkKey(nwk_key) => {
-                log::debug!("[ZDO] received network key {:02x?}", nwk_key.key);
+                defmt_or_log::debug!("[ZDO] received network key {:?}", nwk_key.key);
 
                 let aib = aib::get_ref();
                 aib.update_trust_center_address(|value| *value = nwk_key.source_address);
@@ -667,7 +667,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
         if indication.device_address.is_some() {
             return;
         }
-        log::info!(
+        defmt_or_log::info!(
             "[ZDO] removed from the network (rejoin={})",
             indication.rejoin
         );
@@ -808,7 +808,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             // frame that was meant for us and failed to decrypt looks exactly
             // like never having received one.
             Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
-                log::debug!("[ZDO] dropped undecodable frame on poll: {e:?}");
+                defmt_or_log::debug!("[ZDO] dropped undecodable frame on poll: {:?}", e);
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -830,7 +830,7 @@ impl<M: Mlme> ZigbeeDevice<M> {
             // ambient traffic we cannot decode — normal, not a fault, but
             // traced: see `poll_and_dispatch`
             Err(e @ (NetworkError::ParseError | NetworkError::SecurityError(_))) => {
-                log::debug!("[ZDO] dropped undecodable frame on receive: {e:?}");
+                defmt_or_log::debug!("[ZDO] dropped undecodable frame on receive: {:?}", e);
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -866,8 +866,13 @@ impl<M: Mlme> ZigbeeDevice<M> {
         let src_endpoint = indication.src_endpoint.value;
         let dst_endpoint = indication.dst_endpoint;
 
-        log::debug!(
-            "[ZDO] rx profile={profile:#06x} cluster={cluster:#06x} from {src:#06x} ep {src_endpoint}->{dst_endpoint}"
+        defmt_or_log::debug!(
+            "[ZDO] rx profile={:#06x} cluster={:#06x} from {:#06x} ep {}->{}",
+            profile,
+            cluster,
+            src,
+            src_endpoint,
+            dst_endpoint
         );
 
         // deferred until after the response below has actually gone out: the
@@ -913,10 +918,11 @@ impl<M: Mlme> ZigbeeDevice<M> {
         };
 
         if let Some(reply) = response {
-            log::debug!(
-                "[ZDO] tx response cluster={:#06x} ({} bytes) to {src:#06x}",
+            defmt_or_log::debug!(
+                "[ZDO] tx response cluster={:#06x} ({} bytes) to {:#06x}",
                 reply.cluster_id,
-                reply.len
+                reply.len,
+                src
             );
             self.apsme
                 .unicast_data(
@@ -930,12 +936,12 @@ impl<M: Mlme> ZigbeeDevice<M> {
                 )
                 .await?;
         } else {
-            log::trace!("[ZDO] no response for cluster {cluster:#06x}");
+            defmt_or_log::trace!("[ZDO] no response for cluster {:#06x}", cluster);
         }
 
         if let Some(request) = leave_after_reply {
             let confirm = self.nlme.leave(request).await;
-            log::info!(
+            defmt_or_log::info!(
                 "[ZDO] leaving network after Mgmt_Leave_req: {:?}",
                 confirm.status
             );

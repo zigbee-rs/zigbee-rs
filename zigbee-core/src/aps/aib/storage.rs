@@ -61,7 +61,10 @@ pub(crate) fn record_incoming_frame_counter(
             })
             .is_ok();
         if !stored {
-            log::warn!("[APS] key pair table full, rejecting frame from {device:?}");
+            defmt_or_log::warn!(
+                "[APS] key pair table full, rejecting frame from {:?}",
+                device
+            );
         }
         return stored;
     };

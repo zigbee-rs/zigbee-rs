@@ -14,9 +14,19 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
+default = ["log"]
 alloc = []
 in-memory-nib = ["alloc"]
 storage = ["dep:sequential-storage", "dep:embedded-storage-async"]
+log = ["dep:log"]
+defmt = [
+    "dep:defmt",
+    "heapless/defmt",
+    # deliberately not `sequential-storage?/defmt`: with its `_test` feature
+    # that derives `Format` on a std `Backtrace`, which breaks `cargo test`
+    "zigbee-mac/defmt",
+    "zigbee-types/defmt",
+]
 
 [dependencies]
 byte.workspace = true
@@ -30,7 +40,9 @@ sequential-storage = { workspace = true, optional = true }
 spin.workspace = true
 heapless.workspace = true
 thiserror = { workspace = true, default-features = false }
-log.workspace = true
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+defmt-or-log.workspace = true
 
 zigbee-mac.workspace = true
 zigbee-macros.workspace = true

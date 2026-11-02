@@ -331,7 +331,7 @@ impl Apsme {
                 // clear: any other carries no proof of origin, its addresses
                 // being plaintext the sender chose
                 if !matches!(command, Command::SwitchKey(_)) {
-                    log::warn!("[APS] rx unsecured APS command (ignored)");
+                    defmt_or_log::warn!("[APS] rx unsecured APS command (ignored)");
                     return Ok(None);
                 }
                 command
@@ -363,12 +363,13 @@ impl Apsme {
         if header.frame_control.ack_request()
             && let Err(e) = self.send_ack(nlme, ShortAddress(src_short), &header).await
         {
-            log::debug!("[APS] tx ack failed: {e:?}");
+            defmt_or_log::debug!("[APS] tx ack failed: {:?}", e);
         }
 
         if self.duplicates.lock().seen(src_short, header.counter) {
-            log::debug!(
-                "[APS] duplicate frame from {src_short:#06x} counter {}",
+            defmt_or_log::debug!(
+                "[APS] duplicate frame from {:#06x} counter {}",
+                src_short,
                 header.counter
             );
             return Ok(None);
@@ -420,18 +421,18 @@ impl Apsme {
             // replayed frame would downgrade a verified key and reset its
             // frame counters
             Command::TransportKey(TransportKey::TrustCenterLinkKey(_)) if !exchange_active => {
-                log::warn!("[APS] rx unsolicited TC link key (ignored)");
+                defmt_or_log::warn!("[APS] rx unsolicited TC link key (ignored)");
             }
             Command::ConfirmKey(_) if !exchange_active => {
-                log::warn!("[APS] rx unsolicited confirm key (ignored)");
+                defmt_or_log::warn!("[APS] rx unsolicited confirm key (ignored)");
             }
             Command::TransportKey(TransportKey::TrustCenterLinkKey(descriptor)) => {
-                log::debug!("[APS] rx TC link key");
+                defmt_or_log::debug!("[APS] rx TC link key");
                 let installed = self.install_unverified_tc_link_key(aib, descriptor);
                 self.tc_key_received.signal(installed);
             }
             Command::ConfirmKey(confirm) => {
-                log::debug!("[APS] rx confirm key: status {:#04x}", confirm.status);
+                defmt_or_log::debug!("[APS] rx confirm key: status {:#04x}", confirm.status);
                 if confirm.status == 0x00 {
                     self.mark_tc_link_key_verified(aib);
                 }
@@ -441,28 +442,30 @@ impl Apsme {
             // network key (4.6.3.4.2)
             Command::TransportKey(TransportKey::StandardNetworkKey(descriptor)) => {
                 if descriptor.source_address != *aib.trust_center_address() {
-                    log::warn!("[APS] rx network key from a foreign device (ignored)");
+                    defmt_or_log::warn!("[APS] rx network key from a foreign device (ignored)");
                     return;
                 }
-                log::info!(
+                defmt_or_log::info!(
                     "[APS] rx network key seq {} as alternate key",
                     descriptor.sequence_number
                 );
                 install_alternate_network_key(nib, descriptor);
             }
             Command::SwitchKey(switch) if !from_trust_center => {
-                log::warn!(
+                defmt_or_log::warn!(
                     "[APS] rx switch key seq {} from a foreign device (ignored)",
                     switch.sequence_number
                 );
             }
             Command::SwitchKey(switch) => switch_network_key(nib, switch.sequence_number),
-            Command::TransportKey(_) => log::trace!("[APS] rx transport key (ignored)"),
+            Command::TransportKey(_) => defmt_or_log::trace!("[APS] rx transport key (ignored)"),
             // TODO: a Request-Key addressed to us (e.g. app link key) would be
             // answered here
-            Command::RequestKey(_) => log::trace!("[APS] rx request key (ignored)"),
-            Command::VerifyKey(_) => log::trace!("[APS] rx verify key (ignored)"),
-            Command::Reserved(id) => log::trace!("[APS] rx reserved command {id:#04x} (ignored)"),
+            Command::RequestKey(_) => defmt_or_log::trace!("[APS] rx request key (ignored)"),
+            Command::VerifyKey(_) => defmt_or_log::trace!("[APS] rx verify key (ignored)"),
+            Command::Reserved(id) => {
+                defmt_or_log::trace!("[APS] rx reserved command {:#04x} (ignored)", id);
+            }
         }
     }
 
@@ -480,7 +483,7 @@ impl Apsme {
             .iter()
             .any(|k| k.device_address == tc_ieee && k.link_key == descriptor.key)
         {
-            log::warn!("[APS] transported TC link key is the one already held");
+            defmt_or_log::warn!("[APS] transported TC link key is the one already held");
             return false;
         }
 
@@ -620,7 +623,7 @@ impl Apsme {
             counter,
         };
         let Some(slot) = self.claim_ack_slot(key) else {
-            log::warn!("[APS] no free pending-ack slot");
+            defmt_or_log::warn!("[APS] no free pending-ack slot");
             return Err(NetworkError::AckTimeout);
         };
 
@@ -640,7 +643,11 @@ impl Apsme {
                 result = Ok(());
                 break;
             }
-            log::debug!("[APS] ack timeout for counter {counter} (attempt {attempt})");
+            defmt_or_log::debug!(
+                "[APS] ack timeout for counter {} (attempt {})",
+                counter,
+                attempt
+            );
         }
 
         self.release_ack_slot(slot);
@@ -673,7 +680,7 @@ impl Apsme {
                 return;
             }
         }
-        log::trace!("[APS] rx unexpected ack for counter {}", key.counter);
+        defmt_or_log::trace!("[APS] rx unexpected ack for counter {}", key.counter);
     }
 
     /// Acknowledge a received frame that requested it (2.2.5.2.3).
@@ -769,7 +776,7 @@ fn install_alternate_network_key(nib: &Nib, descriptor: &StandardNetworkKeyDescr
             }
             None => {
                 if set.push(material).is_err() {
-                    log::warn!("[APS] no room for the alternate network key");
+                    defmt_or_log::warn!("[APS] no room for the alternate network key");
                     changed = false;
                 }
             }
@@ -803,10 +810,13 @@ fn switch_network_key(nib: &Nib, key_seq_number: u8) {
         .iter()
         .any(|m| m.key_seq_number == key_seq_number)
     {
-        log::warn!("[APS] rx switch key for unknown network key seq {key_seq_number}");
+        defmt_or_log::warn!(
+            "[APS] rx switch key for unknown network key seq {}",
+            key_seq_number
+        );
         return;
     }
-    log::info!("[APS] switching to network key seq {key_seq_number}");
+    defmt_or_log::info!("[APS] switching to network key seq {}", key_seq_number);
     nib.update_active_key_seq_number(|value| *value = key_seq_number);
     nib_storage::reset_outgoing_frame_counter_on_switch_key(nib);
 }

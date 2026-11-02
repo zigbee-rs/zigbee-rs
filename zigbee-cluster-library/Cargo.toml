@@ -13,9 +13,11 @@ authors.workspace = true
 edition = "2024"
 
 [features]
+defmt = ["dep:defmt", "heapless/defmt", "zigbee-core/defmt"]
 
 [dependencies]
 byte.workspace = true
+defmt = { workspace = true, optional = true }
 embedded-hal-async.workspace = true
 heapless.workspace = true
 spin.workspace = true

@@ -177,15 +177,17 @@ pub enum ScanType {
 }
 
 #[derive(Debug, Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MacError {
     #[error("no beacons received")]
     NoBeacon,
     #[error("invalid scan parameters")]
     InvalidScanParams,
+    // `byte::Error` has no `defmt::Format`, so it rides along via `Debug`
     #[error("read error")]
-    ReadError(byte::Error),
+    ReadError(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] byte::Error),
     #[error("invalid frame")]
-    InvalidFrame(byte::Error),
+    InvalidFrame(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] byte::Error),
     #[error("no data available from coordinator")]
     NoData,
     #[error("no acknowledgment received")]

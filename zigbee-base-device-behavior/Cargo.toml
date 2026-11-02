@@ -13,11 +13,18 @@ authors.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[features]
+default = ["log"]
+log = ["dep:log", "zigbee-core/log"]
+defmt = ["dep:defmt", "zigbee-core/defmt", "zigbee-mac/defmt", "zigbee-types/defmt"]
+
 [dependencies]
 embedded-hal-async.workspace = true
 spin.workspace = true
 thiserror.workspace = true
-log.workspace = true
+log = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+defmt-or-log.workspace = true
 zigbee-core.workspace = true
 zigbee-mac.workspace = true
 zigbee-types.workspace = true

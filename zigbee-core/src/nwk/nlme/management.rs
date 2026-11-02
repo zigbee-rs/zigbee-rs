@@ -149,6 +149,7 @@ pub struct NlmeJoinConfirm {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum NlmeJoinStatus {
     /// Join completed successfully.
     Success,
@@ -202,6 +203,7 @@ pub struct NlmeLeaveConfirm {
 
 /// Status codes for NLME-LEAVE.confirm and Mgmt_Leave_rsp (Table 3-28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum NlmeLeaveStatus {
     Success,
     /// Not currently joined, or the request is otherwise malformed.

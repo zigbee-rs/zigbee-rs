@@ -182,16 +182,16 @@ impl BaseDeviceBehavior {
         // BDB 7.1 step 4: rejoin on the current channel, so no scan channels.
         // Read the guard's value out before the `.await` — held across it,
         // it'd deadlock against rejoin_confirm's write of the same NIB field.
-        log::debug!("[BDB] step 4: attempt NWK rejoin");
+        defmt_or_log::debug!("[BDB] step 4: attempt NWK rejoin");
         let extended_panid = *nib.extended_panid();
         let confirm = device.rejoin(IeeeAddress(extended_panid), 0..0, 0).await?;
 
         // BDB 7.1 step 5
         if confirm.status == NlmeJoinStatus::Success {
-            log::debug!("[BDB] step 5: rejoin succeeded");
+            defmt_or_log::debug!("[BDB] step 5: rejoin succeeded");
             self.set_commissioning_status(BdbCommissioningStatus::Success);
         } else {
-            log::warn!("[BDB] step 5: rejoin failed ({:?})", confirm.status);
+            defmt_or_log::warn!("[BDB] step 5: rejoin failed ({:?})", confirm.status);
             self.set_commissioning_status(BdbCommissioningStatus::NoNetwork);
         }
 
@@ -215,8 +215,10 @@ impl BaseDeviceBehavior {
         scan_duration: u8,
         capability_information: CapabilityInformation,
     ) -> Result<NlmeJoinConfirm, NetworkError> {
-        log::debug!(
-            "[BDB] start network steering, EPID={extended_pan_id:?}, channels={channels:?}"
+        defmt_or_log::debug!(
+            "[BDB] start network steering, EPID={:?}, channels={:?}",
+            extended_pan_id,
+            channels
         );
         self.set_commissioning_status(BdbCommissioningStatus::InProgress);
 
@@ -249,34 +251,37 @@ impl BaseDeviceBehavior {
         }
 
         // BDB 8.2 step 9
-        log::debug!("[BDB] step 9: poll for network key (transport-key)");
+        defmt_or_log::debug!("[BDB] step 9: poll for network key (transport-key)");
         device.poll_transport_key().await?;
-        log::debug!("[BDB] step 9: network key installed");
+        defmt_or_log::debug!("[BDB] step 9: network key installed");
 
         // 3.6.10.2: negotiate the end-device timeout with the parent
         let _ = device.nlme().negotiate_end_device_timeout().await;
 
         // BDB 8.2 step 11
-        log::debug!("[BDB] step 11: broadcast Device_annce");
+        defmt_or_log::debug!("[BDB] step 11: broadcast Device_annce");
         device.announce_self().await?;
 
         // BDB 8.2 step 12, BDB 10.2.5
         if self.tc_link_key_exchange_enabled.load(Ordering::Relaxed) {
-            log::debug!("[BDB] step 12: TC link key exchange");
+            defmt_or_log::debug!("[BDB] step 12: TC link key exchange");
             // BDB 8.2 step 12: staying on the network with an unexchanged key
             // is not permitted — the node leaves and resets its network state
             if let Err(e) = self.tc_link_key_exchange(device, delay).await {
-                log::warn!("[BDB] step 12: TC link key exchange failed ({e:?}), leaving network");
+                defmt_or_log::warn!(
+                    "[BDB] step 12: TC link key exchange failed ({:?}), leaving network",
+                    e
+                );
                 self.set_commissioning_status(BdbCommissioningStatus::TclkExFailure);
                 self.bdb_node_is_on_a_network
                     .store(false, Ordering::Relaxed);
                 let status = device.leave_network(false).await;
-                log::info!("[BDB] left the network after TCLK failure: {status:?}");
+                defmt_or_log::info!("[BDB] left the network after TCLK failure: {:?}", status);
                 return Err(e);
             }
-            log::debug!("[BDB] step 12: TC link key exchange complete");
+            defmt_or_log::debug!("[BDB] step 12: TC link key exchange complete");
         } else {
-            log::debug!("[BDB] step 12: TC link key exchange disabled, skipping");
+            defmt_or_log::debug!("[BDB] step 12: TC link key exchange disabled, skipping");
         }
 
         self.bdb_node_is_on_a_network.store(true, Ordering::Relaxed);
@@ -309,7 +314,7 @@ impl BaseDeviceBehavior {
         let aib = aib::get_ref();
         let tc_ieee = *aib.trust_center_address();
 
-        log::debug!("[BDB] start TC link key exchange, TC={tc_ieee:?}");
+        defmt_or_log::debug!("[BDB] start TC link key exchange, TC={:?}", tc_ieee);
 
         // BDB 10.2.5 steps 2-5: a trust center on r20 or earlier knows no key
         // exchange, and asking it for a key would stall the commissioning
@@ -317,7 +322,7 @@ impl BaseDeviceBehavior {
             .request_trust_center_node_desc(device, delay, tc_short)
             .await
         else {
-            log::warn!("[BDB] TC link key exchange failed: no Node_Desc_rsp");
+            defmt_or_log::warn!("[BDB] TC link key exchange failed: no Node_Desc_rsp");
             self.set_commissioning_status(BdbCommissioningStatus::TclkExFailure);
             return Err(NetworkError::NoTransportKey);
         };
@@ -325,7 +330,7 @@ impl BaseDeviceBehavior {
             .stack_revision()
             .is_some_and(|revision| revision <= LEGACY_STACK_REVISION)
         {
-            log::info!(
+            defmt_or_log::info!(
                 "[BDB] trust center reports stack revision {:?}, keeping the default TC link key",
                 node_desc.stack_revision()
             );
@@ -353,18 +358,20 @@ impl BaseDeviceBehavior {
             .await
             {
                 Some(true) => {
-                    log::debug!("[BDB] received new TC link key");
+                    defmt_or_log::debug!("[BDB] received new TC link key");
                     break;
                 }
                 // step 9: the transported key was rejected — it is the one we
                 // already hold, which ends the procedure rather than retrying
                 Some(false) => {
-                    log::warn!("[BDB] TC link key exchange failed: unusable TRANSPORT-KEY");
+                    defmt_or_log::warn!(
+                        "[BDB] TC link key exchange failed: unusable TRANSPORT-KEY"
+                    );
                     self.set_commissioning_status(BdbCommissioningStatus::TclkExFailure);
                     return Err(NetworkError::NoTransportKey);
                 }
                 None if attempts >= TC_LINK_KEY_EXCHANGE_ATTEMPTS_MAX => {
-                    log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
+                    defmt_or_log::warn!("[BDB] TC link key exchange failed: no TRANSPORT-KEY");
                     self.set_commissioning_status(BdbCommissioningStatus::TclkExFailure);
                     return Err(NetworkError::NoTransportKey);
                 }
@@ -410,17 +417,17 @@ impl BaseDeviceBehavior {
             .await
             {
                 Some(0x00) => {
-                    log::debug!("[BDB] TC link key verified successfully");
+                    defmt_or_log::debug!("[BDB] TC link key verified successfully");
                     return Ok(());
                 }
                 // rejected verification: retry immediately instead of
                 // burning the full timeout
                 Some(status) if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => {
-                    log::warn!("[BDB] CONFIRM-KEY status {status:#04x}, retrying");
+                    defmt_or_log::warn!("[BDB] CONFIRM-KEY status {:#04x}, retrying", status);
                 }
                 None if attempts < BDBC_MAX_SAME_NETWORK_RETRY_ATTEMPTS => continue,
                 _ => {
-                    log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
+                    defmt_or_log::warn!("[BDB] TC link key exchange failed: no CONFIRM-KEY");
                     self.set_commissioning_status(BdbCommissioningStatus::TclkExFailure);
                     return Err(NetworkError::NoTransportKey);
                 }
@@ -438,7 +445,7 @@ impl BaseDeviceBehavior {
     ) -> Option<NodeDescRsp> {
         for _ in 0..TC_LINK_KEY_EXCHANGE_ATTEMPTS_MAX {
             if let Err(e) = device.node_desc_req(tc_short).await {
-                log::warn!("[BDB] Node_Desc_req to the trust center failed ({e:?})");
+                defmt_or_log::warn!("[BDB] Node_Desc_req to the trust center failed ({:?})", e);
                 delay.delay_ms(TC_LINK_KEY_EXCHANGE_TIMEOUT_MS).await;
                 continue;
             }

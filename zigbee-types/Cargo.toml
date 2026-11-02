@@ -13,8 +13,13 @@ authors.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[features]
+# derive `defmt::Format` on the shared types
+defmt = ["dep:defmt", "heapless/defmt"]
+
 [dependencies]
 atomic-waker.workspace = true
+defmt = { workspace = true, optional = true }
 byte.workspace = true
 heapless.workspace = true
 spin.workspace = true

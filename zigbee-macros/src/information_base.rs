@@ -248,6 +248,7 @@ macro_rules! construct_ib {
         #[repr(u8)]
         #[allow(non_camel_case_types)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+        #[cfg_attr(feature = "defmt", derive(::defmt::Format))]
         $ib_vis enum $ib_id {
             $($($field = $skey,)?)+
         }

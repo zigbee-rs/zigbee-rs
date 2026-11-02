@@ -188,7 +188,7 @@ where
     pub async fn resume(&self) -> bool {
         let resuming = self.device.nlme().resume(self.config.channel()).await;
         if resuming {
-            log::info!(
+            defmt_or_log::info!(
                 "[APP] resuming on network: addr={:#06x}",
                 nib::get_ref().network_address()
             );
@@ -245,9 +245,11 @@ where
         let configured_epid = config.network().extended_pan_id.0;
         let remembered_epid = *nib::get_ref().extended_panid();
         if on_a_network && !epid_matches(configured_epid, remembered_epid) {
-            log::warn!(
-                "[APP] joined network epid={remembered_epid:#018x} is not the configured \
-                 {configured_epid:#018x}, forgetting it and commissioning again"
+            defmt_or_log::warn!(
+                "[APP] joined network epid={:#018x} is not the configured \
+                 {:#018x}, forgetting it and commissioning again",
+                remembered_epid,
+                configured_epid
             );
             device.forget_network();
         }
@@ -259,7 +261,7 @@ where
             // on a network but unable to rejoin: the stale address and keys would
             // make NLME-JOIN refuse to re-associate, so drop them first
             Some(confirm) => {
-                log::warn!(
+                defmt_or_log::warn!(
                     "[APP] rejoin failed ({:?}), forgetting network",
                     confirm.status
                 );
@@ -316,18 +318,18 @@ where
             .capability_information()
             .receiver_on_when_idle()
         {
-            log::trace!("[app]: start rx loop (rx on)");
+            defmt_or_log::trace!("[app]: start rx loop (rx on)");
             loop {
                 // dispatching a leave closes the gate again, parking the loop
                 // until the device has been rejoined or re-commissioned
                 device.wait_until_joined().await;
                 if let Err(e) = device.receive_and_dispatch(cfg, handler).await {
-                    log::debug!("[APP] rx dispatch error: {e:?}");
+                    defmt_or_log::debug!("[APP] rx dispatch error: {:?}", e);
                 }
             }
         }
 
-        log::trace!("[app]: start rx loop (rx off, polling)");
+        defmt_or_log::trace!("[app]: start rx loop (rx off, polling)");
         loop {
             device.wait_until_joined().await;
             match device.poll_and_dispatch(cfg, handler).await {
@@ -338,7 +340,7 @@ where
                         device.nlme().refresh_parent_timeout();
                     }
                 }
-                Err(e) => log::debug!("[APP] rx dispatch error: {e:?}"),
+                Err(e) => defmt_or_log::debug!("[APP] rx dispatch error: {:?}", e),
             }
             delay.delay_ms(self.poll_interval_ms()).await;
         }
@@ -380,8 +382,11 @@ where
                 continue;
             }
 
-            log::info!(
-                "[APP] parent link lost (keepalive={keepalive_failed}, status={parent_link_failed}, leave={rejoin_requested}), rejoining"
+            defmt_or_log::info!(
+                "[APP] parent link lost (keepalive={}, status={}, leave={}), rejoining",
+                keepalive_failed,
+                parent_link_failed,
+                rejoin_requested
             );
             let network = config.network();
             let confirm = device
@@ -435,7 +440,7 @@ where
 
         // 3.6.10.6: an unanswered keepalive drains the local timeout, so a
         // single missed one does not yet count as a lost parent
-        log::warn!("[APP] keepalive failed: {e:?}");
+        defmt_or_log::warn!("[APP] keepalive failed: {:?}", e);
         if nlme.tick_parent_timeout(interval) {
             return Err(NetworkError::ParentLinkFailure);
         }
