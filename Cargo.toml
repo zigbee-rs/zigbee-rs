@@ -21,12 +21,12 @@ exclude = [
 resolver = "3"
 
 [workspace.dependencies]
-zigbee-core = { version = "0.1.0", path = "zigbee-core" }
-zigbee-types = { version = "0.1.0", path = "zigbee-types" }
-zigbee-macros = { version = "0.1.0", path = "zigbee-macros" }
-zigbee-mac = { version = "0.1.0", path = "zigbee-mac" }
-zigbee-cluster-library = { version = "0.1.0", path = "zigbee-cluster-library" }
-zigbee-base-device-behavior = { version = "0.1.0", path = "zigbee-base-device-behavior" }
+zigbee-core = { version = "0.1.0", path = "zigbee-core", default-features = false }
+zigbee-types = { version = "0.1.0", path = "zigbee-types", default-features = false }
+zigbee-macros = { version = "0.1.0", path = "zigbee-macros", default-features = false }
+zigbee-mac = { version = "0.1.0", path = "zigbee-mac", default-features = false }
+zigbee-cluster-library = { version = "0.1.0", path = "zigbee-cluster-library", default-features = false }
+zigbee-base-device-behavior = { version = "0.1.0", path = "zigbee-base-device-behavior", default-features = false }
 
 aes = "0.8.4"
 atomic-waker = "1.1"
@@ -40,6 +40,8 @@ embedded-storage-async = "0.4.1"
 sequential-storage = "7.2.0"
 heapless = "0.9.1"
 log = "0.4"
+defmt = "1.0.1"
+defmt-or-log = { version = "0.2.3", default-features = false }
 mockall = "0.13"
 spin = { version = "0.10.0", default-features = false, features = ["spin_mutex", "mutex", "rwlock"] }
 thiserror = { version = "2.0.6", default-features = false }

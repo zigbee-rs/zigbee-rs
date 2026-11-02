@@ -163,9 +163,10 @@ impl RestoredTables {
         };
         if ib.table_len(id).is_none() {
             if !ib.import_field(id, data) {
-                log::warn!(
-                    "[FLASH] stored {} field {field:#04x} did not parse; using default",
-                    I::NAME
+                defmt_or_log::warn!(
+                    "[FLASH] stored {} field {:#04x} did not parse; using default",
+                    I::NAME,
+                    field
                 );
             }
             return;
@@ -214,7 +215,7 @@ impl RestoredTables {
             let Some(id) = I::field(table.field) else {
                 continue;
             };
-            log::debug!("[FLASH] repairing {} table {:#04x}", I::NAME, table.field);
+            defmt_or_log::debug!("[FLASH] repairing {} table {:#04x}", I::NAME, table.field);
             ib.mark_dirty(id);
         }
 
@@ -228,8 +229,25 @@ impl RestoredTables {
 ///
 /// Implemented next to the respective information base, which owns the
 /// knowledge of how its fields are encoded.
+/// What a storage key has to support to be logged by either backend.
+///
+/// Spelled as its own trait so `PersistentIb::Id` carries one bound whichever
+/// logging backend is enabled.
+#[cfg(feature = "defmt")]
+pub(crate) trait IbFieldId:
+    core::fmt::Debug + defmt::Format + Copy + PartialEq + 'static
+{
+}
+#[cfg(feature = "defmt")]
+impl<T: core::fmt::Debug + defmt::Format + Copy + PartialEq + 'static> IbFieldId for T {}
+
+#[cfg(not(feature = "defmt"))]
+pub(crate) trait IbFieldId: core::fmt::Debug + Copy + PartialEq + 'static {}
+#[cfg(not(feature = "defmt"))]
+impl<T: core::fmt::Debug + Copy + PartialEq + 'static> IbFieldId for T {}
+
 pub(crate) trait PersistentIb {
-    type Id: core::fmt::Debug + Copy + PartialEq + 'static;
+    type Id: IbFieldId;
 
     /// Namespaces this IB in the map key.
     const TAG: u8;
@@ -405,7 +423,7 @@ impl<F: NorFlash> FlashMap<F> {
                     .await
                 }
                 None if field_dirty => {
-                    log::trace!("[FLASH] store key={field} id={id:?}");
+                    defmt_or_log::trace!("[FLASH] store key={} id={:?}", field, id);
                     let key = item_key(I::TAG, field, 0);
                     self.store(
                         key,
@@ -424,7 +442,7 @@ impl<F: NorFlash> FlashMap<F> {
             if !stored {
                 // retry at the next flush
                 ib.mark_dirty(id);
-                log::trace!("[FLASH] storing {} field {field:#04x} failed", I::NAME);
+                defmt_or_log::trace!("[FLASH] storing {} field {:#04x} failed", I::NAME, field);
             }
         }
     }
@@ -457,7 +475,7 @@ impl<F: NorFlash> FlashMap<F> {
             let key = item_key(I::TAG, field, row);
 
             let stored = if index < len {
-                log::trace!("[FLASH] store key={field} id={id:?} index={index}");
+                defmt_or_log::trace!("[FLASH] store key={} id={:?} index={}", field, id, index);
                 self.store(
                     key,
                     &FieldValue {

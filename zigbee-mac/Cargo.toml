@@ -15,7 +15,9 @@ edition = "2024"
 
 [dependencies]
 heapless = "0.9.1"
-log = "0.4.28"
+log = { version = "0.4.28", optional = true }
+defmt = { version = "1.0.1", optional = true }
+defmt-or-log = { version = "0.2.3", default-features = false }
 ieee802154 = "0.6.1"
 thiserror = { version = "2.0.6", default-features = false }
 byte = "0.2.7"
@@ -33,8 +35,10 @@ zigbee-macros = { version = "0.1.0", path = "../zigbee-macros" }
 zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 
 [features]
-default = []
+default = ["log"]
 alloc = []
+log = ["dep:log"]
+defmt = ["dep:defmt", "heapless/defmt", "zigbee-types/defmt"]
 
 # shared plumbing for the `esp-radio` backed IEEE 802.15.4 backend.
 esp = [

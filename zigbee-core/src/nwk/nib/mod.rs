@@ -23,6 +23,7 @@ impl_byte! {
     #[tag(u8)]
     /// Zigbee device type.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum DeviceType {
         /// Zigbee coordinator
         Coordinator = 0x00,
@@ -374,6 +375,7 @@ impl CapabilityInformation {
 
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NwkNeighbor {
         /// IEEE address of the neighbor, learned from received frames that
         /// carry it; `IeeeAddress(0)` while unknown.

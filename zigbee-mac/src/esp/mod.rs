@@ -94,7 +94,7 @@ impl<'a> EspMlme<'a> {
             Either::First(_) => Err(MacError::RadioLockTimeout),
             Either::Second(Ok(guard)) => Ok(guard),
             Either::Second(Err(_)) => {
-                log::warn!("[MAC] radio lock queue full");
+                defmt_or_log::warn!("[MAC] radio lock queue full");
                 Err(MacError::RadioLockQueueFull)
             }
         }
@@ -137,7 +137,7 @@ impl EspMlmeInner<'_> {
                 // no ack / channel busy: retransmit (7.5.6.4)
                 Err(MacError::TxFailed) => {}
                 // a lost radio interrupt: retry rather than wedge the caller
-                Err(MacError::TxTimeout) => log::warn!("[MLME] tx-done timeout, retrying"),
+                Err(MacError::TxTimeout) => defmt_or_log::warn!("[MLME] tx-done timeout, retrying"),
                 Err(e) => return Err(e),
             }
         }
@@ -196,13 +196,16 @@ impl EspMlmeInner<'_> {
 
         let frame = self.beacon_request_frame();
         if let Err(e) = self.driver.transmit(&frame).await {
-            log::error!("[MLME-SCAN]: error transmitting beacon: {e}");
+            defmt_or_log::error!("[MLME-SCAN]: error transmitting beacon: {}", e);
         }
 
-        log::debug!("[MLME-SCAN] sent beacon frame to channel {channel}, waiting for messages...");
+        defmt_or_log::debug!(
+            "[MLME-SCAN] sent beacon frame to channel {}, waiting for messages...",
+            channel
+        );
 
         let delay_us: u64 = calculate_scan_duration_max_us(duration).into();
-        log::debug!("[MLME-SCAN] waiting for response for {delay_us}us");
+        defmt_or_log::debug!("[MLME-SCAN] waiting for response for {}us", delay_us);
 
         let mut pds = Vec::new();
         let deadline = Timer::after_micros(delay_us);
@@ -241,12 +244,12 @@ impl EspMlmeInner<'_> {
                 lqi,
                 ..
             } => {
-                log::debug!("[MLME-SCAN] received beacon frame on channel {channel}");
+                defmt_or_log::debug!("[MLME-SCAN] received beacon frame on channel {}", channel);
 
                 let zigbee_beacon = match payload.read_with(&mut 0, ()) {
                     Ok(zb) => zb,
                     Err(e) => {
-                        log::warn!("[MLME-SCAN] failed to parse zigbee beacon: {e:?}");
+                        defmt_or_log::warn!("[MLME-SCAN] failed to parse zigbee beacon: {:?}", e);
                         return None;
                     }
                 };
@@ -266,7 +269,7 @@ impl EspMlmeInner<'_> {
                 })
             }
             other => {
-                log::debug!("[MLME-SCAN] received non-beacon frame: {other:?}");
+                defmt_or_log::debug!("[MLME-SCAN] received non-beacon frame: {:?}", other);
                 None
             }
         }
@@ -468,7 +471,7 @@ impl EspMlmeInner<'_> {
             return Err(MacError::InvalidScanParams);
         }
 
-        log::debug!("[MLME-SCAN] start scan");
+        defmt_or_log::debug!("[MLME-SCAN] start scan");
 
         let mut pan_descriptor = Vec::new();
         for c in channels {
@@ -481,13 +484,13 @@ impl EspMlmeInner<'_> {
                     pan_descriptor.append(&mut pd);
                 }
                 Err(e) => {
-                    log::error!("[MLME-SCAN] error on channel {c}: {e}");
+                    defmt_or_log::error!("[MLME-SCAN] error on channel {}: {}", c, e);
                 }
                 _ => (),
             }
         }
 
-        log::debug!("[MLME-SCAN] success");
+        defmt_or_log::debug!("[MLME-SCAN] success");
 
         Ok(ScanResult {
             scan_type,
@@ -534,12 +537,12 @@ impl EspMlmeInner<'_> {
             match self.transmit_acked(&frame).await {
                 Ok(()) => {}
                 Err(MacError::NoAck) => {
-                    log::debug!("[MLME-ASSOCIATE] request not acked, retrying");
+                    defmt_or_log::debug!("[MLME-ASSOCIATE] request not acked, retrying");
                     continue;
                 }
                 Err(e) => return Err(e),
             }
-            log::debug!(
+            defmt_or_log::debug!(
                 "[MLME-ASSOCIATE] request acked, ack_pending={:?}",
                 self.driver.last_ack_frame_pending()
             );
@@ -569,7 +572,7 @@ impl EspMlmeInner<'_> {
         }
         let response = response.ok_or(MacError::NoData)?;
 
-        log::debug!(
+        defmt_or_log::debug!(
             "[MLME-ASSOCIATE] success, short_addr={:?}",
             response.association_address
         );
@@ -592,7 +595,7 @@ impl EspMlmeInner<'_> {
         // a response elicited by an earlier poll may have landed after its
         // listen window closed; deliver it instead of flushing it away
         if let Some((len, lqi)) = self.take_unicast_data(buf)? {
-            log::trace!("[MLME-POLL] rx buffered data len={len}");
+            defmt_or_log::trace!("[MLME-POLL] rx buffered data len={}", len);
             return Ok((len, lqi));
         }
         let timeout_us = (A_RESPONSE_WAIT_TIME as u64) * 16;
@@ -611,7 +614,7 @@ impl EspMlmeInner<'_> {
             // start_receive is a no-op if already receiving
             self.driver.start_receive();
             if let Some((len, lqi)) = self.recv_data_response(timeout_us, buf).await? {
-                log::trace!("[MLME-POLL] rx data len={len}");
+                defmt_or_log::trace!("[MLME-POLL] rx data len={}", len);
                 return Ok((len, lqi));
             }
         }
@@ -619,10 +622,10 @@ impl EspMlmeInner<'_> {
         // itself is unreachable, which the NWK layer treats as a missed
         // keepalive (3.6.10.3)
         if acked {
-            log::trace!("[MLME-POLL] no data");
+            defmt_or_log::trace!("[MLME-POLL] no data");
             Err(MacError::NoData)
         } else {
-            log::trace!("[MLME-POLL] no ack");
+            defmt_or_log::trace!("[MLME-POLL] no ack");
             Err(MacError::NoAck)
         }
     }
@@ -681,7 +684,7 @@ impl EspMlmeInner<'_> {
         } else {
             self.transmit_acked(&frame_buf[..total_len]).await?;
         }
-        log::trace!("[MLME] tx data, len={total_len}");
+        defmt_or_log::trace!("[MLME] tx data, len={}", total_len);
 
         Ok(())
     }
@@ -696,7 +699,7 @@ impl Mlme for EspMlme<'_> {
         // returns `()`, so `Self::lock`'s error has nowhere to go — locks
         // unbounded and skips on queue-full instead.
         let Ok(mut inner) = self.inner.lock().await else {
-            log::error!("[MAC] radio lock queue full, skipping configure");
+            defmt_or_log::error!("[MAC] radio lock queue full, skipping configure");
             return;
         };
         inner.driver.update_driver_config(|driver| {
@@ -759,7 +762,7 @@ impl Mlme for EspMlme<'_> {
     async fn receive(&self, buf: &mut [u8]) -> Result<(usize, u8), MacError> {
         match self.receive_data(buf).await {
             Ok((len, lqi)) => {
-                log::trace!("[MLME] rx data, len={len}");
+                defmt_or_log::trace!("[MLME] rx data, len={}", len);
                 Ok((len, lqi))
             }
             Err(e) => Err(e),

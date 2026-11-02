@@ -64,15 +64,18 @@ pub const TRUST_CENTER_LINK_KEY: [u8; 16] = [
 pub type Aes128Ccm = Ccm<Aes128, U4, U13>;
 
 #[derive(Debug, Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SecurityError {
     #[error("invalid key")]
     InvalidKey,
     #[error("invalid data")]
     InvalidData,
+    // neither foreign error implements `defmt::Format`, so they are rendered
+    // through their `Debug` impl rather than dropping the payload
     #[error("parse error")]
-    ParseError(byte::Error),
+    ParseError(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] byte::Error),
     #[error("ccm error")]
-    CcmError(ccm::Error),
+    CcmError(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] ccm::Error),
     #[error("frame security failed")]
     Unspecified,
     /// The outgoing frame counter reached 2^32-1 (4.3.1.1).
@@ -223,7 +226,7 @@ impl<'a> SecurityContext<'a> {
         };
 
         let Some(key_sequence_number) = aux_hdr.key_sequence_number else {
-            log::debug!("[SEC] nwk frame carries no key sequence number");
+            defmt_or_log::debug!("[SEC] nwk frame carries no key sequence number");
             return Err(SecurityError::InvalidData);
         };
 
@@ -235,8 +238,9 @@ impl<'a> SecurityContext<'a> {
                 .iter()
                 .find(|k| k.key_seq_number == key_sequence_number)
             else {
-                log::debug!(
-                    "[SEC] no network key for seq {key_sequence_number}, have {:?}",
+                defmt_or_log::debug!(
+                    "[SEC] no network key for seq {}, have {:?}",
+                    key_sequence_number,
                     sec_material_set
                         .iter()
                         .map(|k| k.key_seq_number)
@@ -258,18 +262,19 @@ impl<'a> SecurityContext<'a> {
         if let Some(seen) = seen
             && aux_hdr.frame_counter <= seen
         {
-            if aux_hdr.frame_counter == seen {
+            let counter = aux_hdr.frame_counter;
+            if counter == seen {
                 // every router rebroadcasts a NWK broadcast unchanged, so the
                 // originator's counter arrives once per relay; only the first
                 // copy is new
-                log::trace!(
-                    "[SEC] nwk duplicate: counter {} from {source_address:?}",
-                    aux_hdr.frame_counter
-                );
+                defmt_or_log::trace!("[SEC] nwk duplicate: {} from {:?}", counter, source_address);
             } else {
-                log::debug!(
-                    "[SEC] nwk replay: counter {} behind {seen} from {source_address:?} seq {key_sequence_number}",
-                    aux_hdr.frame_counter
+                defmt_or_log::debug!(
+                    "[SEC] nwk replay: {} behind {} from {:?} seq {}",
+                    counter,
+                    seen,
+                    source_address,
+                    key_sequence_number
                 );
             }
             return Err(SecurityError::InvalidData);
@@ -304,7 +309,10 @@ impl<'a> SecurityContext<'a> {
             .is_some_and(|ksn| ksn == active.wrapping_add(1))
         {
             let ksn = active.wrapping_add(1);
-            log::info!("[NWK] switching to network key seq {ksn} seen in a received frame");
+            defmt_or_log::info!(
+                "[NWK] switching to network key seq {} seen in a received frame",
+                ksn
+            );
             self.nib.update_active_key_seq_number(|value| *value = ksn);
         }
 

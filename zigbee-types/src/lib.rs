@@ -20,14 +20,41 @@ pub mod sync;
 pub type NwkAddress = u16;
 
 /// A fixed-size byte array.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ByteArray<const N: usize>(pub [u8; N]);
+
+// hex, not the derived list of decimals: these hold keys and addresses, and
+// `{:02x?}` at the call site has no defmt counterpart to pair with
+impl<const N: usize> fmt::Debug for ByteArray<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
 
 impl<const N: usize> Deref for ByteArray<N> {
     type Target = [u8; N];
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+// `{:02x?}` is a `core::fmt` spelling defmt has no counterpart for, so the
+// hex rendering lives in the type instead of in every format string
+#[cfg(feature = "defmt")]
+impl<const N: usize> defmt::Format for ByteArray<N> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:02x}", &self.0[..]);
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ByteArrayRef<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:02x}", self.0);
     }
 }
 
@@ -117,6 +144,7 @@ impl<'a, T> TryRead<'a, TypeArrayCtx> for TypeArrayRef<'a, T> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StorageVec<T, const N: usize>(pub Vec<T, N>);
 
 impl<const N: usize, T> Default for StorageVec<T, N> {
@@ -219,6 +247,13 @@ impl fmt::Debug for ShortAddress {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for ShortAddress {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "ShortAddress({:#06x})", self.0);
+    }
+}
+
 impl Default for ShortAddress {
     fn default() -> Self {
         Self(0xffff)
@@ -240,6 +275,13 @@ impl From<u64> for IeeeAddress {
 impl fmt::Debug for IeeeAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "IeeeAddress(0x{:016x})", self.0)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for IeeeAddress {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "IeeeAddress({:#018x})", self.0);
     }
 }
 
