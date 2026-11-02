@@ -75,6 +75,7 @@ pub(crate) const fn round_down(counter: u32) -> u32 {
 /// How much of a frame counter reaches flash.
 #[cfg(feature = "storage")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum CounterPrecision {
     /// Quantized to a window boundary, which keeps the write rate far below
     /// the frame rate.

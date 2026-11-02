@@ -111,6 +111,7 @@ pub trait ApsmeSap {
 // (2.2.8.4.4): same cluster and APS counter, source endpoint equal to the
 // destination endpoint the frame was sent to
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct AckKey {
     destination: u16,
     dst_endpoint: u8,

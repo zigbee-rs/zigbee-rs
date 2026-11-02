@@ -20,6 +20,7 @@ use crate::security::frame::AuxFrameHeader;
 
 /// NWK Frame
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Frame<'a> {
     /// Data Frame
     Data(DataFrame<'a>),
@@ -74,6 +75,7 @@ impl<'a> TryWrite<SecurityContext<'a>> for Frame<'a> {
 
 /// NWK Data Frame
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataFrame<'a> {
     pub header: Header<'a>,
     pub payload: &'a [u8],
@@ -89,6 +91,7 @@ impl<'a> DataFrame<'a> {
 
 /// NWK Command Frame
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommandFrame<'a> {
     pub header: Header<'a>,
     pub command: Command<'a>,

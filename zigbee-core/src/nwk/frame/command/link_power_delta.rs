@@ -6,6 +6,7 @@ use zigbee_types::TypeArrayRef;
 impl_byte! {
     /// Link Power Delta Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct LinkPowerDelta<'a> {
         pub command_options: CommandOptions,
         pub list_count: u8,
@@ -19,6 +20,7 @@ impl_byte! {
     #[tag(u8)]
     /// Link Power Delta Command Options
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum CommandOptions {
         Notification = 0x00,
         Request = 0x01,

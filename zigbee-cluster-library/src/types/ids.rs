@@ -3,6 +3,7 @@ pub use crate::frame::header::manufacturer_code::ManufacturerCode;
 /// ZCL wire data type identifier (ZCL spec rev8 2.6.2).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TypeId {
     NoData = 0x00,
     Data8 = 0x08,
@@ -258,6 +259,7 @@ impl TypeId {
 /// wire byte must be preserved for diagnostics or forwarding.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RawTypeId(u8);
 
 impl RawTypeId {
@@ -310,6 +312,7 @@ impl PartialEq<RawTypeId> for TypeId {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClusterId(pub u16);
 
 impl ClusterId {
@@ -320,6 +323,7 @@ impl ClusterId {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttributeId(pub u16);
 
 impl AttributeId {
@@ -331,6 +335,7 @@ impl AttributeId {
 /// ZCL cluster-specific command identifier (see ZCL spec 2.4.1).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommandId(pub u8);
 
 impl CommandId {

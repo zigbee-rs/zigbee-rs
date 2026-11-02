@@ -15,6 +15,7 @@ use zigbee_macros::impl_byte;
 impl_byte! {
     /// 2.4.1 ZCL Header
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ZclHeader {
         /// See Section 2.4.1.1.
         pub frame_control: FrameControl,

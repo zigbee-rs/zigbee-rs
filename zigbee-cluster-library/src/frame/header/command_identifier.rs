@@ -7,6 +7,7 @@ use byte::TryWrite;
 /// See Section 2.4.1.4 (Values can be found in Table 2-3)
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[non_exhaustive]
 pub enum CommandIdentifier {
     ReadAttributes,

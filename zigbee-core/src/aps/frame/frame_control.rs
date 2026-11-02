@@ -115,11 +115,28 @@ impl core::fmt::Debug for FrameControl {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for FrameControl {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "FrameControl {{ frame_type: {}, delivery_mode: {}, ack_format: {}, security_flag: {}, ack_request: {}, extended_header: {} }}",
+            self.frame_type(),
+            self.delivery_mode(),
+            self.ack_format_flag(),
+            self.security_flag(),
+            self.ack_request(),
+            self.extended_header()
+        );
+    }
+}
+
 /// Frame Type
 ///
 /// See Section 2.2.5.1.1
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FrameType {
     Data = 0b00,
     Command = 0b01,
@@ -129,6 +146,7 @@ pub enum FrameType {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DeliveryMode {
     Unicast = 0b00,
     Reserved = 0b01,
@@ -138,6 +156,7 @@ pub enum DeliveryMode {
 
 impl_byte! {
     #[derive(Clone, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ExtendedFrameControlField {
         pub extended_frame_control: ExtendedFrameControl,
         #[parse_if = extended_frame_control.is_fragmented()]
@@ -149,6 +168,7 @@ impl_byte! {
 
 impl_byte! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ExtendedFrameControl {
         fragmentation: Fragmentation
     }
@@ -169,6 +189,7 @@ impl_byte! {
     ///
     /// See Section 2.2.5.1.8
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum Fragmentation {
         NoFragmentation = 0b00,
         Fragmentation = 0b01,

@@ -337,6 +337,7 @@ construct_ib! {
 
 impl_byte! {
     #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct CapabilityInformation(pub u8);
 }
 
@@ -421,6 +422,7 @@ impl_byte! {
 
 /// See Table 3-67.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub(crate) enum RouteStatus {
     Active,
@@ -434,6 +436,7 @@ pub(crate) enum RouteStatus {
 impl_byte! {
     /// See Table 3-66.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NwkRoute {
         pub destination_address: ShortAddress,
         pub next_hop_address: ShortAddress,
@@ -479,6 +482,7 @@ impl NwkRoute {
 impl_byte! {
     /// See Table 3-70.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct TransactionRecord {
         pub source_address: ShortAddress,
         pub sequence_number: u8,
@@ -489,6 +493,7 @@ impl_byte! {
 impl_byte! {
     /// See Table 3-59.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RouteRecord {
         pub network_address: ShortAddress,
         pub relay_count: u16,
@@ -498,6 +503,7 @@ impl_byte! {
 
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AddressMap {
         pub ieee_address: IeeeAddress,
         pub network_address: ShortAddress,
@@ -506,11 +512,13 @@ impl_byte! {
 
 /// See Table 3-61.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct MacInterface {}
 
 impl_byte! {
     /// See Table 4-3.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NetworkSecurityMaterialDescriptor {
         pub key_seq_number: u8,
         pub key: ByteArray<16>,
@@ -525,6 +533,7 @@ impl_byte! {
     /// stored flat rather than nested in each security material descriptor,
     /// so a single counter can be persisted on its own.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct IncomingFrameCounterDescriptor {
         pub key_seq_number: u8,
         pub sender_address: IeeeAddress,

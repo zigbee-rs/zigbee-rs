@@ -5,6 +5,7 @@ use zigbee_types::ShortAddress;
 impl_byte! {
     /// Route Reply Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RouteReply {
         pub command_options: CommandOptions,
         pub route_request_id: u8,
@@ -33,6 +34,19 @@ impl core::fmt::Debug for CommandOptions {
             .field("originator_ieee", &self.originator_ieee())
             .field("multicast", &self.multicast())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for CommandOptions {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "CommandOptions {{ responder_ieee: {}, originator_ieee: {}, multicast: {} }}",
+            self.responder_ieee(),
+            self.originator_ieee(),
+            self.multicast()
+        );
     }
 }
 

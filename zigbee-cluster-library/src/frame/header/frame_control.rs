@@ -16,6 +16,7 @@ impl_byte! {
 #[allow(missing_docs)]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FrameType {
     GlobalCommand = 0b00,
     ClusterCommand = 0b01,
@@ -77,6 +78,20 @@ impl Debug for FrameControl {
             .field("direction", &self.direction())
             .field("disable_default_response", &self.disable_default_response())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for FrameControl {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "FrameControl {{ frame_type: {}, manufacturer_specific: {}, direction: {}, disable_default_response: {} }}",
+            self.frame_type(),
+            self.is_manufacturer_specific(),
+            self.direction(),
+            self.disable_default_response()
+        );
     }
 }
 

@@ -14,6 +14,7 @@ zcl_type! {
     #[null = 0xff]
     /// `uint8` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint8(pub u8);
 }
 
@@ -22,6 +23,7 @@ zcl_type! {
     #[null = 0xffff]
     /// `uint16` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint16(pub u16);
 }
 
@@ -31,6 +33,7 @@ zcl_type! {
     #[null = 0x00ff_ffff]
     /// `uint24` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint24(pub u32);
 }
 
@@ -39,6 +42,7 @@ zcl_type! {
     #[null = 0xffff_ffff]
     /// `uint32` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint32(pub u32);
 }
 
@@ -48,6 +52,7 @@ zcl_type! {
     #[null = 0x00ff_ffff_ffff]
     /// `uint40` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint40(pub u64);
 }
 
@@ -57,6 +62,7 @@ zcl_type! {
     #[null = 0x0000_ffff_ffff_ffff]
     /// `uint48` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint48(pub u64);
 }
 
@@ -66,6 +72,7 @@ zcl_type! {
     #[null = 0x00ff_ffff_ffff_ffff]
     /// `uint56` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint56(pub u64);
 }
 
@@ -74,6 +81,7 @@ zcl_type! {
     #[null = 0xffff_ffff_ffff_ffff]
     /// `uint64` (2.6.2.4).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Uint64(pub u64);
 }
 
@@ -82,6 +90,7 @@ zcl_type! {
     #[null = i8::MIN]
     /// `int8` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int8(pub i8);
 }
 
@@ -90,6 +99,7 @@ zcl_type! {
     #[null = i16::MIN]
     /// `int16` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int16(pub i16);
 }
 
@@ -99,6 +109,7 @@ zcl_type! {
     #[null = -0x0080_0000]
     /// `int24` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int24(pub i32);
 }
 
@@ -107,6 +118,7 @@ zcl_type! {
     #[null = i32::MIN]
     /// `int32` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int32(pub i32);
 }
 
@@ -116,6 +128,7 @@ zcl_type! {
     #[null = -0x0080_0000_0000]
     /// `int40` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int40(pub i64);
 }
 
@@ -125,6 +138,7 @@ zcl_type! {
     #[null = -0x0000_8000_0000_0000]
     /// `int48` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int48(pub i64);
 }
 
@@ -134,6 +148,7 @@ zcl_type! {
     #[null = -0x0080_0000_0000_0000]
     /// `int56` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int56(pub i64);
 }
 
@@ -142,6 +157,7 @@ zcl_type! {
     #[null = i64::MIN]
     /// `int64` (2.6.2.5).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Int64(pub i64);
 }
 

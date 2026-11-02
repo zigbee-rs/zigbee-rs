@@ -94,6 +94,47 @@ pub enum ZclDataType<'a> {
     Unknown,
 }
 
+// `Array` and its siblings hold `&[Self]`, so the derived bound would ask for
+// `Format` on a slice of `Self` while proving `Format` for `Self` — a cycle the
+// trait solver cannot close. Spelling the variants out keeps the recursion in
+// the method body, where it terminates on the data.
+#[cfg(feature = "defmt")]
+impl defmt::Format for ZclDataType<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self {
+            Self::NoData => defmt::write!(f, "NoData"),
+            Self::Data(value) => defmt::write!(f, "Data({})", value),
+            Self::Bool(value) => defmt::write!(f, "Bool({})", value),
+            Self::Bitmap(value) => defmt::write!(f, "Bitmap({})", value),
+            Self::UnsignedInt(value) => defmt::write!(f, "UnsignedInt({})", value),
+            Self::SignedInt(value) => defmt::write!(f, "SignedInt({})", value),
+            Self::Enum(value) => defmt::write!(f, "Enum({})", value),
+            Self::Float(value) => defmt::write!(f, "Float({})", value),
+            Self::String(value) => defmt::write!(f, "String({})", value),
+            Self::Array(items) => format_items(f, "Array", items),
+            Self::Structure(items) => format_items(f, "Structure", items),
+            Self::Set(items) => format_items(f, "Set", items),
+            Self::Bag(items) => format_items(f, "Bag", items),
+            Self::Time(value) => defmt::write!(f, "Time({})", value),
+            Self::Identifier(value) => defmt::write!(f, "Identifier({})", value),
+            Self::Misc(value) => defmt::write!(f, "Misc({})", value),
+            Self::Unknown => defmt::write!(f, "Unknown"),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+fn format_items(f: defmt::Formatter<'_>, name: &str, items: &[ZclDataType<'_>]) {
+    defmt::write!(f, "{}([", name);
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            defmt::write!(f, ", ");
+        }
+        defmt::write!(f, "{}", item);
+    }
+    defmt::write!(f, "])");
+}
+
 impl ZclDataType<'_> {
     pub fn type_id(&self) -> Result<u8, byte::Error> {
         match self {
@@ -173,6 +214,7 @@ impl TryWrite<u8> for ZclDataType<'_> {
 
 /// 2.6.2.2 General Data
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataN {
     Data8(u8),
     Data16(u16),
@@ -251,6 +293,7 @@ impl TryWrite<u8> for DataN {
 
 /// 2.6.2.4 Bitmap
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BitmapN {
     Bitmap8(u8),
     Bitmap16(u16),
@@ -329,6 +372,7 @@ impl TryWrite<u8> for BitmapN {
 
 /// 2.6.2.5 Unsigned Integer
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UnsignedN {
     Uint8(u8),
     Uint16(u16),
@@ -407,6 +451,7 @@ impl TryWrite<u8> for UnsignedN {
 
 /// 2.6.2.6 Signed Integer
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SignedN {
     Int8(i8),
     Int16(i16),
@@ -484,6 +529,7 @@ impl TryWrite<u8> for SignedN {
 
 /// 2.6.2.7 Enumeration
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EnumN {
     Enum8(u8),
     Enum16(u16),
@@ -524,6 +570,7 @@ impl TryWrite<u8> for EnumN {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FloatN {
     /// 2.6.2.8 Semi-precision based on IEEE-754
     Semi(u16),
@@ -572,6 +619,7 @@ impl TryWrite<u8> for FloatN {
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ZclString<'a> {
     /// 2.6.2.12 Octet String
     OctetString(&'a [u8]),
@@ -727,6 +775,7 @@ impl TryWrite<u8> for ZclString<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimeType {
     /// 2.6.2.19 Time of day
     TimeOfDay(u32),
@@ -774,6 +823,7 @@ impl TryWrite<u8> for TimeType {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum IdentifierType {
     /// 2.6.2.22 Cluster ID
     ClusterId(u16),
@@ -822,6 +872,7 @@ impl TryWrite<u8> for IdentifierType {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MiscType<'a> {
     /// 2.6.2.25 IEEE Address
     IeeeAddress(u64),

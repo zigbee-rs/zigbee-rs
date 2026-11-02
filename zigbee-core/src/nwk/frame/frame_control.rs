@@ -27,6 +27,25 @@ impl core::fmt::Debug for FrameControl {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for FrameControl {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "FrameControl {{ frame_type: {}, protocol_version: {}, discover_route: {}, multicast_flag: {}, security_flag: {}, source_flag: {}, destination_ieee_flag: {}, source_ieee_flag: {}, end_device_initiator: {} }}",
+            self.frame_type(),
+            self.protocol_version(),
+            self.discover_route(),
+            self.multicast_flag(),
+            self.security_flag(),
+            self.source_flag(),
+            self.destination_ieee_flag(),
+            self.source_ieee_flag(),
+            self.end_device_initiator()
+        );
+    }
+}
+
 impl FrameControl {
     /// See Section 3.3.1.1.
     pub fn frame_type(&self) -> FrameType {
@@ -175,6 +194,7 @@ impl FrameControl {
 /// Data Transmission Method
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataTransmissionMethod {
     Unicast,
     Broadcast,
@@ -187,6 +207,7 @@ pub enum DataTransmissionMethod {
 /// See Section 3.3.1.1.1.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FrameType {
     Data = 0b00,
     NwkCommand = 0b01,
@@ -197,6 +218,7 @@ pub enum FrameType {
 /// Discover Route
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DiscoverRoute {
     Suppress,
     Enable,

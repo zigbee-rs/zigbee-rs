@@ -8,6 +8,7 @@ impl_byte! {
     ///
     /// See Section 3.4.11.
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct EndDeviceTimeoutRequest {
         /// Requested timeout enumeration (0–14, Table 3.52).
         pub requested_timeout: u8,

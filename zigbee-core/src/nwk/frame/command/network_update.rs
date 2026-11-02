@@ -3,6 +3,7 @@ use zigbee_macros::impl_byte;
 impl_byte! {
     /// Network Update Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NetworkUpdate {
         pub update_id: u8,
         pub channel: u8,

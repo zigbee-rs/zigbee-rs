@@ -5,6 +5,9 @@
 //! A frame is a [`ZclHeader`] followed by a [`ZclFramePayload`], which is
 //! either a global command over attributes or a cluster-specific command.
 #![allow(missing_docs)]
+// defmt's `Format` derive on `Status` names the deprecated variants, and an
+// item-level `allow` does not reach into the derive's expansion
+#![cfg_attr(feature = "defmt", allow(deprecated))]
 
 pub mod header;
 pub mod payload;
@@ -25,6 +28,7 @@ impl_byte! {
     ///
     /// See Section 2.4.1
     #[derive(Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ZclFrame<'a> {
         pub header: ZclHeader,
         #[ctx = &header]
@@ -42,6 +46,7 @@ impl_byte! {
 /// replacement status value instead. For compatibility, the replacements will
 /// be performed when serializing or deserializing from bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Status {
     /// Operation was successful.
@@ -255,6 +260,7 @@ impl TryWrite<()> for Status {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GeneralCommand<'a, const CMD_ATTR_CAPACITY: usize = 16> {
     ReadAttributes(Vec<ReadAttribute, CMD_ATTR_CAPACITY>),
     ReadAttributesResponse(Vec<ReadAttributeResponse<'a>, CMD_ATTR_CAPACITY>),
@@ -266,12 +272,14 @@ pub enum GeneralCommand<'a, const CMD_ATTR_CAPACITY: usize = 16> {
 
 impl_byte! {
     #[derive(Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ReadAttribute {
         pub attribute_id: u16,
     }
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReadAttributeResponse<'a> {
     pub attribute_id: u16,
     pub status: Status,
@@ -323,6 +331,7 @@ impl TryWrite<()> for ReadAttributeResponse<'_> {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WriteAttribute<'a> {
     pub attribute_id: u16,
     pub value: ZclDataType<'a>,
@@ -357,6 +366,7 @@ impl TryWrite<()> for WriteAttribute<'_> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WriteAttributeStatus {
     pub status: Status,
     pub attribute_id: Option<u16>,
@@ -404,6 +414,7 @@ impl TryWrite<()> for WriteAttributeStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DefaultResponse {
     pub command_identifier: u8,
     pub status: Status,
@@ -434,6 +445,7 @@ impl TryWrite<()> for DefaultResponse {
 }
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttributeReport<'a> {
     pub attribute_id: u16,
     pub value: ZclDataType<'a>,

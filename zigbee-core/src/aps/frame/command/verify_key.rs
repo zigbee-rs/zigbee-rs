@@ -5,6 +5,7 @@ use zigbee_types::IeeeAddress;
 impl_byte! {
     /// Verify-Key Command Frame (4.4.10.8, Table 4-27, command id 0x0f)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VerifyKey {
         /// Standard key type (0x04 = Trust Center Link Key)
         pub key_type: u8,

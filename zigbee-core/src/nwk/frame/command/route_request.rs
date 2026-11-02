@@ -4,6 +4,7 @@ use zigbee_types::ShortAddress;
 
 impl_byte! {
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RouteRequest {
         pub command_options: CommandOptions,
         pub route_request_id: u8,
@@ -28,6 +29,18 @@ impl core::fmt::Debug for CommandOptions {
             .field("many_to_one", &self.many_to_one())
             .field("destination_ieee", &self.destination_ieee())
             .finish()
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for CommandOptions {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "CommandOptions {{ many_to_one: {}, destination_ieee: {} }}",
+            self.many_to_one(),
+            self.destination_ieee()
+        );
     }
 }
 

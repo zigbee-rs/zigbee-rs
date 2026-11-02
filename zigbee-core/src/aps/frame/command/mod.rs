@@ -16,6 +16,7 @@ impl_byte! {
     // 4.4.10, Table 4-27
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum Command {
         #[tag_value = 0x05]
         TransportKey(TransportKey),

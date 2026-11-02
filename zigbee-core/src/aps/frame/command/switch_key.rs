@@ -3,6 +3,7 @@ use zigbee_macros::impl_byte;
 impl_byte! {
     /// Switch-Key Command Frame (4.4.10.5, Figure 4-14, command id 0x09)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct SwitchKey {
         /// Sequence number of the network key to activate
         pub sequence_number: u8,

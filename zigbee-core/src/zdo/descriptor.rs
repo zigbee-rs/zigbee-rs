@@ -78,6 +78,7 @@ fn append(out: &mut [u8], offset: &mut usize, bytes: &[u8]) -> Result<(), byte::
 /// The default describes an end device with no capabilities announced; fill in
 /// what the node actually is.
 #[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NodeDescriptorConfig {
     pub logical_type: LogicalType,
     pub complex_descriptor_available: bool,
@@ -123,6 +124,7 @@ impl NodeDescriptorConfig {
 
 /// Static configuration of the node power descriptor (2.3.2.4).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PowerDescriptorConfig<'a> {
     /// Sleep/power-saving mode (2.3.2.4.1).
     pub current_power_mode: CurrentPowerMode,
@@ -156,6 +158,7 @@ impl PowerDescriptorConfig<'_> {
 
 /// One application endpoint exposed by this device (2.3.2.5).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EndpointDescriptor<'a> {
     pub endpoint: u8,
     pub profile_id: u16,
@@ -196,6 +199,7 @@ impl EndpointDescriptor<'_> {
 
 /// The descriptors this device advertises to the network.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceDescriptorConfig<'a> {
     pub node: NodeDescriptorConfig,
     pub power: PowerDescriptorConfig<'a>,
@@ -333,6 +337,7 @@ pub const ADDR_REQUEST_EXTENDED: u8 = 0x01;
 
 /// A parsed NWK_addr_req (2.4.3.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NwkAddrReq {
     /// ZDP transaction sequence number to echo in the response.
     pub seq: u8,
@@ -357,6 +362,7 @@ pub fn parse_nwk_addr_req(asdu: &[u8]) -> Option<NwkAddrReq> {
 
 /// A parsed IEEE_addr_req (2.4.3.1.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct IeeeAddrReq {
     /// ZDP transaction sequence number to echo in the response.
     pub seq: u8,
@@ -485,6 +491,7 @@ pub fn node_desc_req(
 
 /// A parsed Node_Desc_rsp (2.4.4.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NodeDescRsp {
     /// ZDP transaction sequence number of the request being answered.
     pub seq: u8,
@@ -525,6 +532,7 @@ pub fn parse_node_desc_rsp(asdu: &[u8]) -> Option<NodeDescRsp> {
 
 /// A parsed Bind_req / Unbind_req (2.4.3.2.2/2.4.3.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BindReq {
     /// ZDP transaction sequence number to echo in the response.
     pub seq: u8,
@@ -537,6 +545,7 @@ pub struct BindReq {
 
 /// Destination of a Bind_req, by addressing mode (2.4.3.2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BindReqDestination {
     Group(u16),
     Device { ieee: IeeeAddress, endpoint: u8 },
@@ -578,6 +587,7 @@ const BIND_ADDR_MODE_DEVICE: u8 = 0x03;
 /// Outcome of a Bind_req / Unbind_req, as reported in the response
 /// (2.4.4.3.2/2.4.4.3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BindStatus {
     Success,
     InvalidEndpoint,
@@ -608,6 +618,7 @@ pub fn bind_rsp(seq: u8, status: BindStatus, out: &mut [u8]) -> Result<usize, by
 
 /// A parsed Match_Desc_req (2.4.3.1.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MatchDescReq<'a> {
     /// ZDP transaction sequence number to echo in the response.
     pub seq: u8,
@@ -689,6 +700,7 @@ pub fn match_desc_rsp(
 
 /// Why a discovery request could not be answered with data (2.4.4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DiscoveryError {
     /// The request named another device and this device cannot answer for it
     /// (2.4.4.2.7 step 2.b.i).
@@ -727,6 +739,7 @@ pub fn match_desc_rsp_error(
 
 /// A parsed Mgmt_Leave_req (2.4.3.3.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MgmtLeaveReq {
     /// ZDP transaction sequence number to echo in the response.
     pub seq: u8,

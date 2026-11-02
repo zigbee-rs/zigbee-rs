@@ -36,7 +36,8 @@ zigbee-types = { version = "0.1.0", path = "../zigbee-types" }
 
 [features]
 default = ["log"]
-alloc = []
+# `defmt?/alloc` carries `Format` for the `Vec`s this feature switches to
+alloc = ["defmt?/alloc"]
 log = ["dep:log"]
 defmt = ["dep:defmt", "heapless/defmt", "zigbee-types/defmt"]
 

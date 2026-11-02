@@ -31,6 +31,7 @@ pub mod attribute {
 /// Counted as 100 x the pH, which is unitless, giving 0.01 resolution over
 /// the range 0.00 to 14.00.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Ph(u16);
 
 impl Ph {

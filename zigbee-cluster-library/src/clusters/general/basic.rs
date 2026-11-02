@@ -35,6 +35,7 @@ zcl_type! {
     #[type_id = TypeId::Enum8]
     /// `PowerSource` (ZCL 3.2.2.2.9), e.g. `0x01` mains, `0x03` battery.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct PowerSource(pub u8);
 }
 
@@ -92,6 +93,7 @@ const ATTRIBUTES: &[AttrInfo] = &[
 
 /// Basic cluster server holding the device identity attribute values.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicServer<'a> {
     pub zcl_version: u8,
     pub application_version: u8,

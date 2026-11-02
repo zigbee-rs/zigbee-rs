@@ -171,6 +171,7 @@ pub struct Nlme<M> {
 
 /// Keepalive method negotiated with the router parent (3.6.10.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum KeepaliveMethod {
     /// The parent tracks a MAC data poll as a keepalive
     /// (`nwkParentInformation` bit 0).

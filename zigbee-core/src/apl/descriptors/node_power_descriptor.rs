@@ -16,6 +16,7 @@ const NODE_POWER_DESCRIPTOR_SIZE: usize = 2;
 const NIBBLE: u8 = 0b1111;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NodePowerDescriptor<'a> {
     bytes: &'a [u8],
 }
@@ -74,6 +75,7 @@ impl NodePowerDescriptor<'_> {
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     /// Current power mode field (2.3.2.4.1).
     pub enum CurrentPowerMode {
         /// Synchronized with the receiver-on-when-idle subfield of the node descriptor.
@@ -102,6 +104,7 @@ impl CurrentPowerMode {
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     /// A power source of the node, as its bit in the available power sources
     /// (2.3.2.4.2) and current power source (2.3.2.4.3) fields, which share a
     /// bit assignment.
@@ -140,6 +143,7 @@ impl PowerSource {
 impl_byte! {
     #[tag(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     /// Current power source level field (2.3.2.4.4).
     pub enum CurrentPowerSourceLevel {
         Critical = 0b0000,

@@ -20,6 +20,7 @@ pub const LONG_MAX_LEN: usize = 65534;
 
 /// A `CharacterString` value: UTF-8, at most [`SHORT_MAX_LEN`] bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ShortStr<'a>(&'a str);
 
 impl<'a> ShortStr<'a> {
@@ -38,6 +39,7 @@ impl<'a> ShortStr<'a> {
 
 /// A `LongCharacterString` value: UTF-8, at most [`LONG_MAX_LEN`] bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct LongStr<'a>(&'a str);
 
 impl<'a> LongStr<'a> {

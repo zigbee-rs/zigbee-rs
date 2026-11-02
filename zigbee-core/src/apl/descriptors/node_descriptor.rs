@@ -78,6 +78,7 @@ impl_byte! {
     #[tag(u8)]
     /// Logical type field (2.3.2.3.1): device type of the Zigbee node.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum LogicalType {
         Coordinator = 0b000,
         Router = 0b001,

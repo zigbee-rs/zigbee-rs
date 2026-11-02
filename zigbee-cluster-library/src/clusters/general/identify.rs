@@ -82,6 +82,17 @@ pub struct IdentifyServer {
     identify_time: AtomicU16,
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for IdentifyServer {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "IdentifyServer {{ identify_time: {} }}",
+            self.identify_time()
+        );
+    }
+}
+
 impl IdentifyServer {
     /// A server that starts out not identifying.
     pub const fn new() -> Self {

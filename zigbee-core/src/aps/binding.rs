@@ -12,6 +12,7 @@ impl_byte! {
     #[tag(u8)]
     /// Destination addressing mode of a binding (2.4.3.2.2).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub enum BindingAddrMode {
         /// 16-bit group address, destination endpoint omitted
         Group = 0x01,
@@ -43,6 +44,7 @@ impl Default for BindingAddrMode {
 impl_byte! {
     /// A binding table entry (2.2.8.2.1).
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Binding {
         /// local endpoint the binding applies to
         pub src_endpoint: u8,
@@ -121,6 +123,7 @@ pub(crate) fn remove_binding_link<const N: usize>(
 }
 
 #[derive(Error, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[error("SourceError")]
 pub(crate) enum BindingError {
     IllegalRequest,

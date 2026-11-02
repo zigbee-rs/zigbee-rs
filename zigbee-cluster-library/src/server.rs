@@ -52,6 +52,7 @@ const DIRECTION_REPORTED: u8 = 0x00;
 
 /// A cluster-specific command addressed to a [`ClusterServer`].
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ClusterCommand<'a> {
     /// Command identifier, in the cluster's own numbering (2.4.1.4).
     pub id: CommandId,
@@ -63,6 +64,7 @@ pub struct ClusterCommand<'a> {
 
 /// How a [`ClusterServer`] handled a cluster-specific command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CommandOutcome {
     /// A complete response frame was written, of this many bytes. A command
     /// answered by its own cluster response draws no Default Response
@@ -222,6 +224,7 @@ pub trait ClusterServer {
 /// that *is* served but chose to stay silent — a `Write Attributes No
 /// Response`, a broadcast — is not contradicted here.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UnsupportedClusterResponder<'a> {
     served: &'a [u16],
 }

@@ -10,6 +10,7 @@ pub mod header;
 
 /// APS Frame
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Frame<'a> {
     Data(DataFrame<'a>),
     ApsCommand(CommandFrame),
@@ -39,12 +40,14 @@ impl<'a> Frame<'a> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataFrame<'a> {
     pub header: Header,
     pub payload: &'a [u8],
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CommandFrame {
     pub header: Header,
     pub command: Command,

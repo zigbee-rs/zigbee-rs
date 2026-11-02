@@ -6,6 +6,7 @@ use zigbee_types::TypeArrayRef;
 impl_byte! {
     /// Link Status Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct LinkStatus<'a> {
         pub command_options: CommandOptions,
         #[ctx = TypeArrayCtx::Len(usize::from(command_options.entry_count()))]
@@ -17,6 +18,7 @@ impl_byte! {
 impl_byte! {
     /// Link Status Command Options
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct CommandOptions(pub u8);
 }
 

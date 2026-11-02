@@ -3,6 +3,7 @@
 use super::error::ApsError;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SrcAddrMode {
     Reserved = 0x00,
     #[default]
@@ -11,6 +12,7 @@ pub enum SrcAddrMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DstAddrMode {
     #[default]
     None,
@@ -20,6 +22,7 @@ pub enum DstAddrMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Address {
     #[default]
     None,
@@ -29,6 +32,7 @@ pub enum Address {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TxOptions {
     SecurityEnabled = 0x01,
     UseNetworkKey = 0x02,
@@ -39,6 +43,7 @@ pub enum TxOptions {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SrcEndpoint {
     pub(crate) value: u8,
 }

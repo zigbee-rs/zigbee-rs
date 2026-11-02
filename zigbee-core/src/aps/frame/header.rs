@@ -9,6 +9,7 @@ use crate::aps::frame::frame_control::ExtendedFrameControlField;
 impl_byte! {
     /// 2.2.5.1 General APDU Frame Format
     #[derive(Clone, Debug, Eq, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Header {
         pub frame_control: FrameControl,
         /// 2.2.5.1.2 — present for unicast or broadcast delivery

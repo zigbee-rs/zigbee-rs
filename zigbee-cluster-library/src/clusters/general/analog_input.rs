@@ -42,6 +42,7 @@ pub mod attribute {
 /// Four flags describing the health of the analog sensor. The relationship
 /// between individual flags is not defined by the specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StatusFlags(u8);
 
 impl StatusFlags {
@@ -94,6 +95,7 @@ impl StatusFlags {
 
 /// `Reliability` (ZCL 3.14.11.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum Reliability {
     NoFaultDetected = 0x00,

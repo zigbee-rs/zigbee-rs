@@ -20,6 +20,26 @@ does not have to reinvent it:
 `rx_loop` and `link_maintenance` are meant to run as two tasks sharing a
 `&'static ZigbeeDevice`.
 
+## Logging
+
+The stack logs through [`defmt-or-log`](https://crates.io/crates/defmt-or-log),
+so the backend is a feature of this crate. `log` is the default; `defmt`
+replaces it, and the application picks one:
+
+```toml
+[dependencies]
+zigbee = { version = "0.1", default-features = false, features = ["defmt"] }
+```
+
+Without `default-features = false` both backends are on and every record is
+emitted twice — once to each. The feature reaches every crate below, so a
+single switch moves the whole stack, and the public types carry
+`defmt::Format` alongside their `Debug` wherever `defmt` is enabled.
+
+A `defmt` build needs a transport in the application (`defmt-rtt`,
+`esp-println` with its `defmt-espflash` feature, …) and `defmt`'s host tooling
+to decode what arrives; a `log` build prints wherever the chosen logger points.
+
 ## License
 
 Licensed under either of Apache License, Version 2.0 or MIT license at your

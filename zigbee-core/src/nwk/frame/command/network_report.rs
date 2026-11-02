@@ -5,6 +5,7 @@ use zigbee_types::TypeArrayRef;
 impl_byte! {
     /// Network Report Command Frame
     #[derive(Debug, Clone)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct NetworkReport<'a> {
         pub report_type: u8,
         pub device_count: u8,
