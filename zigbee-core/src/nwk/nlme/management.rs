@@ -24,6 +24,19 @@ pub struct NlmeNetworkDiscoveryConfirm {
         heapless::Vec<NetworkDescriptor, { zigbee_mac::mlme::MAX_IEEE802154_CHANNELS }>,
 }
 
+impl NlmeNetworkDiscoveryConfirm {
+    pub(super) fn from_descriptors(descriptors: impl Iterator<Item = NetworkDescriptor>) -> Self {
+        // The MAC may return a growable scan list even when this layer uses
+        // fixed-capacity storage.
+        #[cfg(not(feature = "alloc"))]
+        let descriptors = descriptors.take(zigbee_mac::mlme::MAX_IEEE802154_CHANNELS);
+
+        Self {
+            network_descriptor: descriptors.collect(),
+        }
+    }
+}
+
 /// Network descriptor
 ///
 /// Each entry corresponds to a single beacon received during network
@@ -242,3 +255,39 @@ pub struct NlmeNwkStatusIndication {
 pub struct NlmeResetRequest {}
 /// 3.2.2.22 - NLME-RESET.confirm
 pub struct NlmeResetConfirm {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_confirm_handles_more_descriptors_than_fixed_capacity() {
+        let confirm =
+            NlmeNetworkDiscoveryConfirm::from_descriptors((0..28).map(|i| NetworkDescriptor {
+                extended_pan_id: IeeeAddress(i),
+                pan_id: ShortAddress(0xAAAA),
+                update_id: 0,
+                logical_channel: 11,
+                stack_profile: 2,
+                zigbee_version: 2,
+                beacon_order: BeaconOrder::OnDemand,
+                superframe_order: SuperframeOrder::Inactive,
+                permit_joining: true,
+                router_capacity: true,
+                end_device_capacity: true,
+            }));
+
+        #[cfg(not(feature = "alloc"))]
+        assert_eq!(confirm.network_descriptor.len(), 27);
+        #[cfg(feature = "alloc")]
+        assert_eq!(confirm.network_descriptor.len(), 28);
+        assert_eq!(
+            confirm.network_descriptor[0].extended_pan_id,
+            IeeeAddress(0)
+        );
+        assert_eq!(
+            confirm.network_descriptor[26].extended_pan_id,
+            IeeeAddress(26)
+        );
+    }
+}
