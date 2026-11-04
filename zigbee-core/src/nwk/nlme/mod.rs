@@ -1343,10 +1343,7 @@ where
             .update_neighbor_table(|value| *value = StorageVec(neighbor_table));
 
         // build network descriptors for the confirm primitive
-        let network_descriptors = scan_result
-            .pan_descriptor
-            .into_iter()
-            .map(From::from);
+        let network_descriptors = scan_result.pan_descriptor.into_iter().map(From::from);
         Ok(NlmeNetworkDiscoveryConfirm::from_descriptors(
             network_descriptors,
         ))
