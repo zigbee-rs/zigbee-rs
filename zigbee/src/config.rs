@@ -28,7 +28,7 @@ pub struct DeviceConfig {
     /// Coordinator, router, or end device.
     pub logical_type: zigbee_core::LogicalType,
     /// Capability information this device joins with (Table 3-62); its
-    /// receiver-on-when-idle bit also decides how [`crate::rx_loop`] receives.
+    /// receiver-on-when-idle bit also decides how [`crate::Stack::rx_loop`] receives.
     pub capability_information: CapabilityInformation,
     /// How this device discovers addresses of others (2.4.3.1).
     pub discovery_type: DiscoveryType,
@@ -60,15 +60,55 @@ impl Default for TimingConfig {
     }
 }
 
+/// How often a failed rejoin is retried before the network is given up
+/// (BDB 7.1 step 5 leaves this to the application).
+///
+/// Retrying bridges an outage: after a power cut a device is up before the
+/// router it rejoins through. Applies at startup and to a parent link lost
+/// later.
+pub struct RejoinConfig {
+    /// Rejoin attempts, the first one included. `None` never gives the
+    /// network up.
+    ///
+    /// A finite count ends in steering, which is also what finds a network
+    /// that moved to another channel (BDB 7.1 step 4 scans none).
+    pub attempts: Option<u8>,
+    /// Delay before the second attempt, doubling for each further one.
+    pub backoff_ms: u32,
+    /// Cap on that delay.
+    pub max_backoff_ms: u32,
+    /// Whether using up the attempts commissions the device again with
+    /// network steering, which needs the network opened for joining.
+    ///
+    /// With `false` the device keeps what it needs to rejoin and reports
+    /// [`crate::Commissioned::Failed`] instead. A device on no network steers
+    /// either way.
+    pub steer_after_failure: bool,
+}
+
+impl Default for RejoinConfig {
+    /// Five attempts over roughly two minutes, then steering: long enough for
+    /// a coordinator to reboot, short enough to re-commission by itself.
+    fn default() -> Self {
+        Self {
+            attempts: Some(5),
+            backoff_ms: 10_000,
+            max_backoff_ms: 60_000,
+            steer_after_failure: true,
+        }
+    }
+}
+
 /// The whole application-facing configuration of the stack.
 ///
 /// Build it once with [`StackConfig::new`] and hand it to every entry point of
 /// this crate; [`Self::zdo`] produces the configuration
-/// [`zigbee_core::ZigbeeDevice`] and BDB expect.
+/// [`zigbee_core::zdo::ZigbeeDevice`] and BDB expect.
 pub struct StackConfig<'a> {
     network: NetworkConfig,
     device: DeviceConfig,
     timing: TimingConfig,
+    rejoin: RejoinConfig,
     descriptors: DeviceDescriptorConfig<'a>,
 }
 
@@ -89,8 +129,16 @@ impl<'a> StackConfig<'a> {
             network,
             device,
             timing,
+            rejoin: RejoinConfig::default(),
             descriptors,
         }
+    }
+
+    /// Replace the rejoin retry schedule ([`RejoinConfig::default`] otherwise).
+    #[must_use]
+    pub fn with_rejoin(mut self, rejoin: RejoinConfig) -> Self {
+        self.rejoin = rejoin;
+        self
     }
 
     /// The network this device belongs to.
@@ -108,6 +156,11 @@ impl<'a> StackConfig<'a> {
         &self.timing
     }
 
+    /// How a failed rejoin is retried (BDB 7.1 step 5).
+    pub fn rejoin(&self) -> &RejoinConfig {
+        &self.rejoin
+    }
+
     /// The descriptors served to an interviewer (2.3.2).
     pub fn descriptors(&self) -> &DeviceDescriptorConfig<'a> {
         &self.descriptors
@@ -119,7 +172,7 @@ impl<'a> StackConfig<'a> {
     }
 
     /// The ZDO configuration derived from this one, for
-    /// [`zigbee_core::ZigbeeDevice::new`] and `BaseDeviceBehavior::new`.
+    /// [`zigbee_core::zdo::ZigbeeDevice::new`] and `BaseDeviceBehavior::new`.
     pub fn zdo(&self) -> zigbee_core::Config {
         zigbee_core::Config {
             radio_channel: self.channel(),
