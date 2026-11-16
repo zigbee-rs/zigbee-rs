@@ -29,11 +29,11 @@ pub trait CollectionKindTypestate {
 }
 
 /// An ordered collection (2.6.2.14).
-pub enum Array {}
+pub struct Array;
 /// An unordered collection without duplicates (2.6.2.15).
-pub enum Set {}
+pub struct Set;
 /// An unordered collection permitting duplicates (2.6.2.16).
-pub enum Bag {}
+pub struct Bag;
 
 impl CollectionKindTypestate for Array {
     const TYPE_ID: TypeId = TypeId::Array;
