@@ -53,7 +53,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: ${{ runner.os }}-tests-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-tests-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run clippy
         run: cargo clippy --all-features --workspace -- -D warnings
@@ -90,6 +90,9 @@ jobs:
       - name: Setup LCOV
         uses: hrishikesh-kadam/setup-lcov@v1
 
+      # `target` is deliberately not cached here: cargo-llvm-cov reads every
+      # instrumented binary it finds, so a restored target makes genhtml fail on
+      # source files that have been moved or deleted since the cache was written
       - name: Cache dependencies
         uses: actions/cache@v4
         env:
@@ -101,8 +104,7 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
-            target
-          key: ${{ runner.os }}-coverage-${{ env.cache-name }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-coverage-${{ env.cache-name }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -111,7 +113,9 @@ jobs:
         env:
           CARGO_INCREMENTAL: 0
         # see the comment on the test step: `defmt` cannot link on the host
-        run: cargo llvm-cov --workspace --features log,alloc,in-memory-nib,storage --lcov --output-path ./lcov.info
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --features log,alloc,in-memory-nib,storage --lcov --output-path ./lcov.info
 
       - name: remove full path from coverage
         run: sed -i "s;$PWD/;;g" ./lcov.info
@@ -158,7 +162,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Run build
         env:
