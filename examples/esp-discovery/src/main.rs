@@ -4,7 +4,6 @@
 use embassy_time::Timer;
 use esp_alloc as _;
 use esp_backtrace as _;
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 use esp_radio::ieee802154::Ieee802154;
@@ -23,9 +22,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     esp_alloc::heap_allocator!(size: 24 * 1024);
 
@@ -34,7 +32,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let ieee802154 = Ieee802154::new(peripherals.IEEE802154);
     let mac = EspMlme::new(ieee802154, Default::default());
 
-    let mut nwk = Nlme::new(mac);
+    let nwk = Nlme::new(mac);
 
     println!("Starting network discovery, channels: {CHANNELS:?}, duration: {SCAN_DURATION}");
     match nwk.network_discovery(CHANNELS, SCAN_DURATION).await {
