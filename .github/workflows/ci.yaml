@@ -83,7 +83,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          # TODO(#77): switch to stable once the crate builds without nightly
           toolchain: stable
           components: llvm-tools-preview
 
@@ -122,8 +121,10 @@ jobs:
           coverage-files: ./lcov.info
           minimum-coverage: 14
           artifact-name: code-coverage-report
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          update-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          # `github-token` is what makes the action comment at all; a fork PR gets a read-only token, 
+          # so passing it there fails the job on the comment API.
+          github-token: ${{ github.event.pull_request.head.repo.full_name == github.repository && secrets.GITHUB_TOKEN || '' }}
+          update-comment: true
 
   build:
     runs-on: ubuntu-latest
