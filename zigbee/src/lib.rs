@@ -36,6 +36,7 @@ pub mod stack;
 
 pub use config::DeviceConfig;
 pub use config::NetworkConfig;
+pub use config::RejoinConfig;
 pub use config::StackConfig;
 pub use config::TimingConfig;
 pub use stack::Commissioned;
