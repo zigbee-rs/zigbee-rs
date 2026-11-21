@@ -44,6 +44,45 @@ Atomic commits will make it easier to track down regressions. Also, it enables t
 4. Push to the branch (`git push origin feature/fooBar`)
 5. Create a new Pull Request
 
+## 🤖 AI Contribution Policy
+
+AI tools (LLMs, coding agents, autocomplete) are allowed in this project. However, **you are the author** of everything you submit, and you are fully responsible for it, no matter how it was produced.
+
+### ✅ You are accountable
+
+ * **Understand every line.** You must be able to explain and defend every change in review. "The AI wrote it" is not an answer to a review question.
+ * **Review your own work first.** Read your full diff before asking anyone else to.
+ * **Keep it small and focused.** One logical change per PR. Large, unfocused or obviously unreviewed generated PRs may be closed without a detailed review.
+ * **Licensing.** You make sure that submitted content does not reproduce code under an incompatible license and can be released under the project's MIT / Apache-2.0 licenses.
+
+### 📖 Follow the specification
+
+LLMs are known to invent plausible-looking but wrong protocol details, such as frame fields, attribute ids, status codes or state transitions. For every change to protocol logic (MAC, NWK, APS, ZDO, ZCL, BDB):
+
+ * **Reference the specification section** you implemented (Zigbee R22 or IEEE 802.15.4-2003) in the PR description and, where useful, in code comments
+ * **Don't add behavior the specification doesn't define.** Implementation-specific policy belongs in the `zigbee` app runtime crate
+
+### 🔬 Test on real hardware
+
+CI runs builds, tests, Clippy and formatting checks. What it can't do is show that the stack works on a real network. For new features and larger changes to protocol logic, **test on real hardware** and describe the setup in the PR:
+
+ * **Device:** board and chip (e.g. ESP32-C6) and the example or firmware you ran
+ * **Network:** coordinator and software (e.g. Sonoff ZBDongle-E with Zigbee2MQTT, nRF52840 DK with the nRF Zigbee Shell) and the channel
+ * **Scenario:** what you exercised (e.g. join, rejoin after power cycle, leave, attribute reporting) and the result, with logs or a sniffer capture where useful
+
+Also say what you did **not** test. Never claim hardware testing that didn't happen.
+
+### 🐛 Bug reports and security issues
+
+Don't paste raw AI output into issues or comments. Verify AI-found bugs yourself and include a reproduction (steps, logs or a sniffer capture) before filing. The same applies to security reports.
+
+### 🚫 Not allowed
+
+ * **Autonomous agents.** Bots or agents must not open PRs or issues, or comment, without a human reviewing and submitting the content
+ * **Unreviewed AI reviews.** AI-generated review comments must be checked by a human before posting
+
+Maintainers may close contributions that don't follow this policy.
+
 ## 💾 Technology
 
 The project is written in [Rust](https://rust-lang.org/) and using `no_std` which is a bare metal approach.
