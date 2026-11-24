@@ -24,6 +24,15 @@ pub enum FrameType {
 }
 
 impl FrameControl {
+    /// This frame control with the manufacturer specific sub-field set, for a
+    /// frame that carries a manufacturer code.
+    ///
+    /// See Section 2.4.1.1.2
+    #[must_use]
+    pub const fn with_manufacturer_specific(self) -> Self {
+        Self(self.0 | mask::MANUFACTURER_SPECIFIC)
+    }
+
     /// See Section 2.4.1.1.1
     pub fn frame_type(self) -> FrameType {
         match (self.0 & mask::FRAME_TYPE) >> offset::FRAME_TYPE {
