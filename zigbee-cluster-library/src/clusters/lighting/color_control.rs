@@ -117,6 +117,9 @@ pub mod command {
 
 pub const PHYSICAL_MIN_MIREDS: u16 = 153;
 pub const PHYSICAL_MAX_MIREDS: u16 = 454;
+/// Highest `CurrentX` / `CurrentY` value, and so the highest x or y a Move to
+/// Color command may carry (ZCL Table 5.3).
+const MAX_XY: u16 = 0xfeff;
 const COLOR_CAPABILITIES_SUPPORTED: u16 = 0x0019;
 
 /// Single-light Color Control server for hue, saturation and color temperature.
@@ -282,7 +285,7 @@ impl ClusterServer for ColorControlServer<'_> {
                 };
                 let x = u16::from_le_bytes([data[0], data[1]]);
                 let y = u16::from_le_bytes([data[2], data[3]]);
-                if x == u16::MAX || y == u16::MAX {
+                if x > MAX_XY || y > MAX_XY {
                     return CommandOutcome::Status(Status::InvalidField);
                 }
                 self.set_xy(x, y);
@@ -291,11 +294,9 @@ impl ClusterServer for ColorControlServer<'_> {
                 let Some(data) = command.data.get(..4) else {
                     return CommandOutcome::Status(Status::MalformedCommand);
                 };
-                let mireds = u16::from_le_bytes([data[0], data[1]]);
-                if !(PHYSICAL_MIN_MIREDS..=PHYSICAL_MAX_MIREDS).contains(&mireds) {
-                    return CommandOutcome::Status(Status::InvalidField);
-                }
-                self.set_color_temperature_mireds(mireds);
+                // a value outside the physical range is clamped to it, not
+                // rejected
+                self.set_color_temperature_mireds(u16::from_le_bytes([data[0], data[1]]));
             }
             _ => return CommandOutcome::Status(Status::UnsupCommand),
         }
@@ -341,13 +342,27 @@ mod tests {
     }
 
     #[test]
-    fn move_to_temperature_rejects_out_of_range_values() {
+    fn move_to_temperature_clamps_out_of_range_values() {
         let server = ColorControlServer::new(370);
-        assert_eq!(
-            run(&server, command::MOVE_TO_COLOR_TEMPERATURE, &[0, 0, 0, 0]),
-            CommandOutcome::Status(Status::InvalidField)
-        );
-        assert_eq!(server.color_temperature_mireds(), 370);
+        // below the physical minimum, zero, and above the physical maximum
+        for (mireds, clamped) in [
+            (100u16, PHYSICAL_MIN_MIREDS),
+            (0, PHYSICAL_MIN_MIREDS),
+            (1000, PHYSICAL_MAX_MIREDS),
+            (u16::MAX, PHYSICAL_MAX_MIREDS),
+        ] {
+            let [low, high] = mireds.to_le_bytes();
+            assert_eq!(
+                run(
+                    &server,
+                    command::MOVE_TO_COLOR_TEMPERATURE,
+                    &[low, high, 0, 0]
+                ),
+                CommandOutcome::Status(Status::Success)
+            );
+            assert_eq!(server.color_temperature_mireds(), clamped);
+            assert!(server.color().0 == ColorMode::ColorTemperature);
+        }
     }
 
     #[test]
@@ -469,6 +484,25 @@ mod tests {
             CommandOutcome::Status(Status::InvalidField)
         );
         assert_eq!(server.xy(), (0x1234, 0x5678));
+        // 0xfeff is the highest valid x or y (ZCL Table 5.3); 0xff00 is not
+        assert_eq!(
+            run(&server, command::MOVE_TO_COLOR, &[0x00, 0xff, 0, 0, 0, 0]),
+            CommandOutcome::Status(Status::InvalidField)
+        );
+        assert_eq!(
+            run(&server, command::MOVE_TO_COLOR, &[0, 0, 0x00, 0xff, 0, 0]),
+            CommandOutcome::Status(Status::InvalidField)
+        );
+        assert_eq!(server.xy(), (0x1234, 0x5678));
+        assert_eq!(
+            run(
+                &server,
+                command::MOVE_TO_COLOR,
+                &[0xff, 0xfe, 0xff, 0xfe, 0, 0]
+            ),
+            CommandOutcome::Status(Status::Success)
+        );
+        assert_eq!(server.xy(), (0xfeff, 0xfeff));
         server.set_color_temperature_mireds(370);
         assert!(server.color().0 == ColorMode::ColorTemperature);
     }
