@@ -673,10 +673,17 @@ impl<M: Mlme> ZigbeeDevice<M> {
             "[ZDO] removed from the network (rejoin={})",
             indication.rejoin
         );
+        self.left_network(indication.rejoin);
+    }
+
+    /// Records that this device is off the network, and asks the higher layer
+    /// to bring it back when the leave requested a rejoin.
+    ///
+    /// Shared by the NWK leave command (3.6.1.10.4 step 1) and the ZDP
+    /// `Mgmt_Leave_req` (2.4.3.3.5), whose rejoin flags mean the same thing.
+    fn left_network(&self, rejoin: bool) {
         self.mark_joined(false);
-        // 3.6.1.10.4 step 1: a leave with the rejoin flag keeps the NIB and
-        // asks the device back onto the network — the higher layer drives it
-        if indication.rejoin {
+        if rejoin {
             self.rejoin_requested.signal();
         }
     }
@@ -942,14 +949,17 @@ impl<M: Mlme> ZigbeeDevice<M> {
         }
 
         if let Some(request) = leave_after_reply {
+            // read before `leave` consumes the request
+            let rejoin = request.rejoin;
             let confirm = self.nlme.leave(request).await;
             defmt_or_log::info!(
-                "[ZDO] leaving network after Mgmt_Leave_req: {:?}",
-                confirm.status
+                "[ZDO] leaving network after Mgmt_Leave_req: {:?} (rejoin={})",
+                confirm.status,
+                rejoin
             );
             // a self-leave yields a confirm, not an indication (3.2.2.18), so
             // close the gate here
-            self.mark_joined(false);
+            self.left_network(rejoin);
         }
         Ok(())
     }
@@ -1465,6 +1475,20 @@ mod tests {
             "Active_EP_rsp must carry ActiveEPCount = 0 (2.4.4.2.6); a four-byte \
              response is short by that field and reads as malformed"
         );
+    }
+
+    #[test]
+    fn a_leave_requesting_a_rejoin_asks_the_higher_layer_back() {
+        let device = make_device(LogicalType::EndDevice);
+        device.left_network(true);
+        assert!(device.take_rejoin_request());
+    }
+
+    #[test]
+    fn a_leave_without_the_rejoin_flag_stays_off_the_network() {
+        let device = make_device(LogicalType::EndDevice);
+        device.left_network(false);
+        assert!(!device.take_rejoin_request());
     }
 
     // 2.4.4.2.6 keeps the count on the INV_REQUESTTYPE path too
