@@ -9,6 +9,7 @@ use sequential_storage::map::MapConfig;
 use sequential_storage::map::MapStorage;
 use sequential_storage::map::SerializationError;
 use sequential_storage::map::Value;
+use zigbee_types::select;
 use zigbee_types::sync::TRACKED_ENTRIES;
 use zigbee_types::sync::yield_now;
 
@@ -568,7 +569,10 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     /// below the change rate.
     async fn run(&self) {
         loop {
-            wait_any(nib::changed(), aib::changed()).await;
+            select! {
+                () = nib::changed() => (),
+                () = aib::changed() => (),
+            }
             self.flush().await;
         }
     }
@@ -582,19 +586,6 @@ impl<F: NorFlash> StorageDriver for FlashStorage<F> {
     async fn shutdown(&self) {
         self.flush_with(CounterPrecision::Exact).await;
     }
-}
-
-async fn wait_any(a: impl Future<Output = ()>, b: impl Future<Output = ()>) {
-    let mut a = pin!(a);
-    let mut b = pin!(b);
-    poll_fn(|cx| {
-        if a.as_mut().poll(cx).is_ready() || b.as_mut().poll(cx).is_ready() {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
-    })
-    .await;
 }
 
 #[cfg(test)]

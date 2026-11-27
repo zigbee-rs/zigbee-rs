@@ -20,6 +20,7 @@ use zigbee_core::zdo::ClusterRequestHandler;
 use zigbee_core::zdo::ZigbeeDevice;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::ShortAddress;
+use zigbee_types::select;
 
 use crate::config::RejoinConfig;
 use crate::config::StackConfig;
@@ -230,27 +231,6 @@ async fn drive<T>(
         let _ = background.as_mut().poll(cx);
         let _ = persist.as_mut().poll(cx);
         Poll::Ready(ready!(main.as_mut().poll(cx)))
-    })
-    .await
-}
-
-/// Waits out `sleep`, returning `true` as soon as `rejoin_requested` fires
-/// instead.
-async fn sleep_or_rejoin_request(
-    sleep: impl Future<Output = ()>,
-    rejoin_requested: impl Future<Output = ()>,
-) -> bool {
-    let mut sleep = pin!(sleep);
-    let mut rejoin_requested = pin!(rejoin_requested);
-    core::future::poll_fn(move |cx| {
-        // a leave arriving as the interval runs out is still a leave
-        if rejoin_requested.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(true);
-        }
-        if sleep.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(false);
-        }
-        Poll::Pending
     })
     .await
 }
@@ -528,9 +508,11 @@ where
             // a leave cannot wait out this interval: it is a third of the
             // negotiated end-device timeout (3.6.10.3), which the default
             // requested enumeration of 8 makes 256 minutes (Table 3.52)
-            let leave_asked_for_rejoin =
-                sleep_or_rejoin_request(delay.delay_ms(interval), device.wait_rejoin_request())
-                    .await;
+            let leave_asked_for_rejoin = select! {
+                // first, so a leave arriving as the interval runs out still counts
+                () = device.wait_rejoin_request() => true,
+                () = delay.delay_ms(interval) => false,
+            };
 
             // a device told to leave has nothing left to probe
             let (keepalive_failed, parent_link_failed) = if leave_asked_for_rejoin {
@@ -624,11 +606,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use core::future::pending;
-    use core::future::ready;
-    use core::task::Context;
-    use core::task::Waker;
-
     use super::*;
 
     const NETWORK: u64 = 0x00124b002a9a7166;
@@ -723,36 +700,5 @@ mod tests {
         let total: u32 = Backoff::new(&config).sum();
         assert!(total >= 120_000, "{total} ms is too short for a reboot");
         assert!(config.steer_after_failure);
-    }
-
-    fn poll_once<T>(future: impl Future<Output = T>) -> Poll<T> {
-        let mut future = pin!(future);
-        future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-    }
-
-    #[test]
-    fn a_rejoin_request_ends_the_wait_before_the_interval() {
-        assert_eq!(
-            poll_once(sleep_or_rejoin_request(pending(), ready(()))),
-            Poll::Ready(true)
-        );
-    }
-
-    #[test]
-    fn without_a_rejoin_request_the_interval_decides() {
-        assert_eq!(
-            poll_once(sleep_or_rejoin_request(ready(()), pending())),
-            Poll::Ready(false)
-        );
-    }
-
-    #[test]
-    fn neither_the_interval_nor_a_request_keeps_waiting() {
-        assert_eq!(
-            poll_once(sleep_or_rejoin_request(pending::<()>(), pending::<()>())),
-            Poll::Pending
-        );
     }
 }
