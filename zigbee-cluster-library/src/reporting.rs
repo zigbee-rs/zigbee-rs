@@ -28,6 +28,7 @@ use crate::types::descriptors::Attribute;
 use crate::types::descriptors::Reportable;
 use crate::types::ids::AttributeId;
 use crate::types::ids::ClusterId;
+use crate::types::ids::ManufacturerCode;
 
 /// A serialized `Report Attributes` frame and the cluster it reports on.
 ///
@@ -66,6 +67,7 @@ pub struct AttributeReportBuilder<'a> {
     buf: &'a mut [u8],
     offset: usize,
     cluster: Option<ClusterId>,
+    manufacturer: Option<ManufacturerCode>,
 }
 
 impl<'a> AttributeReportBuilder<'a> {
@@ -75,9 +77,33 @@ impl<'a> AttributeReportBuilder<'a> {
     /// response disabled, the configuration a device reporting to its
     /// coordinator uses (2.4.1.1).
     pub fn new(buf: &'a mut [u8], sequence_number: u8) -> byte::Result<Self> {
+        Self::with_manufacturer(buf, sequence_number, None)
+    }
+
+    /// Start a frame for the attributes of a manufacturer-specific cluster.
+    ///
+    /// The header names `manufacturer` (2.4.1.2), which every attribute pushed
+    /// must belong to.
+    pub fn new_manufacturer_specific(
+        buf: &'a mut [u8],
+        sequence_number: u8,
+        manufacturer: ManufacturerCode,
+    ) -> byte::Result<Self> {
+        Self::with_manufacturer(buf, sequence_number, Some(manufacturer))
+    }
+
+    fn with_manufacturer(
+        buf: &'a mut [u8],
+        sequence_number: u8,
+        manufacturer: Option<ManufacturerCode>,
+    ) -> byte::Result<Self> {
+        let frame_control = match manufacturer {
+            Some(_) => FrameControl(RESPONSE_FRAME_CONTROL).with_manufacturer_specific(),
+            None => FrameControl(RESPONSE_FRAME_CONTROL),
+        };
         let header = ZclHeader {
-            frame_control: FrameControl(RESPONSE_FRAME_CONTROL),
-            manufacturer_code: None,
+            frame_control,
+            manufacturer_code: manufacturer,
             sequence_number,
             command_identifier: CommandIdentifier::ReportAttributes,
         };
@@ -90,6 +116,7 @@ impl<'a> AttributeReportBuilder<'a> {
             buf,
             offset,
             cluster: None,
+            manufacturer,
         })
     }
 
@@ -110,6 +137,11 @@ impl<'a> AttributeReportBuilder<'a> {
         if self.cluster.is_some_and(|existing| existing != cluster) {
             return Err(bad_input!("attribute report mixes clusters"));
         }
+        // the header already names the manufacturer, so an attribute of a
+        // different one would be reported as something it is not
+        if attribute.cluster().manufacturer_code() != self.manufacturer {
+            return Err(bad_input!("attribute report mixes manufacturers"));
+        }
         self.cluster = Some(cluster);
 
         let offset = &mut self.offset;
@@ -126,6 +158,7 @@ impl<'a> AttributeReportBuilder<'a> {
             buf,
             offset,
             cluster,
+            manufacturer: _,
         } = self;
         let cluster = cluster.ok_or(bad_input!("attribute report has no records"))?;
 

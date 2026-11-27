@@ -171,6 +171,20 @@ pub trait ClusterServer {
         let header: ZclHeader = request.asdu.read_with(body_at, ()).ok()?;
         let body = request.asdu.get(*body_at..)?;
 
+        // a manufacturer-specific cluster belongs to one manufacturer: a frame
+        // that does not name it is not a command of this cluster (2.4.1.2)
+        if let Some(code) = self.cluster().manufacturer_code()
+            && header.manufacturer_code != Some(code)
+        {
+            // never in reply to another Default Response (2.5.12.2)
+            if header.frame_control.frame_type() == FrameType::GlobalCommand
+                && header.command_identifier == CommandIdentifier::DefaultResponse
+            {
+                return None;
+            }
+            let len = default_response(header, request.unicast, Status::UnsupCommand, out)?;
+            return Some(ClusterReply::matching(request, len));
+        }
         let len = match header.frame_control.frame_type() {
             FrameType::GlobalCommand => match header.command_identifier {
                 CommandIdentifier::ReadAttributes => read_attributes(self, header, body, out),
@@ -267,7 +281,7 @@ where
 {
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::ReadAttributesResponse,
         out,
         offset,
@@ -376,7 +390,7 @@ where
 {
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::WriteAttributesResponse,
         out,
         offset,
@@ -423,7 +437,7 @@ where
 {
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::WriteAttributesResponse,
         out,
         offset,
@@ -498,7 +512,7 @@ where
 
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::DiscoverAttributesResponse,
         out,
         offset,
@@ -556,7 +570,7 @@ where
 {
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::ConfigureReportingResponse,
         out,
         offset,
@@ -702,7 +716,7 @@ where
 {
     let offset = &mut 0;
     write_response_header(
-        header.sequence_number,
+        header,
         CommandIdentifier::ReadReportingConfigurationResponse,
         out,
         offset,
@@ -804,12 +818,7 @@ fn default_response(
     }
 
     let offset = &mut 0;
-    write_response_header(
-        header.sequence_number,
-        CommandIdentifier::DefaultResponse,
-        out,
-        offset,
-    )?;
+    write_response_header(header, CommandIdentifier::DefaultResponse, out, offset)?;
     out.write_with(offset, header.command_identifier.raw(), ctx::LE)
         .ok()?;
     out.write_with(offset, status, ()).ok()?;
@@ -817,15 +826,21 @@ fn default_response(
 }
 
 fn write_response_header(
-    sequence_number: u8,
+    request: ZclHeader,
     command_identifier: CommandIdentifier,
     out: &mut [u8],
     offset: &mut usize,
 ) -> Option<()> {
+    // a response to a manufacturer-specific frame names the same manufacturer
+    // (2.4.1.2), so the requester can tell it from a standard one
+    let frame_control = match request.manufacturer_code {
+        Some(_) => FrameControl(RESPONSE_FRAME_CONTROL).with_manufacturer_specific(),
+        None => FrameControl(RESPONSE_FRAME_CONTROL),
+    };
     let header = ZclHeader {
-        frame_control: FrameControl(RESPONSE_FRAME_CONTROL),
-        manufacturer_code: None,
-        sequence_number,
+        frame_control,
+        manufacturer_code: request.manufacturer_code,
+        sequence_number: request.sequence_number,
         command_identifier,
     };
     out.write_with(offset, header, ()).ok()
@@ -839,7 +854,17 @@ mod tests {
     use crate::clusters::general::identify::IdentifyServer;
     use crate::clusters::measurement::temperature;
     use crate::clusters::measurement::temperature::TemperatureMeasurementServer;
+    use crate::reporting::AttributeReportBuilder;
     use crate::reporting::ReportingTable;
+    use crate::types::descriptors::Attribute;
+    use crate::types::descriptors::ReadOnly;
+    use crate::types::descriptors::ReadWrite;
+    use crate::types::descriptors::Reportable;
+    use crate::types::ids::ManufacturerCode;
+    use crate::types::integers::Int16;
+    use crate::types::integers::Uint8;
+    use core::sync::atomic::AtomicU8;
+    use core::sync::atomic::Ordering;
 
     const SERVER: BasicServer = BasicServer {
         zcl_version: 8,
@@ -1298,5 +1323,245 @@ mod tests {
             ..request(0x0006, &asdu)
         };
         assert_eq!(responder.handle(&broadcast, &mut out), None);
+    }
+
+    const MANUFACTURER: ManufacturerCode = ManufacturerCode(0x1234);
+    const MANUFACTURER_CLUSTER: Cluster =
+        Cluster::manufacturer_specific(ClusterId(0xfc00), MANUFACTURER, "Test");
+    const MANUFACTURER_LEVEL: Attribute<Uint8, ReadOnly, Reportable> =
+        MANUFACTURER_CLUSTER.attribute(AttributeId(0x0000), "Level");
+    const MANUFACTURER_ATTRIBUTES: &[AttrInfo] = &[MANUFACTURER_LEVEL.attr_info()];
+
+    // a manufacturer-specific cluster with one attribute, `Level` = 42, and
+    // one command (0x01) that succeeds
+    struct ManufacturerServer;
+
+    impl ClusterServer for ManufacturerServer {
+        fn cluster(&self) -> Cluster {
+            MANUFACTURER_CLUSTER
+        }
+
+        fn attributes(&self) -> &'static [AttrInfo] {
+            MANUFACTURER_ATTRIBUTES
+        }
+
+        fn encode_value(&self, id: AttributeId, out: &mut [u8], offset: &mut usize) -> Status {
+            match id.0 {
+                0x0000 => MANUFACTURER_LEVEL
+                    .encode(Uint8(42), out, offset)
+                    .map_or(Status::InsufficientSpace, |()| Status::Success),
+                _ => Status::UnsupportedAttribute,
+            }
+        }
+
+        fn command(&self, command: ClusterCommand<'_>, _out: &mut [u8]) -> CommandOutcome {
+            match command.id.0 {
+                0x01 => CommandOutcome::Status(Status::Success),
+                _ => CommandOutcome::Status(Status::UnsupCommand),
+            }
+        }
+    }
+
+    // 2.4.1.2: a manufacturer-specific frame is answered with the same
+    // manufacturer code, and the response says so in its frame control
+    #[test]
+    fn a_manufacturer_specific_read_is_answered_with_the_manufacturer_code() {
+        // global, client->server, manufacturer specific (0x04), code 0x1234,
+        // Read Attributes for attribute 0x0000
+        let asdu = [0x04, 0x34, 0x12, 0x2a, 0x00, 0x00, 0x00];
+
+        let mut out = [0u8; 32];
+        let reply = ManufacturerServer
+            .handle_request(&request(0xfc00, &asdu), &mut out)
+            .expect("handled");
+
+        // frame control 0x1c, the code, seq, ReadAttributesResponse, then the
+        // record: attribute 0x0000, SUCCESS, uint8 (0x20), 42
+        assert_eq!(
+            &out[..reply.len],
+            &[0x1c, 0x34, 0x12, 0x2a, 0x01, 0x00, 0x00, 0x00, 0x20, 0x2a]
+        );
+    }
+
+    #[test]
+    fn a_manufacturer_specific_command_is_routed_and_answered_with_the_code() {
+        // cluster-specific, client->server, manufacturer specific, command 0x01
+        let asdu = [0x05, 0x34, 0x12, 0x2a, 0x01];
+
+        let mut out = [0u8; 32];
+        let reply = ManufacturerServer
+            .handle_request(&request(0xfc00, &asdu), &mut out)
+            .expect("handled");
+
+        // Default Response for command 0x01 with SUCCESS
+        assert_eq!(
+            &out[..reply.len],
+            &[0x1c, 0x34, 0x12, 0x2a, 0x0b, 0x01, 0x00]
+        );
+    }
+
+    const MANUFACTURER_SPEED: Attribute<Uint8, ReadWrite> =
+        MANUFACTURER_CLUSTER.attribute(AttributeId(0x0001), "Speed");
+    const WRITABLE_ATTRIBUTES: &[AttrInfo] = &[MANUFACTURER_SPEED.attr_info()];
+
+    // a manufacturer-specific cluster with one writable attribute
+    struct WritableManufacturerServer {
+        speed: AtomicU8,
+    }
+
+    impl ClusterServer for WritableManufacturerServer {
+        fn cluster(&self) -> Cluster {
+            MANUFACTURER_CLUSTER
+        }
+
+        fn attributes(&self) -> &'static [AttrInfo] {
+            WRITABLE_ATTRIBUTES
+        }
+
+        fn encode_value(&self, id: AttributeId, out: &mut [u8], offset: &mut usize) -> Status {
+            match id.0 {
+                0x0001 => MANUFACTURER_SPEED
+                    .encode(Uint8(self.speed.load(Ordering::Relaxed)), out, offset)
+                    .map_or(Status::InsufficientSpace, |()| Status::Success),
+                _ => Status::UnsupportedAttribute,
+            }
+        }
+
+        fn decode_value(
+            &self,
+            id: AttributeId,
+            type_id: TypeId,
+            bytes: &[u8],
+            offset: &mut usize,
+        ) -> Status {
+            match (id.0, MANUFACTURER_SPEED.decode(type_id, bytes, offset)) {
+                (0x0001, Ok(Uint8(speed))) => {
+                    self.speed.store(speed, Ordering::Relaxed);
+                    Status::Success
+                }
+                (0x0001, Err(_)) => Status::InvalidDataType,
+                _ => Status::UnsupportedAttribute,
+            }
+        }
+    }
+
+    // the shape of a coordinator's Write Attributes for a manufacturer
+    // attribute: manufacturer specific, the code, then a standard write record
+    #[test]
+    fn a_manufacturer_specific_write_is_applied_and_answered_with_the_code() {
+        let server = WritableManufacturerServer {
+            speed: AtomicU8::new(0),
+        };
+        // global, client->server, manufacturer specific, code 0x1234, seq 0x02,
+        // Write Attributes: attribute 0x0001, uint8 (0x20), 200
+        let asdu = [0x04, 0x34, 0x12, 0x02, 0x02, 0x01, 0x00, 0x20, 0xc8];
+
+        let mut out = [0u8; 32];
+        let reply = server
+            .handle_request(&request(0xfc00, &asdu), &mut out)
+            .expect("handled");
+
+        assert_eq!(server.speed.load(Ordering::Relaxed), 200);
+        // the code, seq, Write Attributes Response, one SUCCESS status
+        assert_eq!(&out[..reply.len], &[0x1c, 0x34, 0x12, 0x02, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn a_manufacturer_specific_write_without_the_code_is_not_applied() {
+        let server = WritableManufacturerServer {
+            speed: AtomicU8::new(0),
+        };
+        let asdu = [0x00, 0x02, 0x02, 0x01, 0x00, 0x20, 0xc8];
+
+        let mut out = [0u8; 32];
+        let reply = server
+            .handle_request(&request(0xfc00, &asdu), &mut out)
+            .expect("handled");
+
+        assert_eq!(server.speed.load(Ordering::Relaxed), 0);
+        assert_eq!(&out[..reply.len], &[0x18, 0x02, 0x0b, 0x02, 0x81]);
+    }
+
+    // a frame that does not name the cluster's manufacturer is no command of
+    // this cluster, whether it names another manufacturer or none
+    #[test]
+    fn a_frame_for_another_manufacturer_is_rejected() {
+        let mut out = [0u8; 32];
+
+        let no_manufacturer = [0x00, 0x2b, 0x00, 0x00, 0x00];
+        let reply = ManufacturerServer
+            .handle_request(&request(0xfc00, &no_manufacturer), &mut out)
+            .expect("handled");
+        assert_eq!(&out[..reply.len], &[0x18, 0x2b, 0x0b, 0x00, 0x81]);
+
+        let other_manufacturer = [0x04, 0x21, 0x43, 0x2c, 0x00, 0x00, 0x00];
+        let reply = ManufacturerServer
+            .handle_request(&request(0xfc00, &other_manufacturer), &mut out)
+            .expect("handled");
+        assert_eq!(
+            &out[..reply.len],
+            &[0x1c, 0x21, 0x43, 0x2c, 0x0b, 0x00, 0x81]
+        );
+    }
+
+    // 2.5.12.2: never in reply to a Default Response
+    #[test]
+    fn a_default_response_for_another_manufacturer_is_not_answered() {
+        let asdu = [0x18, 0x2d, 0x0b, 0x00, 0x00];
+
+        let mut out = [0u8; 32];
+        assert_eq!(
+            ManufacturerServer.handle_request(&request(0xfc00, &asdu), &mut out),
+            None
+        );
+    }
+
+    #[test]
+    fn a_standard_request_is_still_answered_without_a_manufacturer_code() {
+        // the check only concerns manufacturer-specific clusters
+        let asdu = [0x00, 0x2a, 0x00, 0x00, 0x00];
+
+        let mut out = [0u8; 32];
+        let reply = SERVER
+            .handle_request(&request(0x0000, &asdu), &mut out)
+            .expect("handled");
+        assert_eq!(out[0], 0x18);
+        assert!(reply.len > 3);
+    }
+
+    #[test]
+    fn a_manufacturer_specific_report_names_the_manufacturer() {
+        let mut buf = [0u8; 32];
+        let report = AttributeReportBuilder::new_manufacturer_specific(&mut buf, 7, MANUFACTURER)
+            .and_then(|frame| frame.push(&MANUFACTURER_LEVEL, Uint8(42)))
+            .and_then(AttributeReportBuilder::finish)
+            .expect("report built");
+
+        assert_eq!(report.cluster_id(), ClusterId(0xfc00));
+        // global, server->client, manufacturer specific, the code, seq,
+        // Report Attributes, then attribute 0x0000, uint8, 42
+        assert_eq!(
+            report.asdu(),
+            &[0x1c, 0x34, 0x12, 0x07, 0x0a, 0x00, 0x00, 0x20, 0x2a]
+        );
+    }
+
+    // a report whose header names one manufacturer cannot carry an attribute
+    // of another cluster family
+    #[test]
+    fn a_report_cannot_mix_manufacturer_and_standard_attributes() {
+        let mut buf = [0u8; 32];
+        assert!(
+            AttributeReportBuilder::new(&mut buf, 7)
+                .and_then(|frame| frame.push(&MANUFACTURER_LEVEL, Uint8(42)))
+                .is_err()
+        );
+
+        let mut buf = [0u8; 32];
+        assert!(
+            AttributeReportBuilder::new_manufacturer_specific(&mut buf, 7, MANUFACTURER)
+                .and_then(|frame| frame.push(&temperature::MEASURED_VALUE, Int16(0)))
+                .is_err()
+        );
     }
 }
