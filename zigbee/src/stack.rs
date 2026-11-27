@@ -21,6 +21,7 @@ use zigbee_core::zdo::ZigbeeDevice;
 use zigbee_mac::mlme::Mlme;
 use zigbee_types::ShortAddress;
 
+use crate::config::RejoinConfig;
 use crate::config::StackConfig;
 
 /// How [`Stack::commission`] got the device onto the network.
@@ -137,6 +138,85 @@ const fn epid_matches(configured: u64, remembered: u64) -> bool {
     configured == ANY_EXTENDED_PAN_ID || configured == remembered
 }
 
+/// How the startup rejoin ended (BDB 7.1 steps 2-5).
+enum StartupRejoin {
+    /// Back on the remembered network.
+    Rejoined(NlmeJoinConfirm),
+    /// No network to rejoin.
+    NotOnANetwork,
+    /// Out of attempts, or none would help.
+    GaveUp(NlmeJoinStatus),
+}
+
+/// Whether a rejoin that failed with `status` could succeed later.
+///
+/// An unanswered request, no router heard, or no room for a child all pass
+/// once the network is back. Denied access and an invalid request need
+/// commissioning instead (3.6.1.4.2).
+const fn rejoin_may_succeed_later(status: NlmeJoinStatus) -> bool {
+    match status {
+        NlmeJoinStatus::MacError
+        | NlmeJoinStatus::NotPermitted
+        | NlmeJoinStatus::NoNetworks
+        | NlmeJoinStatus::PanAtCapacity => true,
+        NlmeJoinStatus::Success
+        | NlmeJoinStatus::InvalidRequest
+        | NlmeJoinStatus::PanAccessDenied => false,
+    }
+}
+
+/// The delays of a [`RejoinConfig`], one per retry.
+struct Backoff {
+    /// Attempts left; `None` is unlimited.
+    remaining: Option<u8>,
+    backoff_ms: u32,
+    max_backoff_ms: u32,
+}
+
+impl Backoff {
+    fn new(config: &RejoinConfig) -> Self {
+        Self {
+            // the first attempt is already made
+            remaining: config.attempts.map(|attempts| attempts.saturating_sub(1)),
+            backoff_ms: config.backoff_ms,
+            max_backoff_ms: config.max_backoff_ms,
+        }
+    }
+}
+
+impl Iterator for Backoff {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        match &mut self.remaining {
+            Some(0) => return None,
+            Some(remaining) => *remaining -= 1,
+            None => (),
+        }
+        let delay_ms = self.backoff_ms.min(self.max_backoff_ms);
+        self.backoff_ms = self.backoff_ms.saturating_mul(2).min(self.max_backoff_ms);
+        Some(delay_ms)
+    }
+}
+
+/// Waits out the next backoff, or `false` once the schedule is spent.
+async fn wait_before_retry(
+    status: NlmeJoinStatus,
+    backoff: &mut Backoff,
+    delay: &mut impl DelayNs,
+) -> bool {
+    let Some(backoff_ms) = backoff.next() else {
+        return false;
+    };
+    defmt_or_log::info!(
+        "[APP] rejoin failed ({:?}), retrying in {} ms",
+        status,
+        backoff_ms
+    );
+    delay.delay_ms(backoff_ms).await;
+    true
+}
+
 // polls `main` to completion while the background futures keep running
 async fn drive<T>(
     main: impl Future<Output = T>,
@@ -224,9 +304,9 @@ where
     /// Bring the device onto its network at startup.
     ///
     /// Runs the BDB initialization procedure first (7.1): a device that is
-    /// still on a network rejoins it, keeping its keys. If that fails, the
-    /// remembered network is forgotten and network steering commissions the
-    /// device from scratch (BDB 8.2).
+    /// still on a network rejoins it, keeping its keys, and retries as
+    /// [`RejoinConfig`] asks (7.1 step 5). Network steering commissions the
+    /// device from scratch (BDB 8.2) only once that is given up.
     ///
     /// A remembered network whose extended PAN id is not the configured one is
     /// forgotten before the rejoin, so changing the configured network takes
@@ -256,21 +336,22 @@ where
             device.forget_network();
         }
 
-        match bdb.start_initialization_procedure(device, delay).await? {
-            Some(confirm) if confirm.status == NlmeJoinStatus::Success => {
-                return Ok(Commissioned::Rejoined(confirm));
-            }
-            // on a network but unable to rejoin: the stale address and keys would
-            // make NLME-JOIN refuse to re-associate, so drop them first
-            Some(confirm) => {
-                defmt_or_log::warn!(
-                    "[APP] rejoin failed ({:?}), forgetting network",
-                    confirm.status
-                );
+        match self.rejoin_at_startup(delay).await? {
+            StartupRejoin::Rejoined(confirm) => return Ok(Commissioned::Rejoined(confirm)),
+            // not on a network at all
+            StartupRejoin::NotOnANetwork => (),
+            // NLME-JOIN refuses to re-associate while the old address and keys stand
+            StartupRejoin::GaveUp(status) => {
+                if !config.rejoin().steer_after_failure {
+                    defmt_or_log::warn!(
+                        "[APP] rejoin failed ({:?}), keeping the network as configured",
+                        status
+                    );
+                    return Ok(Commissioned::Failed(status));
+                }
+                defmt_or_log::warn!("[APP] rejoin failed ({:?}), forgetting network", status);
                 device.forget_network();
             }
-            // not on a network at all
-            None => (),
         }
 
         let network = config.network();
@@ -289,6 +370,58 @@ where
             Ok(Commissioned::Steered(confirm))
         } else {
             Ok(Commissioned::Failed(confirm.status))
+        }
+    }
+
+    // BDB 7.1 steps 4-5; the caller decides about the network
+    async fn rejoin_at_startup(
+        &self,
+        delay: &mut impl DelayNs,
+    ) -> Result<StartupRejoin, NetworkError> {
+        let mut backoff = Backoff::new(self.config.rejoin());
+        loop {
+            // steps 2-3: nothing to rejoin
+            let Some(confirm) = self
+                .bdb
+                .start_initialization_procedure(&self.device, delay)
+                .await?
+            else {
+                return Ok(StartupRejoin::NotOnANetwork);
+            };
+            if confirm.status == NlmeJoinStatus::Success {
+                return Ok(StartupRejoin::Rejoined(confirm));
+            }
+            if !rejoin_may_succeed_later(confirm.status)
+                || !wait_before_retry(confirm.status, &mut backoff, delay).await
+            {
+                return Ok(StartupRejoin::GaveUp(confirm.status));
+            }
+        }
+    }
+
+    // 3.6.1.4.2 on the configured schedule
+    async fn rejoin_with_retry(
+        &self,
+        delay: &mut impl DelayNs,
+    ) -> Result<NlmeJoinConfirm, NetworkError> {
+        let network = self.config.network();
+        let mut backoff = Backoff::new(self.config.rejoin());
+        loop {
+            let confirm = self
+                .device
+                .rejoin(
+                    network.extended_pan_id,
+                    network.channels.clone(),
+                    network.scan_duration,
+                )
+                .await?;
+            // on the network, or out of tries
+            if confirm.status == NlmeJoinStatus::Success
+                || !rejoin_may_succeed_later(confirm.status)
+                || !wait_before_retry(confirm.status, &mut backoff, delay).await
+            {
+                return Ok(confirm);
+            }
         }
     }
 
@@ -390,14 +523,7 @@ where
                 parent_link_failed,
                 rejoin_requested
             );
-            let network = config.network();
-            let confirm = device
-                .rejoin(
-                    network.extended_pan_id,
-                    network.channels.clone(),
-                    network.scan_duration,
-                )
-                .await?;
+            let confirm = self.rejoin_with_retry(delay).await?;
             if confirm.status != NlmeJoinStatus::Success {
                 return Ok(confirm);
             }
@@ -484,5 +610,77 @@ mod tests {
     #[test]
     fn a_remembered_network_without_an_identifier_does_not_match() {
         assert!(!epid_matches(NETWORK, ANY_EXTENDED_PAN_ID));
+    }
+
+    // the configured count includes the attempt that already failed
+    #[test]
+    fn the_schedule_backs_off_up_to_the_configured_attempts() {
+        let config = RejoinConfig {
+            attempts: Some(5),
+            backoff_ms: 10_000,
+            max_backoff_ms: 60_000,
+            steer_after_failure: true,
+        };
+        assert!(Backoff::new(&config).eq([10_000, 20_000, 40_000, 60_000]));
+    }
+
+    #[test]
+    fn a_single_attempt_never_retries() {
+        let config = RejoinConfig {
+            attempts: Some(1),
+            ..RejoinConfig::default()
+        };
+        assert_eq!(Backoff::new(&config).next(), None);
+        // zero cannot undo the attempt already made
+        let config = RejoinConfig {
+            attempts: Some(0),
+            ..RejoinConfig::default()
+        };
+        assert_eq!(Backoff::new(&config).next(), None);
+    }
+
+    // unlimited attempts settle at the cap
+    #[test]
+    fn an_unlimited_schedule_settles_at_the_cap() {
+        let config = RejoinConfig {
+            attempts: None,
+            backoff_ms: 10_000,
+            max_backoff_ms: 20_000,
+            steer_after_failure: true,
+        };
+        let mut backoff = Backoff::new(&config);
+        assert_eq!(backoff.next(), Some(10_000));
+        assert!(backoff.take(1_000).all(|delay_ms| delay_ms == 20_000));
+    }
+
+    // clamped, not wrapped
+    #[test]
+    fn a_backoff_over_the_cap_is_clamped() {
+        let config = RejoinConfig {
+            attempts: Some(3),
+            backoff_ms: u32::MAX,
+            max_backoff_ms: 60_000,
+            steer_after_failure: true,
+        };
+        assert!(Backoff::new(&config).eq([60_000, 60_000]));
+    }
+
+    #[test]
+    fn only_a_failure_that_can_pass_is_retried() {
+        assert!(rejoin_may_succeed_later(NlmeJoinStatus::MacError));
+        assert!(rejoin_may_succeed_later(NlmeJoinStatus::NotPermitted));
+        assert!(rejoin_may_succeed_later(NlmeJoinStatus::NoNetworks));
+        assert!(rejoin_may_succeed_later(NlmeJoinStatus::PanAtCapacity));
+        assert!(!rejoin_may_succeed_later(NlmeJoinStatus::PanAccessDenied));
+        assert!(!rejoin_may_succeed_later(NlmeJoinStatus::InvalidRequest));
+    }
+
+    // must outlast a coordinator reboot
+    #[test]
+    fn the_default_schedule_spans_minutes() {
+        let config = RejoinConfig::default();
+        let total: u32 = Backoff::new(&config).sum();
+        assert!(total >= 120_000, "{total} ms is too short for a reboot");
+        assert!(config.steer_after_failure);
     }
 }
