@@ -234,6 +234,27 @@ async fn drive<T>(
     .await
 }
 
+/// Waits out `sleep`, returning `true` as soon as `rejoin_requested` fires
+/// instead.
+async fn sleep_or_rejoin_request(
+    sleep: impl Future<Output = ()>,
+    rejoin_requested: impl Future<Output = ()>,
+) -> bool {
+    let mut sleep = pin!(sleep);
+    let mut rejoin_requested = pin!(rejoin_requested);
+    core::future::poll_fn(move |cx| {
+        // a leave arriving as the interval runs out is still a leave
+        if rejoin_requested.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(true);
+        }
+        if sleep.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(false);
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 impl<'d, M, H, S> Stack<'d, M, H, S>
 where
     M: Mlme,
@@ -487,7 +508,8 @@ where
     /// `rxOnWhenIdle` devices alike — and reacts to everything that takes this
     /// device off the network: a failed keepalive, an expired local end-device
     /// timeout (3.6.10.6), a failed parent link reported while sending
-    /// (3.6.3.7.1), and a leave asking the device to come back (3.6.1.10.4).
+    /// (3.6.3.7.1), and a leave asking the device to come back (3.6.1.10.4),
+    /// which is acted on as it arrives rather than at the next keepalive.
     /// Recovery is [`ZigbeeDevice::rejoin`], which keeps the keys.
     ///
     /// Returns only when the device is off the network for good.
@@ -503,15 +525,29 @@ where
                 .nlme()
                 .keepalive_interval_ms()
                 .unwrap_or(config.timing().default_keepalive_interval_ms);
-            delay.delay_ms(interval).await;
+            // a leave cannot wait out this interval: it is a third of the
+            // negotiated end-device timeout (3.6.10.3), which the default
+            // requested enumeration of 8 makes 256 minutes (Table 3.52)
+            let leave_asked_for_rejoin =
+                sleep_or_rejoin_request(delay.delay_ms(interval), device.wait_rejoin_request())
+                    .await;
 
-            // the error already covers a drained local end-device timeout
-            let keepalive_failed = self.keepalive().await.is_err();
-            let parent_link_failed = matches!(
-                device.nlme().take_nwk_status_indication(),
-                Some(indication) if indication.status == NetworkStatusCode::ParentLinkFailure
-            );
-            let rejoin_requested = device.take_rejoin_request();
+            // a device told to leave has nothing left to probe
+            let (keepalive_failed, parent_link_failed) = if leave_asked_for_rejoin {
+                (false, false)
+            } else {
+                (
+                    // the error already covers a drained local end-device timeout
+                    self.keepalive().await.is_err(),
+                    matches!(
+                        device.nlme().take_nwk_status_indication(),
+                        Some(indication)
+                            if indication.status == NetworkStatusCode::ParentLinkFailure
+                    ),
+                )
+            };
+            // the race consumed one request; another may have arrived since
+            let rejoin_requested = leave_asked_for_rejoin || device.take_rejoin_request();
 
             if !(keepalive_failed || parent_link_failed || rejoin_requested) {
                 continue;
@@ -588,6 +624,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use core::future::pending;
+    use core::future::ready;
+    use core::task::Context;
+    use core::task::Waker;
+
     use super::*;
 
     const NETWORK: u64 = 0x00124b002a9a7166;
@@ -682,5 +723,36 @@ mod tests {
         let total: u32 = Backoff::new(&config).sum();
         assert!(total >= 120_000, "{total} ms is too short for a reboot");
         assert!(config.steer_after_failure);
+    }
+
+    fn poll_once<T>(future: impl Future<Output = T>) -> Poll<T> {
+        let mut future = pin!(future);
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    #[test]
+    fn a_rejoin_request_ends_the_wait_before_the_interval() {
+        assert_eq!(
+            poll_once(sleep_or_rejoin_request(pending(), ready(()))),
+            Poll::Ready(true)
+        );
+    }
+
+    #[test]
+    fn without_a_rejoin_request_the_interval_decides() {
+        assert_eq!(
+            poll_once(sleep_or_rejoin_request(ready(()), pending())),
+            Poll::Ready(false)
+        );
+    }
+
+    #[test]
+    fn neither_the_interval_nor_a_request_keeps_waiting() {
+        assert_eq!(
+            poll_once(sleep_or_rejoin_request(pending::<()>(), pending::<()>())),
+            Poll::Pending
+        );
     }
 }
