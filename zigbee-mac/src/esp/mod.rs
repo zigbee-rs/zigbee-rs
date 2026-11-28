@@ -1,8 +1,7 @@
 use alloc::vec::Vec;
+use core::pin::pin;
 
 use byte::BytesExt;
-use embassy_futures::select::Either;
-use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_time::Timer;
 use esp_radio::ieee802154::Config;
@@ -18,6 +17,7 @@ use ieee802154::mac::PanId;
 use ieee802154::mac::command::CapabilityInformation;
 use ieee802154::mac::command::Command;
 use ieee802154::mac::security::SecurityContext;
+use zigbee_types::select;
 
 use crate::esp::driver::Ieee802154Driver;
 use crate::esp::fair_mutex::FairMutex;
@@ -85,18 +85,12 @@ impl<'a> EspMlme<'a> {
     async fn lock(
         &self,
     ) -> Result<FairMutexGuard<'_, CriticalSectionRawMutex, EspMlmeInner<'a>>, MacError> {
-        match select(
-            Timer::after_millis(RADIO_LOCK_TIMEOUT_MS),
-            self.inner.lock(),
-        )
-        .await
-        {
-            Either::First(_) => Err(MacError::RadioLockTimeout),
-            Either::Second(Ok(guard)) => Ok(guard),
-            Either::Second(Err(_)) => {
+        select! {
+            () = Timer::after_millis(RADIO_LOCK_TIMEOUT_MS) => Err(MacError::RadioLockTimeout),
+            guard = self.inner.lock() => guard.map_err(|_| {
                 defmt_or_log::warn!("[MAC] radio lock queue full");
-                Err(MacError::RadioLockQueueFull)
-            }
+                MacError::RadioLockQueueFull
+            }),
         }
     }
 
@@ -208,18 +202,16 @@ impl EspMlmeInner<'_> {
         defmt_or_log::debug!("[MLME-SCAN] waiting for response for {}us", delay_us);
 
         let mut pds = Vec::new();
-        let deadline = Timer::after_micros(delay_us);
-        let mut deadline = core::pin::pin!(deadline);
+        let mut deadline = pin!(Timer::after_micros(delay_us));
 
         loop {
-            match embassy_futures::select::select(&mut deadline, self.next_frame()).await {
-                Either::First(_) => break,
-                Either::Second(Ok(frame)) => {
-                    if let Some(pd) = self.parse_beacon(frame) {
+            select! {
+                () = deadline.as_mut() => break,
+                frame = self.next_frame() => {
+                    if let Some(pd) = frame.ok().and_then(|frame| self.parse_beacon(frame)) {
                         pds.push(pd);
                     }
-                }
-                Either::Second(Err(_)) => continue,
+                },
             }
         }
 
@@ -352,10 +344,9 @@ impl EspMlmeInner<'_> {
                 }
             }
         };
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => Ok(None),
-            Either::Second(Ok(r)) => Ok(Some(r)),
-            Either::Second(Err(e)) => Err(e),
+        select! {
+            () = timeout => Ok(None),
+            response = receive => response.map(Some),
         }
     }
 
@@ -394,9 +385,9 @@ impl EspMlmeInner<'_> {
                 }
             }
         };
-        match embassy_futures::select::select(timeout, receive).await {
-            Either::First(_) => Ok(None),
-            Either::Second(result) => result,
+        select! {
+            () = timeout => Ok(None),
+            result = receive => result,
         }
     }
 

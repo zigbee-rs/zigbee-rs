@@ -1,5 +1,3 @@
-use embassy_futures::select::Either;
-use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
@@ -8,6 +6,7 @@ use esp_radio::ieee802154::Config;
 use esp_radio::ieee802154::Error as Ieee802154Error;
 use esp_radio::ieee802154::Ieee802154;
 use esp_radio::ieee802154::ReceivedFrame;
+use zigbee_types::select;
 
 use crate::mlme::MacError;
 
@@ -118,10 +117,12 @@ impl<'a> Ieee802154Driver<'a> {
         self.driver.transmit_raw(frame, true)?;
         // bound the wait: a lost interrupt would otherwise block here forever
         // while holding the radio lock, wedging the whole stack
-        match select(Timer::after_millis(TX_DONE_TIMEOUT_MS), TX_SIGNAL.wait()).await {
-            Either::First(_) => Err(MacError::TxTimeout),
-            Either::Second(TxEvent::Done) => Ok(()),
-            Either::Second(TxEvent::Failed) => Err(MacError::TxFailed),
+        select! {
+            () = Timer::after_millis(TX_DONE_TIMEOUT_MS) => Err(MacError::TxTimeout),
+            event = TX_SIGNAL.wait() => match event {
+                TxEvent::Done => Ok(()),
+                TxEvent::Failed => Err(MacError::TxFailed),
+            },
         }
     }
 

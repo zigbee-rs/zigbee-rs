@@ -5,7 +5,6 @@
 use core::future::Future;
 use core::future::poll_fn;
 use core::mem;
-use core::pin::pin;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::AtomicU16;
@@ -24,18 +23,72 @@ pub async fn with_timeout<F: Future>(
     fut: F,
     timeout: impl Future<Output = ()>,
 ) -> Option<F::Output> {
-    let mut fut = pin!(fut);
-    let mut timeout = pin!(timeout);
-    poll_fn(move |cx| {
-        if let Poll::Ready(value) = fut.as_mut().poll(cx) {
-            return Poll::Ready(Some(value));
+    crate::select! {
+        value = fut => Some(value),
+        () = timeout => None,
+    }
+}
+
+/// Waits on several futures at once and evaluates the branch of the first
+/// one to complete, dropping the others.
+///
+/// Branches are polled in order, so an earlier branch wins when several are
+/// ready at the same wake. Branch bodies run after the wait, so they may
+/// `.await`, `return`, `break` or `continue`. Patterns must be irrefutable;
+/// up to eight branches.
+///
+/// ```
+/// # use core::future::Future;
+/// async fn first(a: impl Future<Output = u8>, b: impl Future<Output = ()>) -> Option<u8> {
+///     zigbee_types::select! {
+///         value = a => Some(value),
+///         () = b => None,
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! select {
+    ($($pat:pat = $fut:expr => $body:expr),+ $(,)?) => {
+        $crate::select!(
+            @branches []
+            [$($pat = $fut => $body,)+]
+            [__select_0 __select_1 __select_2 __select_3 __select_4 __select_5 __select_6 __select_7]
+        )
+    };
+    (@branches [$($done:tt)*] [$pat:pat = $fut:expr => $body:expr, $($rest:tt)*] [$slot:ident $($slots:ident)*]) => {
+        $crate::select!(@branches [$($done)* {$slot, $pat, $fut, $body}] [$($rest)*] [$($slots)*])
+    };
+    (@branches [$($done:tt)*] [$($rest:tt)+] []) => {
+        ::core::compile_error!("select! supports at most eight branches")
+    };
+    (@branches [$({$slot:ident, $pat:pat, $fut:expr, $body:expr})+] [] [$($unused:ident)*]) => {{
+        // the futures drop with this block, so branch bodies may reuse their borrows
+        let ($($slot,)+) = {
+            // each slot pairs a pinned future with the output it completed with
+            $(let mut $slot = (::core::pin::pin!($fut), ::core::option::Option::None);)+
+            ::core::future::poll_fn(|cx| {
+                $(
+                    if let ::core::task::Poll::Ready(output) =
+                        ::core::future::Future::poll($slot.0.as_mut(), cx)
+                    {
+                        $slot.1 = ::core::option::Option::Some(output);
+                        return ::core::task::Poll::Ready(());
+                    }
+                )+
+                ::core::task::Poll::Pending
+            })
+            .await;
+            ($($slot.1,)+)
+        };
+        $(
+            if let ::core::option::Option::Some(output) = $slot {
+                let $pat = output;
+                $body
+            } else
+        )+ {
+            ::core::unreachable!()
         }
-        match timeout.as_mut().poll(cx) {
-            Poll::Ready(()) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    })
-    .await
+    }};
 }
 
 /// Hand control back to the executor once, so another task can make progress.
@@ -717,6 +770,54 @@ mod tests {
     use std::task::Wake;
 
     use super::*;
+
+    fn poll_once<T>(future: impl Future<Output = T>) -> Poll<T> {
+        pin!(future).poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    #[test]
+    fn select_prefers_the_earlier_branch_when_both_are_ready() {
+        let selected = poll_once(async {
+            crate::select! {
+                () = core::future::ready(()) => 0,
+                () = core::future::ready(()) => 1,
+            }
+        });
+        assert_eq!(selected, Poll::Ready(0));
+    }
+
+    #[test]
+    fn select_takes_the_first_branch_to_complete() {
+        let selected = poll_once(async {
+            crate::select! {
+                () = core::future::pending() => None,
+                value = core::future::ready(0x42) => Some(value),
+            }
+        });
+        assert_eq!(selected, Poll::Ready(Some(0x42)));
+    }
+
+    #[test]
+    fn select_drops_the_futures_before_the_branch_runs() {
+        let mut count = 0;
+        let selected = poll_once(async {
+            crate::select! {
+                () = async { count += 1 } => count,
+            }
+        });
+        assert_eq!(selected, Poll::Ready(1));
+    }
+
+    #[test]
+    fn select_waits_while_no_branch_is_ready() {
+        let selected = poll_once(async {
+            crate::select! {
+                () = core::future::pending() => 0,
+                () = core::future::pending() => 1,
+            }
+        });
+        assert_eq!(selected, Poll::Pending);
+    }
 
     #[test]
     fn wait_consumes_signal() {
